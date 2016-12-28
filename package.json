@@ -1,0 +1,30 @@
+{
+  "name": "josk",
+  "version": "1.0.0",
+  "description": "Task and jobs runner. With support of multiple clusters and servers setup",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/VeliovGroup/josk.git"
+  },
+  "keywords": [
+    "tasks",
+    "jobs",
+    "cluster",
+    "scheduler",
+    "agent",
+    "agenda",
+    "servers",
+    "task",
+    "job",
+    "schedule"
+  ],
+  "author": "dr.dimitru (https://veliovgroup.com)",
+  "license": "BSD-3-Clause",
+  "dependencies": {
+    "mongodb": "^2.2.16"
+  }
+}
