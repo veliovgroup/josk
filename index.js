@@ -51,7 +51,6 @@ module.exports = (function() {
             inProgress: true
           }]
         }).toArray(function(error, tasks) {
-          console.log(error, task.uid, self.tasks[task.uid]);
           tasks.forEach(function(task) {
             if (self.tasks && self.tasks[task.uid]) {
               process.nextTick(function() {
