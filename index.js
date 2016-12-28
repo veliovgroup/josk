@@ -18,7 +18,7 @@ module.exports = (function() {
       throw "[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`";
     }
 
-    this.collection = opts.db.collection("__CRONjobs__" + this.prefix);
+    this.collection = opts.db.collection("__JobTasks__" + this.prefix);
     this.collection.ensureIndex({uid: 1}, {background: true, unique: true});
     this.collection.ensureIndex({uid: 1, inProgress: 1});
     this.collection.ensureIndex({executeAt: 1, inProgress: 1}, {background: true});
@@ -51,6 +51,7 @@ module.exports = (function() {
             inProgress: true
           }]
         }).toArray(function(error, tasks) {
+          console.log(error, task.uid, self.tasks[task.uid]);
           tasks.forEach(function(task) {
             if (self.tasks && self.tasks[task.uid]) {
               process.nextTick(function() {

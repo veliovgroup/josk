@@ -21,13 +21,20 @@ Install:
 npm install josk --save
 ```
 
+```js
+var JoSk = require('josk');
+
+//ES6 Style:
+import JoSk from 'josk';
+```
+
 Notes:
 ========
 This package is perfect when you have multiple servers for load-balancing, durability, array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app, not per server.
 
-Limitation - task must be run not often then once per two seconds (from 2 to ∞ seconds). Example tsks: Email, SMS queue, Long-polling requests Periodical application logic operations, Periodical data fetch.
+Limitation - task must be run not often then once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc.
 
-Accuracy - Tasks delay depends from MongoDB and "de-synchronization delay". The trusted time-range of execution period is `task_delay ± (1536 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run with very certain delays. For other cases if `±1536 ms` delays is acceptable this package is great solution.
+Accuracy - Delay of each task depends from MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (1536 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run task with very certain delays. For other cases if `±1536 ms` delays is acceptable - this package is great solution.
 
 API:
 ========
@@ -40,27 +47,19 @@ API:
 #### Initialization:
 ```javascript
 MongoClient.connect(url, function (error, db) {
-  var Job  = new JoSk({db: db});
-
-  // Alternatively pass an unique id {String} to constructor, to have multiple CRONs:
-  var Job = new JoSk({db: db, prefix: '1'});
-  var Job = new JoSk({db: db, prefix: '2'});
+  var Job = new JoSk({db: db});
 });
 ```
 
-Note: This library relies on job ID, so you can not pass same job (with same ID) into its methods. To use lib's methods on same function use different instances. Like:
-
+Note: This library relies on job ID, so you can not pass same job (with same ID). Always use different `uid`, even for same task:
 ```javascript
-var Job1 = new JoSk({db: db, prefix: '1'});
-var Job2 = new JoSk({db: db, prefix: '1'});
-
 var task = function (ready) {
   //...some code here
   ready();
 };
 
-Job1.setInterval(task, 60*60*1000, 'task-1000');
-Job2.setInterval(task, 60*60*2000, 'task-2000');
+Job.setInterval(task, 60*60*1000, 'task-1000');
+Job.setInterval(task, 60*60*2000, 'task-2000');
 ```
 
 Passing arguments (*not really fancy solution, sorry*):
@@ -88,9 +87,9 @@ Job.setInterval(task1, 60*60*1000, 'task1');
 Note: To cleanup old tasks via MongoDB use next query pattern:
 ```js
 // Run directly in MongoDB console:
-db.getCollection('__JoSks__').remove({});
+db.getCollection('__JobTasks__').remove({});
 // If you're using multiple JoSk instances with prefix:
-db.getCollection('__JoSks__PrefixHere').remove({});
+db.getCollection('__JobTasks__PrefixHere').remove({});
 ```
 
 
@@ -100,8 +99,7 @@ db.getCollection('__JoSks__PrefixHere').remove({});
  - `delay` {*Number*}   - Delay for first run and interval between further executions in milliseconds
  - `uid`   {*String*}   - Unique app-wide task id
 
-*Set task into interval execution loop. You can not set same function multiple times into interval.*
-`ready()` *is passed as argument into function, and must be called in all tasks.*
+*Set task into interval execution loop.* `ready()` *is passed as third argument into function.*
 
 In this example, next task will not be scheduled until current is ready:
 ```javascript
@@ -120,7 +118,7 @@ Job.setInterval(syncTask, 60*60*1000, 'syncTask');
 Job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
-In this example, next task will not wait for current task is ready:
+In this example, next task will not wait for current task to finish:
 ```javascript
 var syncTask = function (ready) {
   ready();
@@ -137,7 +135,7 @@ Job.setInterval(syncTask, 60*60*1000, 'syncTask');
 Job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
-In this example, we're assuming to have long running task, and execute it in a loop without delay, but after full execution:
+In this example, we're assuming to have long running task, executed in a loop without delay, but after full execution:
 ```javascript
 var longRunningAsyncTask = function (ready) {
   asyncCall(function (error, result) {
@@ -162,9 +160,8 @@ Job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
  - `delay` {*Number*}   - Delay in milliseconds
  - `uid`   {*String*}   - Unique app-wide task id
 
-*Set task into timeout execution. You can not set same function multiple times into timeout.*
-*`setTimeout` is useful for cluster - when you need to make sure task was executed only once.*
-`ready()` *is passed as argument into function, and must be called in all tasks.*
+*Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task was executed only once.*
+`ready()` *is passed as third argument into function.*
 
 ```javascript
 var syncTask = function (ready) {
@@ -187,9 +184,7 @@ Job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
  - `func` {*Function*} - Function to execute
  - `uid`  {*String*}   - Unique app-wide task id
 
-*Immediate execute function, and only once. You can not set same function multiple times into immediate execution.*
-`setImmidiate` *is useful for cluster - when you need to execute function immediately and only once.*
-`ready()` *is passed as argument into function, and must be called in all tasks.*
+*Immediate execute function, and only once.* `setImmidiate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as third argument into function.*
 
 ```javascript
 var syncTask = function (ready) {
@@ -224,4 +219,4 @@ Job.clearTimeout(timer);
 ```
 
 #### Why JoSK?
-`JoSk` is *__Jo__b-Ta__sk__* - Actually randomly generated name by [uniq project](https://uniq.site)
+`JoSk` is *Job-Task* - Is randomly generated name by [uniq project](https://uniq.site)
