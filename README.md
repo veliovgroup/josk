@@ -218,5 +218,5 @@ var timer = Job.setTimeout(func, 34789, 'unique-taskid');
 Job.clearTimeout(timer);
 ```
 
-#### Why JoSK?
+#### Why JoSk?
 `JoSk` is *Job-Task* - Is randomly generated name by [uniq project](https://uniq.site)
