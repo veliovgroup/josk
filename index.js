@@ -1,8 +1,7 @@
-/* jshint node:true */
 var NoOp = function() {};
 
 module.exports = (function() {
-  "use strict";
+  'use strict';
   function JoSk(opts) {
     var self = this;
     if (!opts) { opts = {}; }
@@ -15,10 +14,10 @@ module.exports = (function() {
     if (!this.zombieTime) { this.zombieTime = 900000; }
 
     if (!opts.db) {
-      throw "[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`";
+      throw '[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`';
     }
 
-    this.collection = opts.db.collection("__JobTasks__" + this.prefix);
+    this.collection = opts.db.collection('__JobTasks__' + this.prefix);
     this.collection.ensureIndex({uid: 1}, {background: true, unique: true});
     this.collection.ensureIndex({uid: 1, inProgress: 1});
     this.collection.ensureIndex({executeAt: 1, inProgress: 1}, {background: true});
@@ -46,7 +45,7 @@ module.exports = (function() {
             inProgress: false
           }, {
             executeAt: {
-              $lte: new Date(+(new Date()) - self.zombieTime)
+              $lte: new Date(+new Date() - self.zombieTime)
             },
             inProgress: true
           }]
