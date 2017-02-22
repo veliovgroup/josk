@@ -1,10 +1,7 @@
-/* jshint node:true */
-/* jshint esversion:6 */
-;((() => {
-  "use strict";
-  const http        = require('http');
+;(() => {
+  'use strict';
   const MongoClient = require('mongodb').MongoClient;
-  const JoSk        = require('josk');
+  const JoSk        = require('./index.js');
   const mongoAddr   = process.env.MONGO_URL;
 
   MongoClient.connect(mongoAddr, (error, db) => {
@@ -16,20 +13,20 @@
     Job.setInterval((ready) => {
       console.log('30s', new Date());
       ready();
-    }, 30*1000, 'task-30');
+    }, 30 * 1000, 'task-30');
 
     Job.setInterval((ready) => {
       console.warn('60s', new Date());
       ready();
-    }, 60*1000, 'task-60');
+    }, 60 * 1000, 'task-60');
 
     Job.setInterval((ready) => {
       console.log('90s', new Date());
       ready();
-    }, 90*1000, 'task-90');
+    }, 90 * 1000, 'task-90');
 
-    Job.setInterval((ready) => {
+    Job.setInterval(() => {
       console.log('>>> zombie', new Date());
     }, 1000, '>>> zombie');
   });
-})());
+})();
