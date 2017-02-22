@@ -50,13 +50,18 @@ module.exports = (function () {
             inProgress: true
           }]
         }).toArray(function (error, tasks) {
-          tasks.forEach(function (task) {
-            if (self.tasks && self.tasks[task.uid]) {
-              process.nextTick(function () {
-                self.__execute(task, (task.executeAt <= new Date(+new Date() - self.zombieTime)));
-              });
-            }
-          });
+          if (error) {
+            console.error(error);
+            throw '[josk] [General Error during runtime]: ' + error;
+          } else if (tasks && tasks.length) {
+            tasks.forEach(function (task) {
+              if (self.tasks && self.tasks[task.uid]) {
+                process.nextTick(function () {
+                  self.__execute(task, (task.executeAt <= new Date(+new Date() - self.zombieTime)));
+                });
+              }
+            });
+          }
         });
       } catch (_error) {
         return;
