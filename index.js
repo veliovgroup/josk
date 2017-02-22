@@ -1,6 +1,6 @@
-var NoOp = function() {};
+var NoOp = function () {};
 
-module.exports = (function() {
+module.exports = (function () {
   'use strict';
   function JoSk(opts) {
     var self = this;
@@ -49,10 +49,10 @@ module.exports = (function() {
             },
             inProgress: true
           }]
-        }).toArray(function(error, tasks) {
-          tasks.forEach(function(task) {
+        }).toArray(function (error, tasks) {
+          tasks.forEach(function (task) {
             if (self.tasks && self.tasks[task.uid]) {
-              process.nextTick(function() {
+              process.nextTick(function () {
                 self.__execute(task, (task.executeAt <= new Date(+new Date() - self.zombieTime)));
               });
             }
@@ -64,7 +64,7 @@ module.exports = (function() {
     }, (Math.random() * 1536) + 512);
   }
 
-  JoSk.prototype.setInterval = function(func, delay, uid) {
+  JoSk.prototype.setInterval = function (func, delay, uid) {
     if (delay < 0) {
       throw '[josk] [setInterval] delay must be positive Number!';
     }
@@ -80,7 +80,7 @@ module.exports = (function() {
     return uid;
   };
 
-  JoSk.prototype.setTimeout = function(func, delay, uid) {
+  JoSk.prototype.setTimeout = function (func, delay, uid) {
     if (delay < 0) {
       throw '[josk] [setTimeout] delay must be positive Number!';
     }
@@ -96,7 +96,7 @@ module.exports = (function() {
     return uid;
   };
 
-  JoSk.prototype.setImmediate = function(func, uid) {
+  JoSk.prototype.setImmediate = function (func, uid) {
     if (uid) {
       uid += 'setImmediate';
     } else {
@@ -108,15 +108,15 @@ module.exports = (function() {
     return uid;
   };
 
-  JoSk.prototype.clearInterval = function() {
+  JoSk.prototype.clearInterval = function () {
     return this.__clear.apply(this, arguments);
   };
 
-  JoSk.prototype.clearTimeout = function() {
+  JoSk.prototype.clearTimeout = function () {
     return this.__clear.apply(this, arguments);
   };
 
-  JoSk.prototype.__clear = function(uid) {
+  JoSk.prototype.__clear = function (uid) {
     var self = this;
 
     this.collection.updateOne({
@@ -126,7 +126,7 @@ module.exports = (function() {
         executeAt: '',
         inProgress: ''
       }
-    }, function() {
+    }, function () {
       self.collection.deleteOne({
         uid: uid
       }, NoOp);
@@ -137,11 +137,11 @@ module.exports = (function() {
     return true;
   };
 
-  JoSk.prototype.__addTask = function(uid, isInterval, delay) {
+  JoSk.prototype.__addTask = function (uid, isInterval, delay) {
     var self = this;
     this.collection.findOne({
       uid: uid
-    }, function(error, task) {
+    }, function (error, task) {
       if (!task) {
         self.collection.insertOne({
           uid: uid,
@@ -175,7 +175,7 @@ module.exports = (function() {
     });
   };
 
-  JoSk.prototype.__execute = function(task, force) {
+  JoSk.prototype.__execute = function (task, force) {
     var self = this;
     var selector = {
       uid: task.uid
@@ -195,7 +195,7 @@ module.exports = (function() {
 
     this.collection.updateOne(selector, update, function () {
       if (self.tasks && self.tasks[task.uid]) {
-        var ready = function() {
+        var ready = function () {
           if (task.isInterval === true) {
             self.collection.updateOne({
               uid: task.uid
