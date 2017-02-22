@@ -53,7 +53,7 @@ module.exports = (function() {
           tasks.forEach(function(task) {
             if (self.tasks && self.tasks[task.uid]) {
               process.nextTick(function() {
-                self.__execute(task, (task.executeAt <= new Date(+(new Date()) - self.zombieTime)));
+                self.__execute(task, (task.executeAt <= new Date(+new Date() - self.zombieTime)));
               });
             }
           });
@@ -146,7 +146,7 @@ module.exports = (function() {
         self.collection.insertOne({
           uid: uid,
           delay: delay,
-          executeAt: new Date((+(new Date())) + delay),
+          executeAt: new Date(+new Date() + delay),
           isInterval: isInterval,
           inProgress: false
         }, NoOp);
@@ -162,7 +162,7 @@ module.exports = (function() {
           if (!update) {
             update = {};
           }
-          update.executeAt = new Date((+(new Date())) + delay);
+          update.executeAt = new Date(+new Date() + delay);
         }
         if (update) {
           self.collection.updateOne({
@@ -190,7 +190,7 @@ module.exports = (function() {
     if (!force) {
       selector.inProgress = false;
     } else {
-      update['$set'].executeAt = new Date((+(new Date())) + task.delay);
+      update['$set'].executeAt = new Date(+new Date() + task.delay);
     }
 
     this.collection.updateOne(selector, update, function () {
@@ -201,7 +201,7 @@ module.exports = (function() {
               uid: task.uid
             }, {
               $set: {
-                executeAt: new Date((+(new Date())) + task.delay),
+                executeAt: new Date(+new Date() + task.delay),
                 inProgress: false
               }
             }, NoOp);
