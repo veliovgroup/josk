@@ -14,7 +14,7 @@ module.exports = (function () {
     if (!this.zombieTime) { this.zombieTime = 900000; }
 
     if (!opts.db) {
-      throw '[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`';
+      throw new Error('[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`');
     }
 
     this.collection = opts.db.collection('__JobTasks__' + this.prefix);
@@ -52,7 +52,7 @@ module.exports = (function () {
         }).toArray(function (error, tasks) {
           if (error) {
             console.error(error);
-            throw '[josk] [General Error during runtime]: ' + error;
+            throw new Error('[josk] [General Error during runtime]: ' + error);
           } else if (tasks && tasks.length) {
             tasks.forEach(function (task) {
               if (self.tasks && self.tasks[task.uid]) {
@@ -71,13 +71,13 @@ module.exports = (function () {
 
   JoSk.prototype.setInterval = function (func, delay, uid) {
     if (delay < 0) {
-      throw '[josk] [setInterval] delay must be positive Number!';
+      throw new Error('[josk] [setInterval] delay must be positive Number!');
     }
 
     if (uid) {
       uid += 'setInterval';
     } else {
-      throw '[josk] [setInterval] [uid - task id must be specified (3rd argument)]';
+      throw new Error('[josk] [setInterval] [uid - task id must be specified (3rd argument)]');
     }
 
     this.tasks[uid] = func;
@@ -87,13 +87,13 @@ module.exports = (function () {
 
   JoSk.prototype.setTimeout = function (func, delay, uid) {
     if (delay < 0) {
-      throw '[josk] [setTimeout] delay must be positive Number!';
+      throw new Error('[josk] [setTimeout] delay must be positive Number!');
     }
 
     if (uid) {
       uid += 'setTimeout';
     } else {
-      throw '[josk] [setTimeout] [uid - task id must be specified (3rd argument)]';
+      throw new Error('[josk] [setTimeout] [uid - task id must be specified (3rd argument)]');
     }
 
     this.tasks[uid] = func;
@@ -105,7 +105,7 @@ module.exports = (function () {
     if (uid) {
       uid += 'setImmediate';
     } else {
-      throw '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]';
+      throw new Error('[josk] [setImmediate] [uid - task id must be specified (2nd argument)]');
     }
 
     this.tasks[uid] = func;

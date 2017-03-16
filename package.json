@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Task and jobs runner. With support of multiple clusters and servers setup",
   "main": "index.js",
   "scripts": {
