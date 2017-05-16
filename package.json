@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Task and jobs runner. With support of multiple clusters and servers setup",
   "main": "index.js",
   "scripts": {
@@ -25,6 +25,6 @@
   "author": "dr.dimitru (https://veliovgroup.com)",
   "license": "BSD-3-Clause",
   "dependencies": {
-    "mongodb": "^2.2.24"
+    "mongodb": "^2.2.26"
   }
 }
