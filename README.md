@@ -2,9 +2,9 @@ JoSk
 ========
 Simple package with similar API to native `setTimeout` and `setInterval` methods, but synced between all running NodeJS instances via MongoDB Collection.
 
-Multi-instance task manager for Node.js. This package has support of cluster or multi-thread NodeJS instances. This package will help you to make sure only one process of each task is running.
+Multi-instance task manager for Node.js. This package has the support of cluster or multi-thread NodeJS instances. This package will help you to make sure only one process of each task is running.
 
-__This is server-only package.__
+__This is a server-only package.__
 
 - [Install](https://github.com/VeliovGroup/josk#install)
 - [API](https://github.com/VeliovGroup/josk#api)
@@ -30,11 +30,11 @@ import JoSk from 'josk';
 
 Notes:
 ========
-This package is perfect when you have multiple servers for load-balancing, durability, array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app, not per server.
+This package is perfect when you have multiple servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app, not per server.
 
-Limitation - task must be run not often then once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc.
+Limitation - task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc.
 
-Accuracy - Delay of each task depends from MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (1536 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run task with very certain delays. For other cases if `±1536 ms` delays is acceptable - this package is great solution.
+Accuracy - Delay of each task depends on MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (1536 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±1536 ms` delays are acceptable - this package is the great solution.
 
 API:
 ========
@@ -51,7 +51,7 @@ MongoClient.connect(url, function (error, db) {
 });
 ```
 
-Note: This library relies on job ID, so you can not pass same job (with same ID). Always use different `uid`, even for same task:
+Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
 ```javascript
 var task = function (ready) {
   //...some code here
@@ -84,7 +84,7 @@ Job.setInterval(taskB, 60*60*1000, 'taskB');
 Job.setInterval(task1, 60*60*1000, 'task1');
 ```
 
-Note: To cleanup old tasks via MongoDB use next query pattern:
+Note: To clean up old tasks via MongoDB use next query pattern:
 ```js
 // Run directly in MongoDB console:
 db.getCollection('__JobTasks__').remove({});
@@ -101,7 +101,7 @@ db.getCollection('__JobTasks__PrefixHere').remove({});
 
 *Set task into interval execution loop.* `ready()` *is passed as third argument into function.*
 
-In this example, next task will not be scheduled until current is ready:
+In this example, next task will not be scheduled until the current is ready:
 ```javascript
 var syncTask = function (ready) {
   //...run sync code
@@ -118,7 +118,7 @@ Job.setInterval(syncTask, 60*60*1000, 'syncTask');
 Job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
-In this example, next task will not wait for current task to finish:
+In this example, next task will not wait for the current task to finish:
 ```javascript
 var syncTask = function (ready) {
   ready();
@@ -184,7 +184,7 @@ Job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
  - `func` {*Function*} - Function to execute
  - `uid`  {*String*}   - Unique app-wide task id
 
-*Immediate execute function, and only once.* `setImmidiate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as third argument into function.*
+*Immediate execute the function, and only once.* `setImmidiate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the third argument into the function.*
 
 ```javascript
 var syncTask = function (ready) {
@@ -219,4 +219,4 @@ Job.clearTimeout(timer);
 ```
 
 #### Why JoSk?
-`JoSk` is *Job-Task* - Is randomly generated name by [uniq project](https://uniq.site)
+`JoSk` is *Job-Task* - Is randomly generated name by ["uniq" project](https://uniq.site)
