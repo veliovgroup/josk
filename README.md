@@ -11,7 +11,7 @@ __This is a server-only package.__
 - [Constructor](https://github.com/VeliovGroup/josk#initialization)
 - [setInterval](https://github.com/VeliovGroup/josk#setintervalfunc-delay)
 - [setTimeout](https://github.com/VeliovGroup/josk#settimeoutfunc-delay)
-- [setImmidiate](https://github.com/VeliovGroup/josk#setimmidiatefunc)
+- [setImmediate](https://github.com/VeliovGroup/josk#setimmediatefunc)
 - [clearInterval](https://github.com/VeliovGroup/josk#clearintervaltimer)
 - [clearTimeout](https://github.com/VeliovGroup/josk#cleartimeouttimer)
 
@@ -179,12 +179,12 @@ Job.setTimeout(syncTask, 60*60*1000, 'syncTask');
 Job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
-#### `setImmidiate(func, uid)`
+#### `setImmediate(func, uid)`
 
  - `func` {*Function*} - Function to execute
  - `uid`  {*String*}   - Unique app-wide task id
 
-*Immediate execute the function, and only once.* `setImmidiate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the third argument into the function.*
+*Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the third argument into the function.*
 
 ```javascript
 var syncTask = function (ready) {
@@ -198,8 +198,8 @@ var asyncTask = function (ready) {
   });
 };
 
-Job.setImmidiate(syncTask, 'syncTask');
-Job.setImmidiate(asyncTask, 'asyncTask');
+Job.setImmediate(syncTask, 'syncTask');
+Job.setImmediate(asyncTask, 'asyncTask');
 ```
 
 #### `clearInterval(timer)`
