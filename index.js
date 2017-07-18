@@ -1,4 +1,8 @@
 var NoOp = function () {};
+var _debug = function (message) {
+  console.trace();
+  console.warn(message);
+};
 
 module.exports = (function () {
   'use strict';
@@ -51,7 +55,7 @@ module.exports = (function () {
           }]
         }).toArray(function (error, tasks) {
           if (error) {
-            console.error(error);
+            _debug(error);
             throw new Error('[josk] [General Error during runtime]: ' + error);
           } else if (tasks && tasks.length) {
             tasks.forEach(function (task) {
@@ -216,8 +220,7 @@ module.exports = (function () {
         };
         self.tasks[task.uid](ready);
       } else {
-        console.trace();
-        console.warn('[josk] Something went wrong with one of your tasks - it\'s is missing. Try to use different instances.');
+        _debug('[josk] Something went wrong with one of your tasks - it\'s is missing. Try to use different instances.');
       }
     });
   };
