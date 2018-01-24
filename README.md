@@ -14,15 +14,20 @@ __This is a server-only package.__
 - [setImmediate](https://github.com/VeliovGroup/josk#setimmediatefunc)
 - [clearInterval](https://github.com/VeliovGroup/josk#clearintervaltimer)
 - [clearTimeout](https://github.com/VeliovGroup/josk#cleartimeouttimer)
+- [~90% tests coverage](https://github.com/VeliovGroup/josk#testing)
 
 Install:
 ========
 ```shell
+# for node@>=8.9.0
 npm install josk --save
+
+# for node@<8.9.0
+npm install josk@=1.1.0 --save
 ```
 
 ```js
-var JoSk = require('josk');
+const JoSk = require('josk');
 
 //ES6 Style:
 import JoSk from 'josk';
@@ -34,7 +39,7 @@ This package is perfect when you have multiple servers for load-balancing, durab
 
 Limitation - task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc.
 
-Accuracy - Delay of each task depends on MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (1536 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±1536 ms` delays are acceptable - this package is the great solution.
+Accuracy - Delay of each task depends on MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (1536 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution.
 
 API:
 ========
@@ -43,7 +48,7 @@ API:
  - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
  - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
  - `opts.resetOnInit` {*Boolean*} - [Optional] make sure all old tasks is completed before set new one. Useful when you run only one instance of app, or multiple app instances on one machine, in case machine was reloaded during running task and task is unfinished
- - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. Where `resetOnInit` makes sure task is done on startup, but `zombieTime` doing the same function but during runtime. Default value is `900000` (*15 minutes*)
+ - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to less than a minute (*60000ms*)
  - `opts.onError` {*Function*} - [Optional] Informational hook, called instead of throwing exceptions. Default: `false`. Called with two arguments:
      * `title` {*String*}
      * `details` {*Object*}
@@ -59,42 +64,43 @@ API:
 
 #### Initialization:
 ```javascript
-MongoClient.connect(url, function (error, db) {
-  var Job = new JoSk({db: db});
+MongoClient.connect(url, (error, client) => {
+  const db = client.db('dbName');
+  const job = new JoSk({db: db});
 });
 ```
 
 Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
 ```javascript
-var task = function (ready) {
+const task = function (ready) {
   //...some code here
   ready();
 };
 
-Job.setInterval(task, 60*60*1000, 'task-1000');
-Job.setInterval(task, 60*60*2000, 'task-2000');
+job.setInterval(task, 60*60*1000, 'task-1000');
+job.setInterval(task, 60*60*2000, 'task-2000');
 ```
 
 Passing arguments (*not really fancy solution, sorry*):
 ```javascript
-var Job = new JoSk({db: db});
-var globalVar = 'Some top level or env.variable (can be changed over time)';
+const job = new JoSk({db: db});
+let globalVar = 'Some top level or env.variable (can be changed over time)';
 
-var task = function (arg1, arg2, ready) {
+const task = function (arg1, arg2, ready) {
   //...some code here
   ready();
 };
 
-var taskB = function (ready) {
+const taskB = function (ready) {
   task(globalVar, 'b', ready);
 };
 
-var task1 = function (ready) {
+const task1 = function (ready) {
   task(1, globalVar, ready);
 };
 
-Job.setInterval(taskB, 60*60*1000, 'taskB');
-Job.setInterval(task1, 60*60*1000, 'task1');
+job.setInterval(taskB, 60*60*1000, 'taskB');
+job.setInterval(task1, 60*60*1000, 'task1');
 ```
 
 Note: To clean up old tasks via MongoDB use next query pattern:
@@ -116,47 +122,47 @@ db.getCollection('__JobTasks__PrefixHere').remove({});
 
 In this example, next task will not be scheduled until the current is ready:
 ```javascript
-var syncTask = function (ready) {
+const syncTask = function (ready) {
   //...run sync code
   ready();
 };
-var asyncTask = function (ready) {
+const asyncTask = function (ready) {
   asyncCall(function () {
     //...run more async code
     ready();
   });
 };
 
-Job.setInterval(syncTask, 60*60*1000, 'syncTask');
-Job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
+job.setInterval(syncTask, 60*60*1000, 'syncTask');
+job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
 In this example, next task will not wait for the current task to finish:
 ```javascript
-var syncTask = function (ready) {
+const syncTask = function (ready) {
   ready();
   //...run sync code
 };
-var asyncTask = function (ready) {
+const asyncTask = function (ready) {
   ready();
   asyncCall(function () {
     //...run more async code
   });
 };
 
-Job.setInterval(syncTask, 60*60*1000, 'syncTask');
-Job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
+job.setInterval(syncTask, 60*60*1000, 'syncTask');
+job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
 In this example, we're assuming to have long running task, executed in a loop without delay, but after full execution:
 ```javascript
-var longRunningAsyncTask = function (ready) {
-  asyncCall(function (error, result) {
-    if(error){
+const longRunningAsyncTask = function (ready) {
+  asyncCall((error, result) => {
+    if (error) {
       ready(); // <-- Always run `ready()`, even if call was unsuccessful
     } else {
-      anotherCall(result.data, ['param'], function (error, response) {
-        waitForSomethingElse(response, function () {
+      anotherCall(result.data, ['param'], (error, response) => {
+        waitForSomethingElse(response, () => {
           ready(); // <-- End of full execution
         });
       });
@@ -164,7 +170,7 @@ var longRunningAsyncTask = function (ready) {
   });
 };
 
-Job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
+job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
 ```
 
 #### `setTimeout(func, delay, uid)`
@@ -177,19 +183,19 @@ Job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
 `ready()` *is passed as third argument into function.*
 
 ```javascript
-var syncTask = function (ready) {
+const syncTask = function (ready) {
   //...run sync code
   ready();
 };
-var asyncTask = function (ready) {
+const asyncTask = function (ready) {
   asyncCall(function () {
     //...run more async code
     ready();
   });
 };
 
-Job.setTimeout(syncTask, 60*60*1000, 'syncTask');
-Job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
+job.setTimeout(syncTask, 60*60*1000, 'syncTask');
+job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
 ```
 
 #### `setImmediate(func, uid)`
@@ -200,35 +206,46 @@ Job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
 *Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the third argument into the function.*
 
 ```javascript
-var syncTask = function (ready) {
+const syncTask = function (ready) {
   //...run sync code
   ready();
 };
-var asyncTask = function (ready) {
+const asyncTask = function (ready) {
   asyncCall(function () {
     //...run more async code
     ready();
   });
 };
 
-Job.setImmediate(syncTask, 'syncTask');
-Job.setImmediate(asyncTask, 'asyncTask');
+job.setImmediate(syncTask, 'syncTask');
+job.setImmediate(asyncTask, 'asyncTask');
 ```
 
 #### `clearInterval(timer)`
-*Cancel (abort) current interval timer.*
+*Cancel (abort) current interval timer.* Should be called in a separate event loop from `setInterval`.
 
 ```javascript
-var timer = Job.setInterval(func, 34789, 'unique-taskid');
-Job.clearInterval(timer);
+const timer = job.setInterval(func, 34789, 'unique-taskid');
+job.clearInterval(timer);
 ```
 
 #### `clearTimeout(timer)`
-*Cancel (abort) current timeout timer.*
+*Cancel (abort) current timeout timer.* Should be called in a separate event loop from `setTimeout`.
 
 ```javascript
-var timer = Job.setTimeout(func, 34789, 'unique-taskid');
-Job.clearTimeout(timer);
+const timer = job.setTimeout(func, 34789, 'unique-taskid');
+job.clearTimeout(timer);
+```
+
+Testing
+======
+```shell
+# Before run tests make sure NODE_ENV === production
+# Install NPM dependencies
+npm install --save-dev
+
+# Before run tests you need to have running MongoDB
+MONGO_URL="mongodb://127.0.0.1:27017/testCollectionName" npm test
 ```
 
 Why JoSk?
