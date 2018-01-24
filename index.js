@@ -1,17 +1,12 @@
-var NoOp = function () {};
-var _debug = function (message) {
+const NoOp = () => {};
+const _debug = (message) => {
   console.trace();
   console.warn(message);
 };
-var prefixRegex = /(setImmediate|setTimeout|setInterval)$/;
+const prefixRegex = /(setImmediate|setTimeout|setInterval)$/;
 
-module.exports = (function () {
-  'use strict';
-  function JoSk(_opts) {
-    var self = this;
-    var opts = _opts;
-    if (!opts) { opts = {}; }
-
+module.exports = class JoSk {
+  constructor(opts = {}) {
     this.prefix      = opts.prefix;
     this.onError     = opts.onError;
     this.autoClear   = opts.autoClear;
@@ -38,7 +33,7 @@ module.exports = (function () {
       throw new Error('[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`');
     }
 
-    this.collection = opts.db.collection('__JobTasks__' + this.prefix);
+    this.collection = opts.db.collection(`__JobTasks__${this.prefix}`);
     this.collection.ensureIndex({uid: 1}, {background: true, unique: true});
     this.collection.ensureIndex({executeAt: 1, inProgress: 1}, {background: true});
 
@@ -54,36 +49,28 @@ module.exports = (function () {
       }, NoOp);
     }
 
-    this.tasks   = {};
-    var setNext;
-    var _date    = new Date();
-    var runTasks = function () {
+    let setNext;
+    this.tasks = {};
+    let _date  = new Date();
+    const runTasks = () => {
+      _date    = new Date();
       try {
-        _date = new Date();
-        self.collection.findOneAndUpdate({
-          $or: [{
-            executeAt: {
-              $lte: _date
-            },
-            inProgress: false
-          }, {
-            executeAt: {
-              $lte: new Date(+_date - self.zombieTime)
-            },
-            inProgress: true
-          }]
+        this.collection.findOneAndUpdate({
+          executeAt: {
+            $lte: _date
+          }
         }, {
           $set: {
             inProgress: true,
-            executeAt: new Date(+_date + self.zombieTime)
+            executeAt: new Date(+_date + this.zombieTime)
           }
         }, {
           returnOriginal: false
-        }, function (error, task) {
+        }, (error, task) => {
           setNext();
           if (error) {
-            if (self.onError) {
-              self.onError('General Error during runtime', {
+            if (this.onError) {
+              this.onError('General Error during runtime', {
                 description: 'General Error during runtime',
                 error: error,
                 uid: null
@@ -91,11 +78,11 @@ module.exports = (function () {
               return;
             }
             _debug(error);
-            throw new Error('[josk] [General Error during runtime]: ' + error);
+            throw new Error(`[josk] [General Error during runtime]: ${error}`);
           }
 
           if (task.value) {
-            self.__execute(task.value);
+            this.__execute(task.value);
           }
         });
       } catch (_error) {
@@ -104,15 +91,15 @@ module.exports = (function () {
       }
     };
 
-    setNext = function () {
+    setNext = () => {
       setTimeout(runTasks, Math.round((Math.random() * 256) + 32));
     };
 
     setNext();
   }
 
-  JoSk.prototype.setInterval = function (func, delay, _uid) {
-    var uid = _uid;
+  setInterval(func, delay, _uid) {
+    let uid = _uid;
 
     if (delay < 0) {
       throw new Error('[josk] [setInterval] delay must be positive Number!');
@@ -127,10 +114,10 @@ module.exports = (function () {
     this.tasks[uid] = func;
     this.__addTask(uid, true, delay);
     return uid;
-  };
+  }
 
-  JoSk.prototype.setTimeout = function (func, delay, _uid) {
-    var uid = _uid;
+  setTimeout(func, delay, _uid) {
+    let uid = _uid;
 
     if (delay < 0) {
       throw new Error('[josk] [setTimeout] delay must be positive Number!');
@@ -145,10 +132,10 @@ module.exports = (function () {
     this.tasks[uid] = func;
     this.__addTask(uid, false, delay);
     return uid;
-  };
+  }
 
-  JoSk.prototype.setImmediate = function (func, _uid) {
-    var uid = _uid;
+  setImmediate(func, _uid) {
+    let uid = _uid;
 
     if (uid) {
       uid += 'setImmediate';
@@ -159,18 +146,17 @@ module.exports = (function () {
     this.tasks[uid] = func;
     this.__addTask(uid, false, 0);
     return uid;
-  };
+  }
 
-  JoSk.prototype.clearInterval = function () {
+  clearInterval() {
     return this.__clear.apply(this, arguments);
-  };
+  }
 
-  JoSk.prototype.clearTimeout = function () {
+  clearTimeout() {
     return this.__clear.apply(this, arguments);
-  };
+  }
 
-  JoSk.prototype.__clear = function (uid) {
-    var self = this;
+  __clear(uid) {
     this.collection.updateOne({
       uid: uid
     }, {
@@ -178,16 +164,16 @@ module.exports = (function () {
         executeAt: '',
         inProgress: ''
       }
-    }, function (error) {
-      if (error && self.onError) {
-        self.onError('[__clear] [updateOne] [error]', {
+    }, (error) => {
+      if (error && this.onError) {
+        this.onError('[__clear] [updateOne] [error]', {
           description: 'Error in a callback of .updateOne() method of .__clear()',
           error: error,
           uid: uid
         });
       }
 
-      self.collection.deleteOne({
+      this.collection.deleteOne({
         uid: uid
       }, NoOp);
     });
@@ -196,16 +182,15 @@ module.exports = (function () {
       delete this.tasks[uid];
     }
     return true;
-  };
+  }
 
-  JoSk.prototype.__addTask = function (uid, isInterval, delay) {
-    var self = this;
+  __addTask(uid, isInterval, delay) {
     this.collection.findOne({
       uid: uid
-    }, function (error, task) {
+    }, (error, task) => {
       if (error) {
-        if (self.onError) {
-          self.onError('[__addTask] [findOne] [error]', {
+        if (this.onError) {
+          this.onError('[__addTask] [findOne] [error]', {
             description: 'Error in a callback of .findOne() method of .__addTask()',
             error: error,
             uid: uid
@@ -217,7 +202,7 @@ module.exports = (function () {
       }
 
       if (!task) {
-        self.collection.insertOne({
+        this.collection.insertOne({
           uid: uid,
           delay: delay,
           executeAt: new Date(+new Date() + delay),
@@ -225,7 +210,7 @@ module.exports = (function () {
           inProgress: false
         }, NoOp);
       } else {
-        var update = null;
+        let update = null;
         if (task.delay !== delay) {
           if (!update) {
             update = {};
@@ -241,7 +226,7 @@ module.exports = (function () {
         }
 
         if (update) {
-          self.collection.updateOne({
+          this.collection.updateOne({
             uid: uid
           }, {
             $set: update
@@ -249,12 +234,11 @@ module.exports = (function () {
         }
       }
     });
-  };
+  }
 
-  JoSk.prototype.__execute = function (task) {
-    var self = this;
-    var done = function (_date) {
-      self.collection.updateOne({
+  __execute(task) {
+    const done = (_date) => {
+      this.collection.updateOne({
         uid: task.uid
       }, {
         $set: {
@@ -265,18 +249,16 @@ module.exports = (function () {
     };
 
     if (this.tasks && this.tasks[task.uid]) {
-      var ready = function () {
-        var date = new Date();
-        var timestamp = +date;
+      const ready = () => {
+        const date = new Date();
+        const timestamp = +date;
 
         if (task.isInterval === true) {
           done(new Date(timestamp + task.delay));
-        } else {
-          self.__clear(task.uid);
         }
 
-        if (self.onExecuted) {
-          self.onExecuted(task.uid.replace(prefixRegex, ''), {
+        if (this.onExecuted) {
+          this.onExecuted(task.uid.replace(prefixRegex, ''), {
             uid: task.uid,
             timestamp: timestamp,
             date: date
@@ -285,22 +267,31 @@ module.exports = (function () {
       };
 
       this.tasks[task.uid](ready);
+      if (task.isInterval === false) {
+        this.__clear(task.uid);
+      }
     } else {
       done(new Date());
       if (this.autoClear) {
         this.__clear(task.uid);
-        console.info('[josk] [FYI] [' + task.uid + '] task was auto-cleared');
+        console.info(`[josk] [FYI] [${task.uid}] task was auto-cleared`);
       } else if (this.onError) {
         this.onError('One of your tasks is missing', {
-          description: 'Something went wrong with one of your tasks - is missing.\nTry to use different instances.\nIt\'s safe to ignore this message.\nIf this task is obsolete - simply remove it with `JoSk#clearTimeout(\'' + task.uid + '\')`,\nor enable autoClear with `new JoSk({autoClear: true})`',
+          description: `Something went wrong with one of your tasks - is missing.
+            Try to use different instances.
+            It's safe to ignore this message.
+            If this task is obsolete - simply remove it with \`JoSk#clearTimeout('${task.uid}')\`,
+            or enable autoClear with \`new JoSk({autoClear: true})\``,
           error: null,
           uid: task.uid
         });
       } else {
-        _debug('[josk] [' + task.uid + '] Something went wrong with one of your tasks is missing.\nTry to use different instances.\nIt\'s safe to ignore this message.\nIf this task is obsolete - simply remove it with `JoSk#clearTimeout(\'' + task.uid + '\')`,\nor enable autoClear with `new JoSk({autoClear: true})`');
+        _debug(`[josk] [${task.uid}] Something went wrong with one of your tasks is missing.
+          Try to use different instances.
+          It's safe to ignore this message.
+          If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
+          or enable autoClear with \`new JoSk({autoClear: true})\``);
       }
     }
-  };
-
-  return JoSk;
-})();
+  }
+};
