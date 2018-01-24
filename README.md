@@ -77,8 +77,8 @@ const task = function (ready) {
   ready();
 };
 
-job.setInterval(task, 60*60*1000, 'task-1000');
-job.setInterval(task, 60*60*2000, 'task-2000');
+job.setInterval(task, 60 * 60 * 1000, 'task-1000');
+job.setInterval(task, 60 * 60 * 2000, 'task-2000');
 ```
 
 Passing arguments (*not really fancy solution, sorry*):
@@ -99,8 +99,8 @@ const task1 = function (ready) {
   task(1, globalVar, ready);
 };
 
-job.setInterval(taskB, 60*60*1000, 'taskB');
-job.setInterval(task1, 60*60*1000, 'task1');
+job.setInterval(taskB, 60 * 60 * 1000, 'taskB');
+job.setInterval(task1, 60 * 60 * 1000, 'task1');
 ```
 
 Note: To clean up old tasks via MongoDB use next query pattern:
@@ -133,8 +133,8 @@ const asyncTask = function (ready) {
   });
 };
 
-job.setInterval(syncTask, 60*60*1000, 'syncTask');
-job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
+job.setInterval(syncTask, 60 * 60 * 1000, 'syncTask');
+job.setInterval(asyncTask, 60 * 60 * 1000, 'asyncTask');
 ```
 
 In this example, next task will not wait for the current task to finish:
@@ -150,8 +150,8 @@ const asyncTask = function (ready) {
   });
 };
 
-job.setInterval(syncTask, 60*60*1000, 'syncTask');
-job.setInterval(asyncTask, 60*60*1000, 'asyncTask');
+job.setInterval(syncTask, 60 * 60 * 1000, 'syncTask');
+job.setInterval(asyncTask, 60 * 60 * 1000, 'asyncTask');
 ```
 
 In this example, we're assuming to have long running task, executed in a loop without delay, but after full execution:
@@ -194,8 +194,8 @@ const asyncTask = function (ready) {
   });
 };
 
-job.setTimeout(syncTask, 60*60*1000, 'syncTask');
-job.setTimeout(asyncTask, 60*60*1000, 'asyncTask');
+job.setTimeout(syncTask, 60 * 60 * 1000, 'syncTask');
+job.setTimeout(asyncTask, 60 * 60 * 1000, 'asyncTask');
 ```
 
 #### `setImmediate(func, uid)`
