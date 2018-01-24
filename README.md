@@ -118,7 +118,7 @@ db.getCollection('__JobTasks__PrefixHere').remove({});
  - `delay` {*Number*}   - Delay for first run and interval between further executions in milliseconds
  - `uid`   {*String*}   - Unique app-wide task id
 
-*Set task into interval execution loop.* `ready()` *is passed as third argument into function.*
+*Set task into interval execution loop.* `ready()` *is passed as the first argument into task function.*
 
 In this example, next task will not be scheduled until the current is ready:
 ```javascript
@@ -179,8 +179,7 @@ job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
  - `delay` {*Number*}   - Delay in milliseconds
  - `uid`   {*String*}   - Unique app-wide task id
 
-*Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task was executed only once.*
-`ready()` *is passed as third argument into function.*
+*Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task was executed only once.* `ready()` *is passed as the first argument into task function.*
 
 ```javascript
 const syncTask = function (ready) {
@@ -203,7 +202,7 @@ job.setTimeout(asyncTask, 60 * 60 * 1000, 'asyncTask');
  - `func` {*Function*} - Function to execute
  - `uid`  {*String*}   - Unique app-wide task id
 
-*Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the third argument into the function.*
+*Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the first argument into the task function.*
 
 ```javascript
 const syncTask = function (ready) {
