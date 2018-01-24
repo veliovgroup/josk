@@ -245,6 +245,8 @@ npm install --save-dev
 
 # Before run tests you need to have running MongoDB
 MONGO_URL="mongodb://127.0.0.1:27017/testCollectionName" npm test
+
+# Be patient, tests are taking around 2 mins
 ```
 
 Why JoSk?
