@@ -6,6 +6,7 @@ Multi-instance task manager for Node.js. This package has the support of cluster
 
 __This is a server-only package.__
 
+- [__Meteor__ (Atmosphere) version](https://github.com/VeliovGroup/Meteor-CRON-jobs)
 - [Install](https://github.com/VeliovGroup/josk#install)
 - [API](https://github.com/VeliovGroup/josk#api)
 - [Constructor](https://github.com/VeliovGroup/josk#initialization)
@@ -25,6 +26,7 @@ npm install josk --save
 # for node@<8.9.0
 npm install josk@=1.1.0 --save
 ```
+Looking for Meteor (*Atmosphere*) version? - Go to [`ostrio:cron-jobs` package](https://github.com/VeliovGroup/Meteor-CRON-jobs)
 
 ```js
 const JoSk = require('josk');
@@ -239,7 +241,7 @@ job.clearTimeout(timer);
 Testing
 ======
 ```shell
-# Before run tests make sure NODE_ENV === production
+# Before run tests make sure NODE_ENV === development
 # Install NPM dependencies
 npm install --save-dev
 
