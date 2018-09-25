@@ -1,14 +1,10 @@
 {
   "name": "josk",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Task and jobs runner. With support of multiple clusters and servers setup",
   "main": "index.js",
   "scripts": {
     "test": "mocha"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git://github.com/VeliovGroup/josk.git"
   },
   "keywords": [
     "tasks",
@@ -22,15 +18,37 @@
     "job",
     "schedule"
   ],
+  "tags": [
+    "tasks",
+    "jobs",
+    "cluster",
+    "scheduler",
+    "agent",
+    "agenda",
+    "servers",
+    "task",
+    "job",
+    "schedule"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/VeliovGroup/josk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/VeliovGroup/josk/issues"
+  },
+  "homepage": "https://github.com/VeliovGroup/josk",
   "author": "dr.dimitru (https://veliovgroup.com)",
   "license": "BSD-3-Clause",
   "engines": {
     "node": ">=8.9.0"
   },
   "devDependencies": {
-    "mongodb": "^3.0.1",
-    "mocha": "^5.0.0",
     "chai": "^4.1.2",
-    "josk": "file://./"
-  }
+    "josk": "file://./",
+    "mocha": "^5.2.0",
+    "mongodb": "^3.1.6",
+    "pathval": "^1.1.0"
+  },
+  "dependencies": {}
 }

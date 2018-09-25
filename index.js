@@ -1,7 +1,7 @@
 const NoOp = () => {};
 const _debug = (message) => {
   console.trace();
-  console.warn(message);
+  console.warn('[josk]', message);
 };
 const prefixRegex = /(setImmediate|setTimeout|setInterval)$/;
 
@@ -34,8 +34,16 @@ module.exports = class JoSk {
     }
 
     this.collection = opts.db.collection(`__JobTasks__${this.prefix}`);
-    this.collection.ensureIndex({uid: 1}, {background: true, unique: true});
-    this.collection.ensureIndex({executeAt: 1, inProgress: 1}, {background: true});
+    this.collection.createIndex({uid: 1}, {background: true, unique: true}, (indexError) => {
+      if (indexError) {
+        _debug(indexError);
+      }
+    });
+    this.collection.createIndex({executeAt: 1, inProgress: 1}, {background: true}, (indexError) => {
+      if (indexError) {
+        _debug(indexError);
+      }
+    });
 
     if (this.resetOnInit) {
       this.collection.updateMany({}, {
@@ -205,7 +213,7 @@ module.exports = class JoSk {
         this.collection.insertOne({
           uid: uid,
           delay: delay,
-          executeAt: new Date(+new Date() + delay),
+          executeAt: new Date(Date.now() + delay),
           isInterval: isInterval,
           inProgress: false
         }, NoOp);
@@ -218,11 +226,11 @@ module.exports = class JoSk {
           update.delay = delay;
         }
 
-        if (+task.executeAt > +new Date() + delay) {
+        if (+task.executeAt > Date.now() + delay) {
           if (!update) {
             update = {};
           }
-          update.executeAt = new Date(+new Date() + delay);
+          update.executeAt = new Date(Date.now() + delay);
         }
 
         if (update) {

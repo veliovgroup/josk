@@ -29,7 +29,7 @@ const testTimeout = (delay, job) => {
     let taskId;
     taskId = job.setTimeout((ready) => ready(), delay, `taskTimeout-${delay}`);
     callbacks[taskId] = done;
-    timestamps[taskId] = [+new Date()];
+    timestamps[taskId] = [Date.now()];
   });
 };
 
@@ -72,7 +72,7 @@ describe('JoSk Instance', function () {
           }
 
           const actual   = timestamps[details.uid][1] - timestamps[details.uid][0];
-          const expected = +new Date() - timestamps[details.uid][0];
+          const expected = Date.now() - timestamps[details.uid][0];
           const time     = expected - actual;
 
           // console.log(details.uid, {actual, expected, time, emit: actual - expected});
@@ -121,10 +121,10 @@ describe('JoSk Instance', function () {
       this.timeout(RANDOM_GAP * 4);
 
       it('setImmediate - Execution time', function (done) {
-        let time = +new Date();
+        let time = Date.now();
         job.setImmediate((ready) => {
-          // console.log("IMMEDIATE", +new Date() - time, ((RANDOM_GAP * 2) + 1), +new Date() - time < ((RANDOM_GAP * 2) + 1));
-          assert.equal(+new Date() - time < ((RANDOM_GAP * 2) + 1), true, 'setImmediate - executed within appropriate time');
+          // console.log("IMMEDIATE", Date.now() - time, ((RANDOM_GAP * 2) + 1), Date.now() - time < ((RANDOM_GAP * 2) + 1));
+          assert.equal(Date.now() - time < ((RANDOM_GAP * 2) + 1), true, 'setImmediate - executed within appropriate time');
           ready();
           done();
         }, 'taskImmediate-0');
@@ -137,16 +137,16 @@ describe('JoSk Instance', function () {
       this.timeout(13000);
 
       it('setInterval', function (done) {
-        let time = +new Date();
+        let time = Date.now();
         let i = 0;
         const taskId = job.setInterval((ready) => {
           i++;
           if (i === 1) {
-            time = +new Date() - time;
+            time = Date.now() - time;
             assert.equal(time < 2500 + RANDOM_GAP && time > 2500 - RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
-            time = +new Date();
+            time = Date.now();
           } else if (i === 2) {
-            time = +new Date() - time;
+            time = Date.now() - time;
 
             // console.log('taskInterval-zombie-2500', time, time < ZOMBIE_TIME + RANDOM_GAP, ZOMBIE_TIME + RANDOM_GAP);
             assert.equal(time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
