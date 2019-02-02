@@ -38,10 +38,6 @@
     "use-isnan": 2,
     "block-scoped-var": 0,
     "no-undef": "error",
-
-/**
- * Best practices
- */
     "consistent-return": 2,
     "curly": [2, "multi-line"],
     "default-case": 2,
@@ -79,10 +75,6 @@
     "no-with": 2,
     "wrap-iife": [2, "any"],
     "yoda": 2,
-
-/**
- * Style
- */
     "indent": [2, 2],
     "brace-style": [2,
       "1tbs", {
