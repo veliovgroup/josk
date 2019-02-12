@@ -21,7 +21,7 @@ __This is a server-only package.__
 
 - 👷‍♂️ ~90% tests coverage
 - 😎 Synchronize single task across multiple servers
-- 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟‍♂️🔫
+- 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫
 
 ## Install:
 
