@@ -1,9 +1,14 @@
-const NoOp = () => {};
+const mongoErrorHandler = (error) => {
+  if (error) {
+    console.error('[josk] [mongoErrorHandler]:');
+    console.trace(error);
+  }
+};
 const _debug = (message) => {
   console.trace();
   console.warn('[josk]', message);
 };
-const prefixRegex = /(setImmediate|setTimeout|setInterval)$/;
+const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
 module.exports = class JoSk {
   constructor(opts = {}) {
@@ -50,11 +55,11 @@ module.exports = class JoSk {
         $set: {
           inProgress: false
         }
-      }, NoOp);
+      }, mongoErrorHandler);
 
       this.collection.deleteMany({
         isInterval: false
-      }, NoOp);
+      }, mongoErrorHandler);
     }
 
     let setNext;
@@ -183,7 +188,7 @@ module.exports = class JoSk {
 
       this.collection.deleteOne({
         uid: uid
-      }, NoOp);
+      }, mongoErrorHandler);
     });
 
     if (this.tasks && this.tasks[uid]) {
@@ -216,7 +221,7 @@ module.exports = class JoSk {
           executeAt: new Date(Date.now() + delay),
           isInterval: isInterval,
           inProgress: false
-        }, NoOp);
+        }, mongoErrorHandler);
       } else {
         let update = null;
         if (task.delay !== delay) {
@@ -238,7 +243,7 @@ module.exports = class JoSk {
             uid: uid
           }, {
             $set: update
-          }, NoOp);
+          }, mongoErrorHandler);
         }
       }
     });
@@ -253,7 +258,7 @@ module.exports = class JoSk {
           executeAt: _date,
           inProgress: false
         }
-      }, NoOp);
+      }, mongoErrorHandler);
     };
 
     if (this.tasks && this.tasks[task.uid]) {
