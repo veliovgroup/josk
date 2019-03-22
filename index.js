@@ -1,7 +1,7 @@
 const mongoErrorHandler = (error) => {
   if (error) {
-    console.error('[josk] [mongoErrorHandler]:');
-    console.trace(error);
+    console.trace();
+    console.error('[josk] [mongoErrorHandler]:', error);
   }
 };
 const _debug = (message) => {
