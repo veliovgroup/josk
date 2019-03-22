@@ -20,6 +20,7 @@ __This is a server-only package.__
 ## Main features:
 
 - 👷‍♂️ ~90% tests coverage
+- 📦 Zero dependencies, written from scratch for top performance
 - 😎 Synchronize single task across multiple servers
 - 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫
 
