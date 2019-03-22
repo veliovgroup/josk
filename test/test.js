@@ -44,7 +44,19 @@ describe('JoSk Instance', function () {
   this.timeout(85000);
 
   (async function() {
-    const client = await MongoClient.connect(mongoAddr);
+    const client = await MongoClient.connect(mongoAddr, {
+      w: 0,
+      j: false,
+      poolSize: 15,
+      readPreference: 'primaryPreferred',
+      reconnectTries: 60,
+      socketTimeoutMS: 720000,
+      useNewUrlParser: true,
+      connectTimeoutMS: 120000,
+      reconnectInterval: 3072,
+      connectWithNoPrimary: true,
+      appname: 'josk test suite'
+    });
     const db = client.db(dbName);
 
     const job = new JoSk({
@@ -75,7 +87,7 @@ describe('JoSk Instance', function () {
           const expected = Date.now() - timestamps[details.uid][0];
           const time     = expected - actual;
 
-          // console.log(details.uid, {actual, expected, time, emit: actual - expected});
+          console.log(details.uid, {actual, expected, time, emit: actual - expected});
 
           assert.equal(time < RANDOM_GAP && time > -RANDOM_GAP, true, 'setInterval has expected execution periods');
           callbacks[details.uid]();
@@ -100,20 +112,34 @@ describe('JoSk Instance', function () {
       this.slow(30000);
       this.timeout(32000);
 
-      testInterval(768, job);
-      testInterval(2000, job);
-      testInterval(5000, job);
-      testInterval(7000, job);
+      testInterval(1024, job);
+      testInterval(1032, job);
+      testInterval(1040, job);
+      testInterval(1048, job);
+      testInterval(1056, job);
+      testInterval(1064, job);
+      testInterval(1072, job);
+      testInterval(1080, job);
+      testInterval(1088, job);
+      testInterval(1096, job);
+      testInterval(1104, job);
     });
 
     describe('setTimeout', function () {
       this.slow(14000);
       this.timeout(16000);
 
-      testTimeout(768, job);
-      testTimeout(2000, job);
-      testTimeout(5000, job);
-      testTimeout(7000, job);
+      testTimeout(1024, job);
+      testTimeout(1032, job);
+      testTimeout(1040, job);
+      testTimeout(1048, job);
+      testTimeout(1056, job);
+      testTimeout(1064, job);
+      testTimeout(1072, job);
+      testTimeout(1080, job);
+      testTimeout(1088, job);
+      testTimeout(1096, job);
+      testTimeout(1104, job);
     });
 
     describe('setImmediate', function () {
@@ -123,7 +149,7 @@ describe('JoSk Instance', function () {
       it('setImmediate - Execution time', function (done) {
         let time = Date.now();
         job.setImmediate((ready) => {
-          // console.log("IMMEDIATE", Date.now() - time, ((RANDOM_GAP * 2) + 1), Date.now() - time < ((RANDOM_GAP * 2) + 1));
+          console.log("IMMEDIATE", Date.now() - time, ((RANDOM_GAP * 2) + 1), Date.now() - time < ((RANDOM_GAP * 2) + 1));
           assert.equal(Date.now() - time < ((RANDOM_GAP * 2) + 1), true, 'setImmediate - executed within appropriate time');
           ready();
           done();
@@ -148,7 +174,7 @@ describe('JoSk Instance', function () {
           } else if (i === 2) {
             time = Date.now() - time;
 
-            // console.log('taskInterval-zombie-2500', time, time < ZOMBIE_TIME + RANDOM_GAP, ZOMBIE_TIME + RANDOM_GAP);
+            console.log('taskInterval-zombie-2500', time, time < ZOMBIE_TIME + RANDOM_GAP, ZOMBIE_TIME + RANDOM_GAP);
             assert.equal(time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
             job.clearInterval(taskId);
             done();
