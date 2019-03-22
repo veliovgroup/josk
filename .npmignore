@@ -1,5 +1,7 @@
 node_modules
 .npm
+.github
 
+.DS_Store
 cover.png
 test.js
