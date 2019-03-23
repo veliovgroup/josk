@@ -1,6 +1,9 @@
 .npm
 .github
+.DS_Store
+.eslintcache
 node_modules
+npm-debug.log*
 
 cover.png
-test.js
+cover.jpg
