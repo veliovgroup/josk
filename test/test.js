@@ -45,16 +45,20 @@ describe('JoSk Instance', function () {
 
   (async function() {
     const client = await MongoClient.connect(mongoAddr, {
-      w: 0,
-      j: false,
+      j: true,
+      w: 'majority',
+      wtimeout: 30000,
       poolSize: 15,
-      readPreference: 'primaryPreferred',
+      readConcern: {
+        level: 'majority'
+      },
+      readPreference: 'primary',
       reconnectTries: 60,
       socketTimeoutMS: 720000,
       useNewUrlParser: true,
       connectTimeoutMS: 120000,
       reconnectInterval: 3072,
-      connectWithNoPrimary: true,
+      connectWithNoPrimary: false,
       appname: 'josk test suite'
     });
     const db = client.db(dbName);
@@ -165,7 +169,7 @@ describe('JoSk Instance', function () {
       it('setInterval', function (done) {
         let time = Date.now();
         let i = 0;
-        const taskId = job.setInterval((ready) => {
+        const taskId = job.setInterval(() => {
           i++;
           if (i === 1) {
             time = Date.now() - time;
