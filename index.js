@@ -39,12 +39,12 @@ module.exports = class JoSk {
     }
 
     this.collection = opts.db.collection(`__JobTasks__${this.prefix}`);
-    this.collection.createIndex({uid: 1}, {background: true, unique: true}, (indexError) => {
+    this.collection.createIndex({uid: 1}, {background: false, unique: true}, (indexError) => {
       if (indexError) {
         _debug(indexError);
       }
     });
-    this.collection.createIndex({executeAt: 1, inProgress: 1}, {background: true}, (indexError) => {
+    this.collection.createIndex({executeAt: 1}, {background: false}, (indexError) => {
       if (indexError) {
         _debug(indexError);
       }
@@ -63,10 +63,10 @@ module.exports = class JoSk {
     }
 
     let setNext;
+    let _date;
     this.tasks = {};
-    let _date  = new Date();
     const runTasks = () => {
-      _date    = new Date();
+      _date = new Date();
       try {
         this.collection.findOneAndUpdate({
           executeAt: {

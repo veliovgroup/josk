@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "2.0.5",
+  "version": "2.1.0",
   "description": "Task and jobs runner. With support of multiple clusters and servers setup",
   "main": "index.js",
   "scripts": {
@@ -44,9 +44,12 @@
     "node": ">=8.9.0"
   },
   "devDependencies": {
+    "bson": "^4.0.2",
+    "bson-ext": "^2.0.2",
     "chai": "^4.2.0",
     "mocha": "^6.0.2",
-    "mongodb": "^3.1.6"
+    "mongodb": "^3.2.7",
+    "pathval": "^1.1.0"
   },
   "dependencies": {}
 }

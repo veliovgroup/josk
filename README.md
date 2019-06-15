@@ -1,13 +1,17 @@
 # JoSk
 
+<a href="https://www.patreon.com/bePatron?u=20396046">
+  <img src="https://c5.patreon.com/external/logo/become_a_patron_button@2x.png" width="160">
+</a>
+
 Simple package with similar API to native `setTimeout` and `setInterval` methods, but synced between all running NodeJS instances via MongoDB Collection.
 
 Multi-instance task manager for Node.js. This package has the support of cluster or multi-thread NodeJS instances. This package will help you to make sure only one process of each task is running.
 
 __This is a server-only package.__
 
-- [__Meteor__ (Atmosphere) version](https://github.com/VeliovGroup/Meteor-CRON-jobs)
 - [Install](https://github.com/VeliovGroup/josk#install)
+- [Install Meteor](https://github.com/VeliovGroup/josk#install-meteor)
 - [API](https://github.com/VeliovGroup/josk#api)
 - [Constructor](https://github.com/VeliovGroup/josk#initialization)
 - [setInterval](https://github.com/VeliovGroup/josk#setintervalfunc-delay)
@@ -34,13 +38,46 @@ npm install josk --save
 npm install josk@=1.1.0 --save
 ```
 
-Looking for Meteor (*Atmosphere*) version? - Go to [`ostrio:cron-jobs` package](https://github.com/VeliovGroup/Meteor-CRON-jobs)
-
 ```js
 const JoSk = require('josk');
 
 //ES6 Style:
 import JoSk from 'josk';
+```
+
+## Install Meteor:
+
+```shell
+meteor add ostrio:cron-jobs
+```
+
+```js
+import JoSk from 'meteor/ostrio:cron-jobs';
+```
+
+### Known Meteor Issues:
+
+```log
+Error: Can't wait without a fiber
+```
+
+Can be easily solved via "bounding to Fiber":
+
+```js
+const bound = Meteor.bindEnvironment((callback) => {
+  callback();
+});
+
+const db  = Collection.rawDatabase();
+const job = new JoSk({db: db});
+
+const task = (ready) => {
+  bound(() => { // <-- use "bound" inside of a task
+    ready();
+  });
+};
+
+job.setInterval(task, 60 * 60 * 1000, 'task');
 ```
 
 ## Notes:
@@ -76,10 +113,20 @@ Accuracy - Delay of each task depends on MongoDB and "de-synchronization delay".
 ### Initialization:
 
 ```js
-MongoClient.connect(url, (error, client) => {
+MongoClient.connect('url', (error, client) => {
+  // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
   const db = client.db('dbName');
   const job = new JoSk({db: db});
 });
+```
+
+#### Initialization in Meteor:
+
+```js
+// Meteor.users.rawDatabase() is available in most Meteor setups
+// If this is not your case, you can use `rawDatabase` form any other collection
+const db  = Meteor.users.rawDatabase();
+const job = new JoSk({db: db});
 ```
 
 Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
@@ -267,7 +314,22 @@ job.clearTimeout(timer);
 npm install --save-dev
 
 # Before run tests you need to have running MongoDB
-MONGO_URL="mongodb://127.0.0.1:27017/testCollectionName" npm test
+MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm test
+
+# Be patient, tests are taking around 2 mins
+```
+
+### Running Tests in Meteor environment
+
+```shell
+# Default
+meteor test-packages ./ --driver-package=meteortesting:mocha
+
+# With custom port
+meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+
+# With local MongoDB and custom port
+MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
 # Be patient, tests are taking around 2 mins
 ```
@@ -278,6 +340,5 @@ MONGO_URL="mongodb://127.0.0.1:27017/testCollectionName" npm test
 
 ## Support our open source contribution:
 
-This project wouldn't be possible without [ostr.io](https://ostr.io).
-
-Using [ostr.io](https://ostr.io) you are not only [protecting domain names](https://ostr.io/info/domain-names-protection), [monitoring websites and servers](https://ostr.io/info/monitoring), using [Prerendering for better SEO](https://ostr.io/info/prerendering) of your JavaScript website, but support our Open Source activity, and great packages like this one are available for free.
+- [Become a patron](https://www.patreon.com/bePatron?u=20396046) — support my open source contributions with monthly donation
+- Use [ostr.io](https://ostr.io) — [Monitoring](https://snmp-monitoring.com), [Analytics](https://ostr.io/info/web-analytics), [WebSec](https://domain-protection.info), [Web-CRON](https://web-cron.info) and [Pre-rendering](https://prerendering.com) for a website
