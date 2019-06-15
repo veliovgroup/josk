@@ -10,8 +10,8 @@ Multi-instance task manager for Node.js. This package has the support of cluster
 
 __This is a server-only package.__
 
-- [Install](https://github.com/VeliovGroup/josk#install)
-- [Install Meteor](https://github.com/VeliovGroup/josk#install-meteor)
+- [Install](https://github.com/VeliovGroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
+- [Install Meteor](https://github.com/VeliovGroup/josk#install-meteor) as [Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
 - [API](https://github.com/VeliovGroup/josk#api)
 - [Constructor](https://github.com/VeliovGroup/josk#initialization)
 - [setInterval](https://github.com/VeliovGroup/josk#setintervalfunc-delay)
