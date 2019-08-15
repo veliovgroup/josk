@@ -146,6 +146,24 @@ module.exports = class JoSk {
     this.__addTask(uid, false, delay);
     return uid;
   }
+  
+  setTimeat(func, date, _uid) {
+    let uid = _uid;
+    if (!(date instanceof Date)) {
+      throw new Error('[josk] [setTimeAt] date must be Date!');
+    }
+    if (!uid) {
+      throw new Error('[josk] [setTimeAt] [uid - task id must be specified (3rd argument)]');
+    }
+    const delay = date.getTime() - Date.now();
+    if (delay > 0) {
+      // at future time
+      this.setTimeout(func, delay, uid);
+    } else {
+      this.setImmediate(func, uid);
+    }
+    return uid;
+  }
 
   setImmediate(func, _uid) {
     let uid = _uid;

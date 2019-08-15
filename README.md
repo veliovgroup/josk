@@ -261,6 +261,30 @@ job.setTimeout(syncTask, 60 * 60 * 1000, 'syncTask');
 job.setTimeout(asyncTask, 60 * 60 * 1000, 'asyncTask');
 ```
 
+### `setTimeat(func, date, uid)`
+
+- `func`  {*Function*} - Function to call on schedule
+- `date` {*Date*}   - Date to execute
+- `uid`   {*String*}   - Unique app-wide task id
+
+*Set task at some date execution.* `setTimeat` *is useful for cluster - when you need to make sure task was executed only once at some date.* `ready()` *is passed as the first argument into task function.*
+
+```
+const syncTask = function (ready) {
+  //...run sync code
+  ready();
+};
+const asyncTask = function (ready) {
+  asyncCall(function () {
+    //...run more async code
+    ready();
+  });
+};
+
+job.setTimeat(syncTask, new Date('2020/8/20 00:00:00'), 'syncTask');
+job.setTimeat(asyncTask,  new Date('2020/8/20 00:00:00'), 'asyncTask');
+```
+
 ### `setImmediate(func, uid)`
 
 - `func` {*Function*} - Function to execute
