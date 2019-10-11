@@ -3,8 +3,8 @@ const mongoErrorHandler = (error) => {
     console.error('[josk] [mongoErrorHandler]:', error);
   }
 };
-const _debug = (message) => {
-  console.warn('[josk]', message);
+const _debug = (...args) => {
+  console.info.call(console, '[DEBUG] [josk]', ...args);
 };
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
@@ -31,82 +31,33 @@ module.exports = class JoSk {
           error: '{db} option is required',
           uid: null
         });
-        return;
+      } else {
+        _debug('[constructor] MongoDB database {db} option is required, like returned from `MongoClient.connect`');
       }
-      throw new Error('[josk] MongoDB database {db} option is required, like returned from `MongoClient.connect`');
+      return;
     }
 
     this.collection = opts.db.collection(`__JobTasks__${this.prefix}`);
     this.collection.createIndex({uid: 1}, {background: false, unique: true}, (indexError) => {
       if (indexError) {
-        _debug(indexError);
+        _debug('[constructor] [createIndex] [uid]', indexError);
       }
     });
+
     this.collection.createIndex({executeAt: 1}, {background: false}, (indexError) => {
       if (indexError) {
-        _debug(indexError);
+        _debug('[constructor] [createIndex] [executeAt]', indexError);
       }
     });
 
     if (this.resetOnInit) {
-      this.collection.updateMany({}, {
-        $set: {
-          inProgress: false
-        }
-      }, mongoErrorHandler);
-
       this.collection.deleteMany({
         isInterval: false
       }, mongoErrorHandler);
     }
 
-    let setNext;
-    let _date;
     this.tasks = {};
-    const runTasks = () => {
-      _date = new Date();
-      try {
-        this.collection.findOneAndUpdate({
-          executeAt: {
-            $lte: _date
-          }
-        }, {
-          $set: {
-            inProgress: true,
-            executeAt: new Date(+_date + this.zombieTime)
-          }
-        }, {
-          returnOriginal: false
-        }, (error, task) => {
-          setNext();
-          if (error) {
-            if (this.onError) {
-              this.onError('General Error during runtime', {
-                description: 'General Error during runtime',
-                error: error,
-                uid: null
-              });
-              return;
-            }
-            _debug(error);
-            throw new Error(`[General Error during runtime]: ${error}`);
-          }
-
-          if (task.value) {
-            this.__execute(task.value);
-          }
-        });
-      } catch (_error) {
-        setNext();
-        return;
-      }
-    };
-
-    setNext = () => {
-      setTimeout(runTasks, Math.round((Math.random() * 256) + 32));
-    };
-
-    setNext();
+    this.__setNext();
   }
 
   setInterval(func, delay, _uid) {
@@ -172,16 +123,19 @@ module.exports = class JoSk {
       uid: uid
     }, {
       $unset: {
-        executeAt: '',
-        inProgress: ''
+        executeAt: ''
       }
     }, (error) => {
-      if (error && this.onError) {
-        this.onError('[__clear] [updateOne] [error]', {
-          description: 'Error in a callback of .updateOne() method of .__clear()',
-          error: error,
-          uid: uid
-        });
+      if (error) {
+        if (this.onError) {
+          this.onError('[__clear] [updateOne] [error]', {
+            description: 'Error in a callback of .updateOne() method of .__clear()',
+            error: error,
+            uid: uid
+          });
+        } else {
+          _debug('[__clear] [updateOne]', error);
+        }
       }
 
       this.collection.deleteOne({
@@ -206,10 +160,10 @@ module.exports = class JoSk {
             error: error,
             uid: uid
           });
-          return;
+        } else {
+          _debug('[__addTask] [findOne] [error]', error);
         }
-        _debug(error);
-        throw new Error('[__addTask] [Error]: ' + error);
+        return;
       }
 
       if (!task) {
@@ -217,8 +171,7 @@ module.exports = class JoSk {
           uid: uid,
           delay: delay,
           executeAt: new Date(Date.now() + delay),
-          isInterval: isInterval,
-          inProgress: false
+          isInterval: isInterval
         }, mongoErrorHandler);
       } else {
         let update = null;
@@ -253,8 +206,7 @@ module.exports = class JoSk {
         uid: task.uid
       }, {
         $set: {
-          executeAt: _date,
-          inProgress: false
+          executeAt: _date
         }
       }, mongoErrorHandler);
     };
@@ -285,7 +237,7 @@ module.exports = class JoSk {
       done(new Date());
       if (this.autoClear) {
         this.__clear(task.uid);
-        console.info(`[josk] [FYI] [${task.uid}] task was auto-cleared`);
+        _debug(`[FYI] [${task.uid}] task was auto-cleared`);
       } else if (this.onError) {
         this.onError('One of your tasks is missing', {
           description: `Something went wrong with one of your tasks - is missing.
@@ -297,12 +249,58 @@ module.exports = class JoSk {
           uid: task.uid
         });
       } else {
-        _debug(`[${task.uid}] Something went wrong with one of your tasks is missing.
+        _debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
           Try to use different instances.
           It's safe to ignore this message.
           If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
           or enable autoClear with \`new JoSk({autoClear: true})\``);
       }
     }
+  }
+
+  __runTasks() {
+    const _date = new Date();
+
+    try {
+      this.collection.findOneAndUpdate({
+        executeAt: {
+          $lte: _date
+        }
+      }, {
+        $set: {
+          executeAt: new Date(+_date + this.zombieTime)
+        }
+      }, (error, task) => {
+        this.__setNext();
+        if (error) {
+          if (this.onError) {
+            this.onError('General Error during runtime', {
+              description: 'General Error during runtime',
+              error: error,
+              uid: null
+            });
+          } else {
+            _debug('[__runTasks] [findOneAndUpdate]', error);
+          }
+        } else if (task.value) {
+          this.__execute(task.value);
+        }
+      });
+    } catch (_error) {
+      this.__setNext();
+      if (this.onError) {
+        this.onError('General Error during runtime', {
+          description: 'General Error during runtime',
+          error: _error,
+          uid: null
+        });
+      } else {
+        _debug('[__runTasks] [findOneAndUpdate] [catch]', _error);
+      }
+    }
+  }
+
+  __setNext() {
+    setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * 256) + 32));
   }
 };

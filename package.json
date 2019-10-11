@@ -1,10 +1,10 @@
 {
   "name": "josk",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Task and jobs runner. With support of multiple clusters and servers setup",
   "main": "index.js",
   "scripts": {
-    "test": "mocha"
+    "test": "mocha ./test/npm.js"
   },
   "keywords": [
     "tasks",
@@ -45,9 +45,9 @@
   },
   "devDependencies": {
     "bson": "^4.0.2",
-    "bson-ext": "^2.0.2",
+    "bson-ext": "^2.0.3",
     "chai": "^4.2.0",
-    "mocha": "^6.0.2",
+    "mocha": "^6.2.1",
     "mongodb": "^3.2.7",
     "pathval": "^1.1.0"
   },
