@@ -1,11 +1,9 @@
 const mongoErrorHandler = (error) => {
   if (error) {
-    console.trace();
     console.error('[josk] [mongoErrorHandler]:', error);
   }
 };
 const _debug = (message) => {
-  console.trace();
   console.warn('[josk]', message);
 };
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
@@ -91,7 +89,7 @@ module.exports = class JoSk {
               return;
             }
             _debug(error);
-            throw new Error(`[josk] [General Error during runtime]: ${error}`);
+            throw new Error(`[General Error during runtime]: ${error}`);
           }
 
           if (task.value) {
@@ -211,7 +209,7 @@ module.exports = class JoSk {
           return;
         }
         _debug(error);
-        throw new Error('[josk] [__addTask] [Error]: ' + error);
+        throw new Error('[__addTask] [Error]: ' + error);
       }
 
       if (!task) {
@@ -299,7 +297,7 @@ module.exports = class JoSk {
           uid: task.uid
         });
       } else {
-        _debug(`[josk] [${task.uid}] Something went wrong with one of your tasks is missing.
+        _debug(`[${task.uid}] Something went wrong with one of your tasks is missing.
           Try to use different instances.
           It's safe to ignore this message.
           If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
