@@ -17,8 +17,7 @@ const callbacks        = {};
 
 const testInterval = (interval, job) => {
   it(`setInterval ${interval}`, function (done) {
-    let taskId;
-    taskId = job.setInterval((ready) => ready(), interval, `taskInterval-${interval}`);
+    const taskId = job.setInterval((ready) => ready(), interval, `taskInterval-${interval}`);
     callbacks[taskId] = done;
     timestamps[taskId] = [];
   });
@@ -26,8 +25,7 @@ const testInterval = (interval, job) => {
 
 const testTimeout = (delay, job) => {
   it(`setTimeout ${delay}`, function (done) {
-    let taskId;
-    taskId = job.setTimeout((ready) => ready(), delay, `taskTimeout-${delay}`);
+    const taskId = job.setTimeout((ready) => ready(), delay, `taskTimeout-${delay}`);
     callbacks[taskId] = done;
     timestamps[taskId] = [Date.now()];
   });
@@ -68,7 +66,7 @@ describe('JoSk Instance', function () {
       prefix: 'testCase',
       zombieTime: ZOMBIE_TIME,
       onError(message, details) {
-        console.error('[onError Hook]', message, details.uid);
+        console.error('[onError Hook]', message, details);
         if (message === 'One of your tasks is missing') {
           job.clearInterval(details.uid);
         }
@@ -151,9 +149,9 @@ describe('JoSk Instance', function () {
       this.timeout(RANDOM_GAP * 4);
 
       it('setImmediate - Execution time', function (done) {
-        let time = Date.now();
+        const time = Date.now();
         job.setImmediate((ready) => {
-          console.log("IMMEDIATE", Date.now() - time, ((RANDOM_GAP * 2) + 1), Date.now() - time < ((RANDOM_GAP * 2) + 1));
+          console.log('IMMEDIATE', Date.now() - time, ((RANDOM_GAP * 2) + 1), Date.now() - time < ((RANDOM_GAP * 2) + 1));
           assert.equal(Date.now() - time < ((RANDOM_GAP * 2) + 1), true, 'setImmediate - executed within appropriate time');
           ready();
           done();
@@ -161,10 +159,9 @@ describe('JoSk Instance', function () {
       });
     });
 
-
     describe('zombieTime (stuck task recovery)', function () {
-      this.slow(11000);
-      this.timeout(13000);
+      this.slow(10500);
+      this.timeout(18000);
 
       it('setInterval', function (done) {
         let time = Date.now();
@@ -172,14 +169,14 @@ describe('JoSk Instance', function () {
         const taskId = job.setInterval(() => {
           i++;
           if (i === 1) {
-            time = Date.now() - time;
-            assert.equal(time < 2500 + RANDOM_GAP && time > 2500 - RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
+            const _time = Date.now() - time;
+            assert.equal(_time < 2500 + RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
             time = Date.now();
           } else if (i === 2) {
-            time = Date.now() - time;
+            const _time = Date.now() - time;
 
-            console.log('taskInterval-zombie-2500', time, time < ZOMBIE_TIME + RANDOM_GAP, ZOMBIE_TIME + RANDOM_GAP);
-            assert.equal(time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
+            console.log('taskInterval-zombie-2500', _time, _time < (ZOMBIE_TIME + RANDOM_GAP), ZOMBIE_TIME + RANDOM_GAP);
+            assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
             job.clearInterval(taskId);
             done();
           }
@@ -197,7 +194,7 @@ describe('JoSk Instance', function () {
           check = true;
           ready();
           throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-        }, 1500, 'taskTimeout-abort-1500');
+        }, 1200, 'taskTimeout-abort-1500');
 
         setTimeout(() => {
           job.clearTimeout(taskId);
@@ -215,7 +212,7 @@ describe('JoSk Instance', function () {
           check = true;
           ready();
           throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-        }, 1500, 'taskInterval-abort-1500');
+        }, 1200, 'taskInterval-abort-1500');
 
         setTimeout(() => {
           job.clearInterval(taskId);

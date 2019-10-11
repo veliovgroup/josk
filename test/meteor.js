@@ -1,6 +1,7 @@
 import { Meteor }       from 'meteor/meteor';
 import CRONjob          from 'meteor/ostrio:cron-jobs';
 import { assert }       from 'meteor/practicalmeteor:chai';
+// import { it, describe } from 'meteor/practicalmeteor:mocha';
 
 const db          = Meteor.users.rawDatabase();
 const ZOMBIE_TIME = 8000;
@@ -130,8 +131,8 @@ describe('setImmediate', function () {
 
 
 describe('zombieTime (stuck task recovery)', function () {
-  this.slow(11000);
-  this.timeout(13000);
+  this.slow(10500);
+  this.timeout(18000);
 
   it('setInterval', function (done) {
     let time = Date.now();
@@ -164,7 +165,7 @@ describe('Cancel (abort) current timers', function () {
       check = true;
       ready();
       throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-    }, 1500, 'taskTimeout-abort-1500');
+    }, 1200, 'taskTimeout-abort-1500');
 
     setTimeout(() => {
       cron.clearTimeout(taskId);
@@ -182,7 +183,7 @@ describe('Cancel (abort) current timers', function () {
       check = true;
       ready();
       throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-    }, 1500, 'taskInterval-abort-1500');
+    }, 1200, 'taskInterval-abort-1500');
 
     setTimeout(() => {
       cron.clearInterval(taskId);
