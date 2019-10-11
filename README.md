@@ -145,7 +145,7 @@ Passing arguments (*not really fancy solution, sorry*):
 
 ```js
 const job = new JoSk({db: db});
-let globalVar = 'Some top level or env.variable (can be changed over time)';
+let globalVar = 'Some top level or env.variable (can be changed during runtime)';
 
 const task = function (arg1, arg2, ready) {
   //...some code here
