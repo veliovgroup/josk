@@ -17,12 +17,17 @@ module.exports = class JoSk {
     this.onExecuted  = opts.onExecuted;
     this.resetOnInit = opts.resetOnInit;
 
+    this.minRevolvingDelay = opts.minRevolvingDelay;
+    this.maxRevolvingDelay = opts.maxRevolvingDelay;
+
     if (!this.prefix) { this.prefix = ''; }
     if (!this.onError) { this.onError = false; }
     if (!this.autoClear) { this.autoClear = false; }
     if (!this.zombieTime) { this.zombieTime = 900000; }
     if (!this.onExecuted) { this.onExecuted = false; }
     if (!this.resetOnInit) { this.resetOnInit = false; }
+    if (!this.minRevolvingDelay) { this.minRevolvingDelay = 32; }
+    if (!this.maxRevolvingDelay) { this.maxRevolvingDelay = 256; }
 
     if (!opts.db) {
       if (this.onError) {
@@ -126,6 +131,10 @@ module.exports = class JoSk {
         executeAt: ''
       }
     }, (error) => {
+      this.collection.deleteOne({
+        uid: uid
+      }, mongoErrorHandler);
+
       if (error) {
         if (this.onError) {
           this.onError('[__clear] [updateOne] [error]', {
@@ -137,10 +146,6 @@ module.exports = class JoSk {
           _debug('[__clear] [updateOne]', error);
         }
       }
-
-      this.collection.deleteOne({
-        uid: uid
-      }, mongoErrorHandler);
     });
 
     if (this.tasks && this.tasks[uid]) {
@@ -223,8 +228,9 @@ module.exports = class JoSk {
         if (this.onExecuted) {
           this.onExecuted(task.uid.replace(prefixRegex, ''), {
             uid: task.uid,
-            timestamp: timestamp,
-            date: date
+            date: date,
+            delay: task.delay,
+            timestamp: timestamp
           });
         }
       };
@@ -260,7 +266,6 @@ module.exports = class JoSk {
 
   __runTasks() {
     const _date = new Date();
-
     try {
       this.collection.findOneAndUpdate({
         executeAt: {
@@ -301,6 +306,6 @@ module.exports = class JoSk {
   }
 
   __setNext() {
-    setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * 256) + 32));
+    setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
   }
 };
