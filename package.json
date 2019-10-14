@@ -1,7 +1,7 @@
 {
   "name": "josk",
-  "version": "2.1.1",
-  "description": "Task and jobs runner. With support of multiple clusters and servers setup",
+  "version": "2.2.0",
+  "description": "Scheduler and manager for jobs and tasks in Node.js on multi-server and clusters setup",
   "main": "index.js",
   "scripts": {
     "test": "mocha ./test/npm.js"
@@ -48,7 +48,7 @@
     "bson-ext": "^2.0.3",
     "chai": "^4.2.0",
     "mocha": "^6.2.1",
-    "mongodb": "^3.2.7",
+    "mongodb": "^3.3.2",
     "pathval": "^1.1.0"
   },
   "dependencies": {}
