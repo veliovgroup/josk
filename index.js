@@ -130,21 +130,15 @@ module.exports = class JoSk {
       $unset: {
         executeAt: ''
       }
-    }, (error) => {
-      this.collection.deleteOne({
-        uid: uid
-      }, mongoErrorHandler);
-
-      if (error) {
-        if (this.onError) {
-          this.onError('[__clear] [updateOne] [error]', {
-            description: 'Error in a callback of .updateOne() method of .__clear()',
-            error: error,
-            uid: uid
-          });
-        } else {
-          _debug('[__clear] [updateOne]', error);
-        }
+    }, (updateError) => {
+      if (updateError) {
+        this.__errorHandler(updateError, '[__clear] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__clear()', uid);
+      } else {
+        this.collection.deleteOne({
+          uid: uid
+        }, (deleteError) => {
+          this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
+        });
       }
     });
 
@@ -157,27 +151,18 @@ module.exports = class JoSk {
   __addTask(uid, isInterval, delay) {
     this.collection.findOne({
       uid: uid
-    }, (error, task) => {
-      if (error) {
-        if (this.onError) {
-          this.onError('[__addTask] [findOne] [error]', {
-            description: 'Error in a callback of .findOne() method of .__addTask()',
-            error: error,
-            uid: uid
-          });
-        } else {
-          _debug('[__addTask] [findOne] [error]', error);
-        }
-        return;
-      }
-
-      if (!task) {
+    }, (findError, task) => {
+      if (findError) {
+        this.__errorHandler(findError, '[__addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .__addTask()', uid);
+      } else if (!task) {
         this.collection.insertOne({
           uid: uid,
           delay: delay,
           executeAt: new Date(Date.now() + delay),
           isInterval: isInterval
-        }, mongoErrorHandler);
+        }, (insertError) => {
+          this.__errorHandler(insertError, '[__addTask] [insertOne] [insertError]', 'Error in a callback of .insertOne() method of .__addTask()', uid);
+        });
       } else {
         let update = null;
         if (task.delay !== delay) {
@@ -199,7 +184,9 @@ module.exports = class JoSk {
             uid: uid
           }, {
             $set: update
-          }, mongoErrorHandler);
+          }, (updateError) => {
+            this.__errorHandler(updateError, '[__addTask] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__addTask()', uid);
+          });
         }
       }
     });
@@ -213,7 +200,9 @@ module.exports = class JoSk {
         $set: {
           executeAt: _date
         }
-      }, mongoErrorHandler);
+      }, (updateError) => {
+        this.__errorHandler(updateError, '[__execute] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__execute()', task.uid);
+      });
     };
 
     if (this.tasks && this.tasks[task.uid]) {
@@ -275,37 +264,31 @@ module.exports = class JoSk {
         $set: {
           executeAt: new Date(+_date + this.zombieTime)
         }
-      }, (error, task) => {
+      }, (findUpdateError, task) => {
         this.__setNext();
-        if (error) {
-          if (this.onError) {
-            this.onError('General Error during runtime', {
-              description: 'General Error during runtime',
-              error: error,
-              uid: null
-            });
-          } else {
-            _debug('[__runTasks] [findOneAndUpdate]', error);
-          }
+        if (findUpdateError) {
+          this.__errorHandler(findUpdateError, '[__runTasks] [findOneAndUpdate] [findUpdateError]', 'Error in a callback of .findOneAndUpdate() method of .__runTasks()', null);
         } else if (task.value) {
           this.__execute(task.value);
         }
       });
     } catch (_error) {
       this.__setNext();
-      if (this.onError) {
-        this.onError('General Error during runtime', {
-          description: 'General Error during runtime',
-          error: _error,
-          uid: null
-        });
-      } else {
-        _debug('[__runTasks] [findOneAndUpdate] [catch]', _error);
-      }
+      this.__errorHandler(_error, '[__runTasks] [catch]', 'General Error during runtime in try-catch block of __runTasks()', null);
     }
   }
 
   __setNext() {
     setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
+  }
+
+  __errorHandler(error, title, description, uid) {
+    if (error) {
+      if (this.onError) {
+        this.onError(title, { description, error, uid });
+      } else {
+        mongoErrorHandler(error);
+      }
+    }
   }
 };
