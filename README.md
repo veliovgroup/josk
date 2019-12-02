@@ -248,7 +248,7 @@ job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
 
 *Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task was executed only once.* `ready()` *is passed as the first argument into task function.*
 
-```javascript
+```js
 const syncTask = function (ready) {
   //...run sync code
   ready();
