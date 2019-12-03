@@ -11,4 +11,5 @@ cover.png
 node_modules
 npm-debug.log*
 package.js
-test/meteor.js
+test/
+test/*
