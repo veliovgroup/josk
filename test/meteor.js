@@ -1,13 +1,13 @@
-import { Meteor } from 'meteor/meteor';
-import JoSk       from 'meteor/ostrio:cron-jobs';
-import { assert } from 'meteor/practicalmeteor:chai';
+import {MongoInternals} from 'meteor/mongo';
+import JoSk             from '../index.js';
+import { assert }       from 'meteor/practicalmeteor:chai';
 
 const ZOMBIE_TIME       = 8000;
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP        = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
-const db          = Meteor.users.rawDatabase();
+const db          = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
 const timestamps  = {};
 const callbacks   = {};
 const revolutions = {};
@@ -25,7 +25,7 @@ const cron = new JoSk({
   minRevolvingDelay,
   maxRevolvingDelay,
   onError(message, details) {
-    // console.error('[onError Hook]', message, details.uid);
+    console.error('[onError Hook] (this is purely informational message)', message, details);
     if (message === 'One of your tasks is missing') {
       // By the way same can be achieved with `autoClear: true`
       // option passed to `new JoSk({/*...*/})`

@@ -51,17 +51,18 @@ describe('JoSk Instance', async function () {
     w: 'majority',
     wtimeout: 30000,
     poolSize: 15,
-    readConcern: {
-      level: 'majority'
-    },
+    // readConcern: {
+    //   level: 'majority'
+    // },
     readPreference: 'primary',
-    reconnectTries: 60,
+    // reconnectTries: 60,
     socketTimeoutMS: 720000,
     useNewUrlParser: true,
+    useUnifiedTopology: true,
     connectTimeoutMS: 120000,
-    reconnectInterval: 3072,
+    // reconnectInterval: 3072,
     connectWithNoPrimary: false,
-    appname: 'josk test suite'
+    appname: 'josk-test-suite'
   });
   const db = client.db(dbName);
 
@@ -73,7 +74,7 @@ describe('JoSk Instance', async function () {
     minRevolvingDelay,
     maxRevolvingDelay,
     onError(message, details) {
-      // console.info('[onError Hook] (this is purely informational message)', message, details);
+      console.info('[onError Hook] (this is purely informational message)', message, details);
       if (message === 'One of your tasks is missing') {
         // By the way same can be achieved with `autoClear: true`
         // option passed to `new JoSk({/*...*/})`
