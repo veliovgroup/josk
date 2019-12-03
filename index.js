@@ -1,3 +1,9 @@
+const defaultWriteConcern = {
+  w: 1,
+  j: true,
+  wtimeout: 10240
+};
+
 const mongoErrorHandler = (error) => {
   if (error) {
     console.error('[josk] [mongoErrorHandler]:', error);
@@ -124,22 +130,8 @@ module.exports = class JoSk {
   }
 
   __clear(uid) {
-    this.collection.updateOne({
-      uid: uid
-    }, {
-      $unset: {
-        executeAt: ''
-      }
-    }, (updateError) => {
-      if (updateError) {
-        this.__errorHandler(updateError, '[__clear] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__clear()', uid);
-      } else {
-        this.collection.deleteOne({
-          uid: uid
-        }, (deleteError) => {
-          this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
-        });
-      }
+    this.collection.deleteOne({ uid }, defaultWriteConcern, (deleteError) => {
+      this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
     });
 
     if (this.tasks && this.tasks[uid]) {
@@ -264,7 +256,7 @@ module.exports = class JoSk {
         $set: {
           executeAt: new Date(+_date + this.zombieTime)
         }
-      }, (findUpdateError, task) => {
+      }, defaultWriteConcern, (findUpdateError, task) => {
         this.__setNext();
         if (findUpdateError) {
           this.__errorHandler(findUpdateError, '[__runTasks] [findOneAndUpdate] [findUpdateError]', 'Error in a callback of .findOneAndUpdate() method of .__runTasks()', null);
