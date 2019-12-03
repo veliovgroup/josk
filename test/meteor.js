@@ -1,6 +1,6 @@
-import {MongoInternals} from 'meteor/mongo';
-import JoSk             from '../index.js';
-import { assert }       from 'meteor/practicalmeteor:chai';
+import { MongoInternals } from 'meteor/mongo';
+import JoSk               from '../index.js';
+import { assert }         from 'meteor/practicalmeteor:chai';
 
 const ZOMBIE_TIME       = 8000;
 const minRevolvingDelay = 32;
