@@ -4,6 +4,10 @@
   <img src="https://c5.patreon.com/external/logo/become_a_patron_button@2x.png" width="160">
 </a>
 
+<a href="https://ostr.io/info/built-by-developers-for-developers">
+  <img src="https://ostr.io/apple-touch-icon-60x60.png" height="38">
+</a>
+
 Simple package with similar API to native `setTimeout` and `setInterval` methods, but synced between all running Node.js instances via MongoDB Collection.
 
 Multi-instance task manager for Node.js. This package has the support of clusters, multi-server and multi-threaded Node.js instances. This package goal is to make sure that the only single process of each *task* (*job*/*cron*) is running across *multi-server* (*multi-thread*/*multi-instance*) setup.
