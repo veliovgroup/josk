@@ -14,36 +14,44 @@ const _debug = (...args) => {
 };
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
+const errors = {
+  dbOption: {
+    error: '{db} option is required',
+    description: 'MongoDB database {db} option is required, e.g. returned from `MongoClient.connect` method'
+  },
+  setInterval: {
+    delay: '[josk] [setInterval] delay must be positive Number!',
+    uid: '[josk] [setInterval] [uid - task id must be specified (3rd argument)]'
+  },
+  setTimeout: {
+    delay: '[josk] [setTimeout] delay must be positive Number!',
+    uid: '[josk] [setTimeout] [uid - task id must be specified (3rd argument)]'
+  },
+  setImmediate: {
+    uid: '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]'
+  }
+};
+
 module.exports = class JoSk {
   constructor(opts = {}) {
-    this.prefix      = opts.prefix;
-    this.onError     = opts.onError;
-    this.autoClear   = opts.autoClear;
-    this.zombieTime  = opts.zombieTime;
-    this.onExecuted  = opts.onExecuted;
-    this.resetOnInit = opts.resetOnInit;
-
-    this.minRevolvingDelay = opts.minRevolvingDelay;
-    this.maxRevolvingDelay = opts.maxRevolvingDelay;
-
-    if (!this.prefix) { this.prefix = ''; }
-    if (!this.onError) { this.onError = false; }
-    if (!this.autoClear) { this.autoClear = false; }
-    if (!this.zombieTime) { this.zombieTime = 900000; }
-    if (!this.onExecuted) { this.onExecuted = false; }
-    if (!this.resetOnInit) { this.resetOnInit = false; }
-    if (!this.minRevolvingDelay) { this.minRevolvingDelay = 32; }
-    if (!this.maxRevolvingDelay) { this.maxRevolvingDelay = 256; }
+    this.prefix      = opts.prefix || '';
+    this.onError     = opts.onError || false;
+    this.autoClear   = opts.autoClear || false;
+    this.zombieTime  = opts.zombieTime || 900000;
+    this.onExecuted  = opts.onExecuted || false;
+    this.resetOnInit = opts.resetOnInit || false;
+    this.minRevolvingDelay = opts.minRevolvingDelay || 32;
+    this.maxRevolvingDelay = opts.maxRevolvingDelay || 256;
 
     if (!opts.db) {
       if (this.onError) {
-        this.onError('{db} option is required', {
-          description: 'MongoDB database {db} option is required, like returned from `MongoClient.connect`',
-          error: '{db} option is required',
+        this.onError(errors.dbOption.error, {
+          description: errors.dbOption.description,
+          error: errors.dbOption.error,
           uid: null
         });
       } else {
-        _debug('[constructor] MongoDB database {db} option is required, like returned from `MongoClient.connect`');
+        _debug(`[constructor] ${errors.dbOption.description}`);
       }
       return;
     }
@@ -75,13 +83,13 @@ module.exports = class JoSk {
     let uid = _uid;
 
     if (delay < 0) {
-      throw new Error('[josk] [setInterval] delay must be positive Number!');
+      throw new Error(errors.setInterval.delay);
     }
 
     if (uid) {
       uid += 'setInterval';
     } else {
-      throw new Error('[josk] [setInterval] [uid - task id must be specified (3rd argument)]');
+      throw new Error(errors.setInterval.uid);
     }
 
     this.tasks[uid] = func;
@@ -93,13 +101,13 @@ module.exports = class JoSk {
     let uid = _uid;
 
     if (delay < 0) {
-      throw new Error('[josk] [setTimeout] delay must be positive Number!');
+      throw new Error(errors.setTimeout.delay);
     }
 
     if (uid) {
       uid += 'setTimeout';
     } else {
-      throw new Error('[josk] [setTimeout] [uid - task id must be specified (3rd argument)]');
+      throw new Error(errors.setTimeout.uid);
     }
 
     this.tasks[uid] = func;
@@ -113,7 +121,7 @@ module.exports = class JoSk {
     if (uid) {
       uid += 'setImmediate';
     } else {
-      throw new Error('[josk] [setImmediate] [uid - task id must be specified (2nd argument)]');
+      throw new Error(errors.setImmediate.uid);
     }
 
     this.tasks[uid] = func;
