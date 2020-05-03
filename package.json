@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "description": "Scheduler and manager for jobs and tasks in Node.js on multi-server and clusters setup",
   "main": "index.js",
   "scripts": {

@@ -1,6 +1,6 @@
 Package.describe({
   name: 'ostrio:cron-jobs',
-  version: '2.4.3',
+  version: '2.4.4',
   summary: 'Scheduler and manager for jobs and tasks in Node.js (Meteor.js) on multi-server and clusters setup',
   git: 'https://github.com/VeliovGroup/josk',
   documentation: 'README.md'
