@@ -199,7 +199,7 @@ describe('Cancel (abort) current timers', function () {
       check = true;
       ready();
       throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-    }, 1200, 'taskTimeout-abort-1500');
+    }, 1200, 'taskTimeout-abort-1200');
 
     setTimeout(() => {
       cron.clearTimeout(taskId);
@@ -217,7 +217,7 @@ describe('Cancel (abort) current timers', function () {
       check = true;
       ready();
       throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-    }, 1200, 'taskInterval-abort-1500');
+    }, 1200, 'taskInterval-abort-1200');
 
     setTimeout(() => {
       cron.clearInterval(taskId);
@@ -239,7 +239,7 @@ describe('Destroy (abort) current timers', function () {
     cron.setTimeout(() => {
       check = true;
       throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-    }, 1200, 'taskTimeout-abort-1500');
+    }, 1200, 'taskTimeout-abort-1200');
 
     setTimeout(() => {
       cron.destroy();
@@ -269,7 +269,7 @@ describe('Destroy (abort) current timers', function () {
     cron2.setInterval(() => {
       check = true;
       throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-    }, 1200, 'taskInterval2-destroy2-1500');
+    }, 1200, 'taskInterval2-destroy2-1200');
 
     setTimeout(() => {
       cron2.destroy();

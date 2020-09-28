@@ -232,7 +232,7 @@ describe('JoSk Instance', async function () {
         check = true;
         ready();
         throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-      }, 1200, 'taskTimeout-abort-1500');
+      }, 1200, 'taskTimeout-abort-1200');
 
       setTimeout(() => {
         job.clearTimeout(taskId);
@@ -250,7 +250,7 @@ describe('JoSk Instance', async function () {
         check = true;
         ready();
         throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-      }, 1200, 'taskInterval-abort-1500');
+      }, 1200, 'taskInterval-abort-1200');
 
       setTimeout(() => {
         job.clearInterval(taskId);
@@ -269,16 +269,17 @@ describe('JoSk Instance', async function () {
 
     it('setTimeout', function (done) {
       let check = false;
-      job.setTimeout(() => {
+      const timeout1 = job.setTimeout(() => {
         check = true;
         throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-      }, 1200, 'taskTimeout-destroy-1500');
+      }, 1200, 'taskTimeout-destroy-1200');
 
       setTimeout(() => {
         job.destroy();
       }, 600);
 
       setTimeout(() => {
+        job.clearTimeout(timeout1);
         assert.equal(check, false, 'setTimeout - is cleared and never executed');
         done();
       }, 1800);
@@ -299,20 +300,23 @@ describe('JoSk Instance', async function () {
         }
       });
 
-      job2.setInterval(() => {
+      let interval2;
+      const interval1 = job2.setInterval(() => {
         check = true;
         throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-      }, 1500, 'taskInterval-destroy2-1500');
+      }, 1200, 'taskInterval-destroy2-1200');
 
       setTimeout(() => {
         job2.destroy();
-        job2.setInterval(() => {
+        interval2 = job2.setInterval(() => {
           check = true;
           throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
         }, 800, 'taskInterval-destroy2-800');
-      }, 600);
+      }, 300);
 
       setTimeout(() => {
+        job2.clearInterval(interval1);
+        job2.clearInterval(interval2);
         assert.equal(check, false, 'setInterval - is cleared and never executed');
         assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
         done();
