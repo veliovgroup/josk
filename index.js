@@ -144,16 +144,10 @@ module.exports = class JoSk {
   }
 
   clearInterval() {
-    if (this.__checkState()) {
-      return false;
-    }
     return this.__clear.apply(this, arguments);
   }
 
   clearTimeout() {
-    if (this.__checkState()) {
-      return false;
-    }
     return this.__clear.apply(this, arguments);
   }
 
@@ -197,6 +191,10 @@ module.exports = class JoSk {
   }
 
   __addTask(uid, isInterval, delay) {
+    if (this.isDestroyed) {
+      return;
+    }
+
     this.collection.findOne({
       uid: uid
     }, (findError, task) => {
@@ -214,10 +212,7 @@ module.exports = class JoSk {
       } else {
         let update = null;
         if (task.delay !== delay) {
-          if (!update) {
-            update = {};
-          }
-          update.delay = delay;
+          update = { delay };
         }
 
         if (+task.executeAt > Date.now() + delay) {
@@ -241,6 +236,10 @@ module.exports = class JoSk {
   }
 
   __execute(task) {
+    if (this.isDestroyed) {
+      return;
+    }
+
     const done = (_date) => {
       this.collection.updateOne({
         uid: task.uid
@@ -248,7 +247,7 @@ module.exports = class JoSk {
         $set: {
           executeAt: _date
         }
-      }, (updateError) => {
+      }, defaultWriteConcern, (updateError) => {
         this.__errorHandler(updateError, '[__execute] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__execute()', task.uid);
       });
     };
@@ -302,22 +301,65 @@ module.exports = class JoSk {
   }
 
   __runTasks() {
+    if (this.isDestroyed) {
+      return;
+    }
+
     const _date = new Date();
+    const nextExecuteAt = new Date(+_date + this.zombieTime);
     try {
-      this.collection.findOneAndUpdate({
+      const cursor = this.collection.find({
         executeAt: {
           $lte: _date
         }
       }, {
-        $set: {
-          executeAt: new Date(+_date + this.zombieTime)
+        projection: {
+          uid: 1
         }
-      }, defaultWriteConcern, (findUpdateError, task) => {
-        this.__setNext();
-        if (findUpdateError) {
-          this.__errorHandler(findUpdateError, '[__runTasks] [findOneAndUpdate] [findUpdateError]', 'Error in a callback of .findOneAndUpdate() method of .__runTasks()', null);
-        } else if (task.value) {
-          this.__execute(task.value);
+      });
+
+      const uids = [];
+      cursor.forEach((task) => {
+        uids.push(task.uid);
+      }, (forEachError) => {
+        cursor.close();
+        if (forEachError) {
+          this.__setNext();
+          this.__errorHandler(forEachError, '[__runTasks] [forEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
+        } else if (uids.length) {
+          this.collection.updateMany({
+            uid: {
+              $in: uids
+            }
+          }, {
+            $set: {
+              executeAt: nextExecuteAt
+            }
+          }, (updateError) => {
+            if (updateError) {
+              this.__setNext();
+              this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
+            } else {
+              const batchCursor = this.collection.find({
+                uid: {
+                  $in: uids
+                },
+                executeAt: nextExecuteAt
+              });
+
+              batchCursor.forEach((filteredTask) => {
+                this.__execute(filteredTask);
+              }, (batchForEachError) => {
+                batchCursor.close();
+                this.__setNext();
+                if (batchForEachError) {
+                  this.__errorHandler(batchForEachError, '[__runTasks] [batchForEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
+                }
+              });
+            }
+          });
+        } else {
+          this.__setNext();
         }
       });
     } catch (_error) {
