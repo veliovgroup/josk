@@ -262,4 +262,61 @@ describe('JoSk Instance', async function () {
       }, 1800);
     });
   });
+
+  describe('Destroy (abort) current timers', function () {
+    this.slow(4000);
+    this.timeout(5000);
+
+    it('setTimeout', function (done) {
+      let check = false;
+      job.setTimeout(() => {
+        check = true;
+        throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
+      }, 1200, 'taskTimeout-destroy-1500');
+
+      setTimeout(() => {
+        job.destroy();
+      }, 600);
+
+      setTimeout(() => {
+        assert.equal(check, false, 'setTimeout - is cleared and never executed');
+        done();
+      }, 1800);
+    });
+
+    it('setInterval + onError hook', function (done) {
+      let check = false;
+      let gotError = false;
+      const job2 = new JoSk({
+        db: db,
+        autoClear: false,
+        prefix: 'testCaseNPM2',
+        zombieTime: ZOMBIE_TIME,
+        minRevolvingDelay,
+        maxRevolvingDelay,
+        onError() {
+          gotError = true;
+        }
+      });
+
+      job2.setInterval(() => {
+        check = true;
+        throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
+      }, 1500, 'taskInterval-destroy2-1500');
+
+      setTimeout(() => {
+        job2.destroy();
+        job2.setInterval(() => {
+          check = true;
+          throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
+        }, 800, 'taskInterval-destroy2-800');
+      }, 600);
+
+      setTimeout(() => {
+        assert.equal(check, false, 'setInterval - is cleared and never executed');
+        assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
+        done();
+      }, 1800);
+    });
+  });
 });

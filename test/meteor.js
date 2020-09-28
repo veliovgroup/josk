@@ -229,3 +229,60 @@ describe('Cancel (abort) current timers', function () {
     }, 1800);
   });
 });
+
+describe('Destroy (abort) current timers', function () {
+  this.slow(4000);
+  this.timeout(5000);
+
+  it('setTimeout', function (done) {
+    let check = false;
+    cron.setTimeout(() => {
+      check = true;
+      throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
+    }, 1200, 'taskTimeout-abort-1500');
+
+    setTimeout(() => {
+      cron.destroy();
+    }, 600);
+
+    setTimeout(() => {
+      assert.equal(check, false, 'setTimeout - is cleared and never executed');
+      done();
+    }, 1800);
+  });
+
+  it('setInterval', function (done) {
+    let check = false;
+    let gotError = false;
+    const cron2 = new JoSk({
+      db: db,
+      autoClear: false,
+      prefix: 'testCaseMeteor2',
+      zombieTime: ZOMBIE_TIME,
+      minRevolvingDelay,
+      maxRevolvingDelay,
+      onError() {
+        gotError = true;
+      }
+    });
+
+    cron2.setInterval(() => {
+      check = true;
+      throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
+    }, 1200, 'taskInterval2-destroy2-1500');
+
+    setTimeout(() => {
+      cron2.destroy();
+      cron2.setInterval(() => {
+        check = true;
+        throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
+      }, 800, 'taskInterval-destroy2-800');
+    }, 600);
+
+    setTimeout(() => {
+      assert.equal(check, false, 'setInterval - is cleared and never executed');
+      assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
+      done();
+    }, 1800);
+  });
+});
