@@ -17,12 +17,13 @@ __This is a server-only package.__
 - [Install](https://github.com/VeliovGroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
 - [Install Meteor](https://github.com/VeliovGroup/josk#install-meteor) as [Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
 - [API](https://github.com/VeliovGroup/josk#api)
-- [Constructor](https://github.com/VeliovGroup/josk#initialization)
-- [setInterval](https://github.com/VeliovGroup/josk#setintervalfunc-delay-uid)
-- [setTimeout](https://github.com/VeliovGroup/josk#settimeoutfunc-delay-uid)
-- [setImmediate](https://github.com/VeliovGroup/josk#setimmediatefunc-uid)
-- [clearInterval](https://github.com/VeliovGroup/josk#clearintervaltimer)
-- [clearTimeout](https://github.com/VeliovGroup/josk#cleartimeouttimer)
+  - [Constructor `new JoSk()`](https://github.com/VeliovGroup/josk#initialization)
+  - [`JoSk#setInterval()`](https://github.com/VeliovGroup/josk#setintervalfunc-delay-uid)
+  - [`JoSk#setTimeout()](https://github.com/VeliovGroup/josk#settimeoutfunc-delay-uid)
+  - [`JoSk#setImmediate()](https://github.com/VeliovGroup/josk#setimmediatefunc-uid)
+  - [`JoSk#clearInterval()](https://github.com/VeliovGroup/josk#clearintervaltimer)
+  - [`JoSk#clearTimeout()](https://github.com/VeliovGroup/josk#cleartimeouttimer)
+  - [`JoSk#destroy()](https://github.com/VeliovGroup/josk#destroy)
 - [~90% tests coverage](https://github.com/VeliovGroup/josk#running-tests)
 
 ## Main features:
@@ -307,6 +308,16 @@ job.clearInterval(timer);
 ```js
 const timer = job.setTimeout(func, 34789, 'unique-taskid');
 job.clearTimeout(timer);
+```
+
+### `destroy()`
+
+*Destroy JoSk instance*. This method shouldn't be called in normal circumstances. Stop internal interval timer. After JoSk is destroyed — calling public methods would end up logged to `std` or if `onError` hook was passed to JoSk it would receive an error.
+
+```js
+const job = new JoSk({db: db});
+
+job.destroy();
 ```
 
 ## Running Tests
