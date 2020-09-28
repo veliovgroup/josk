@@ -311,7 +311,7 @@ job.clearTimeout(timer);
 
 ### `destroy()`
 
-*Destroy JoSk instance*. This method shouldn't be called in normal circumstances. Stop internal interval timer. After JoSk is destroyed — calling public methods would end up logged to `std` or if `onError` hook was passed to JoSk it would receive an error.
+*Destroy JoSk instance*. This method shouldn't be called in normal circumstances. Stop internal interval timer. After JoSk is destroyed — calling public methods would end up logged to `std` or if `onError` hook was passed to JoSk it would receive an error. Only permitted methods are `clearTimeout` and `clearInterval`.
 
 ```js
 const job = new JoSk({db: db});
