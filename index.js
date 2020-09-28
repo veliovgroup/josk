@@ -34,14 +34,16 @@ const errors = {
 
 module.exports = class JoSk {
   constructor(opts = {}) {
-    this.prefix      = opts.prefix || '';
-    this.onError     = opts.onError || false;
-    this.autoClear   = opts.autoClear || false;
-    this.zombieTime  = opts.zombieTime || 900000;
-    this.onExecuted  = opts.onExecuted || false;
+    this.prefix = opts.prefix || '';
+    this.onError = opts.onError || false;
+    this.autoClear = opts.autoClear || false;
+    this.zombieTime = opts.zombieTime || 900000;
+    this.onExecuted = opts.onExecuted || false;
     this.resetOnInit = opts.resetOnInit || false;
+    this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 32;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 256;
+    this.nextRevolutionTimeout = null;
 
     if (!opts.db) {
       if (this.onError) {
@@ -80,6 +82,10 @@ module.exports = class JoSk {
   }
 
   setInterval(func, delay, _uid) {
+    if (this.__checkState()) {
+      return '';
+    }
+
     let uid = _uid;
 
     if (delay < 0) {
@@ -98,6 +104,10 @@ module.exports = class JoSk {
   }
 
   setTimeout(func, delay, _uid) {
+    if (this.__checkState()) {
+      return '';
+    }
+
     let uid = _uid;
 
     if (delay < 0) {
@@ -116,6 +126,10 @@ module.exports = class JoSk {
   }
 
   setImmediate(func, _uid) {
+    if (this.__checkState()) {
+      return '';
+    }
+
     let uid = _uid;
 
     if (uid) {
@@ -130,11 +144,45 @@ module.exports = class JoSk {
   }
 
   clearInterval() {
+    if (this.__checkState()) {
+      return false;
+    }
     return this.__clear.apply(this, arguments);
   }
 
   clearTimeout() {
+    if (this.__checkState()) {
+      return false;
+    }
     return this.__clear.apply(this, arguments);
+  }
+
+  destroy() {
+    if (!this.isDestroyed) {
+      this.isDestroyed = true;
+      if (this.nextRevolutionTimeout) {
+        clearTimeout(this.nextRevolutionTimeout);
+        this.nextRevolutionTimeout = null;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  __checkState() {
+    if (this.isDestroyed) {
+      if (this.onError) {
+        this.onError('JoSk instance destroyed', {
+          description: 'invoking methods of destroyed JoSk instance',
+          error: 'JoSk instance destroyed',
+          uid: null
+        });
+      } else {
+        _debug('[__checkState] [warn] invoking methods of destroyed JoSk instance, call cause no action');
+      }
+      return true;
+    }
+    return false;
   }
 
   __clear(uid) {
@@ -279,7 +327,10 @@ module.exports = class JoSk {
   }
 
   __setNext() {
-    setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
+    if (this.isDestroyed) {
+      return;
+    }
+    this.nextRevolutionTimeout = setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
   }
 
   __errorHandler(error, title, description, uid) {
