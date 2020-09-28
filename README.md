@@ -18,11 +18,11 @@ __This is a server-only package.__
 - [API](https://github.com/VeliovGroup/josk#api)
   - [Constructor `new JoSk()`](https://github.com/VeliovGroup/josk#initialization)
   - [`JoSk#setInterval()`](https://github.com/VeliovGroup/josk#setintervalfunc-delay-uid)
-  - [`JoSk#setTimeout()](https://github.com/VeliovGroup/josk#settimeoutfunc-delay-uid)
-  - [`JoSk#setImmediate()](https://github.com/VeliovGroup/josk#setimmediatefunc-uid)
-  - [`JoSk#clearInterval()](https://github.com/VeliovGroup/josk#clearintervaltimer)
-  - [`JoSk#clearTimeout()](https://github.com/VeliovGroup/josk#cleartimeouttimer)
-  - [`JoSk#destroy()](https://github.com/VeliovGroup/josk#destroy)
+  - [`JoSk#setTimeout()`](https://github.com/VeliovGroup/josk#settimeoutfunc-delay-uid)
+  - [`JoSk#setImmediate()`](https://github.com/VeliovGroup/josk#setimmediatefunc-uid)
+  - [`JoSk#clearInterval()`](https://github.com/VeliovGroup/josk#clearintervaltimer)
+  - [`JoSk#clearTimeout()`](https://github.com/VeliovGroup/josk#cleartimeouttimer)
+  - [`JoSk#destroy()`](https://github.com/VeliovGroup/josk#destroy)
 - [~90% tests coverage](https://github.com/VeliovGroup/josk#running-tests)
 
 ## Main features:
