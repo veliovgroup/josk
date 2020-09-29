@@ -340,20 +340,22 @@ module.exports = class JoSk {
               this.__setNext();
               this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
             } else {
-              const batchCursor = this.collection.find({
+              const tasksCursor = this.collection.find({
                 uid: {
                   $in: uids
                 },
                 executeAt: nextExecuteAt
               });
 
-              batchCursor.forEach((filteredTask) => {
-                this.__execute(filteredTask);
-              }, (batchForEachError) => {
-                batchCursor.close();
+              tasksCursor.forEach((task) => {
+                if (+task.executeAt === +nextExecuteAt) {
+                  this.__execute(task);
+                }
+              }, (tasksForEachError) => {
+                tasksCursor.close();
                 this.__setNext();
-                if (batchForEachError) {
-                  this.__errorHandler(batchForEachError, '[__runTasks] [batchForEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
+                if (tasksForEachError) {
+                  this.__errorHandler(tasksForEachError, '[__runTasks] [tasksForEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
                 }
               });
             }
