@@ -1,3 +1,4 @@
+[![support](https://img.shields.io/badge/support-GitHub-white)](https://github.com/sponsors/dr-dimitru)
 [![support](https://img.shields.io/badge/support-PayPal-white)](https://paypal.me/veliovgroup)
 <a href="https://ostr.io/info/built-by-developers-for-developers">
   <img src="https://ostr.io/apple-touch-icon-60x60.png" height="20">
@@ -357,5 +358,6 @@ MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" meteor test-packages 
 
 ## Support our open source contribution:
 
-- [Support via PayPal](https://paypal.me/veliovgroup) — support my open source contributions once or on regular basis
+- [Sponsor via GitHub](https://github.com/sponsors/dr-dimitru) — support open source contributions on a regular basis
+- [Support via PayPal](https://paypal.me/veliovgroup) — support open source contributions once
 - Use [ostr.io](https://ostr.io) — [Monitoring](https://snmp-monitoring.com), [Analytics](https://ostr.io/info/web-analytics), [WebSec](https://domain-protection.info), [Web-CRON](https://web-cron.info) and [Pre-rendering](https://prerendering.com) for a website
