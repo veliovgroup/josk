@@ -47,14 +47,16 @@ describe('JoSk Instance', async function () {
   this.timeout(85000);
 
   const client = await MongoClient.connect(mongoAddr, {
-    j: true,
-    w: 'majority',
-    wtimeout: 30000,
-    poolSize: 15,
-    // readConcern: {
-    //   level: 'majority'
-    // },
+    writeConcern: {
+      j: true,
+      w: 'majority',
+      wtimeout: 30000
+    },
+    readConcern: {
+      level: 'majority'
+    },
     readPreference: 'primary',
+    poolSize: 15,
     // reconnectTries: 60,
     socketTimeoutMS: 720000,
     useNewUrlParser: true,
