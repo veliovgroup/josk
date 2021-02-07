@@ -1,9 +1,4 @@
-const defaultWriteConcern = {
-  w: 1,
-  j: true,
-  wtimeout: 10240
-};
-
+const crypto = require('crypto');
 const mongoErrorHandler = (error) => {
   if (error) {
     console.error('[josk] [mongoErrorHandler]:', error);
@@ -41,8 +36,8 @@ module.exports = class JoSk {
     this.onExecuted = opts.onExecuted || false;
     this.resetOnInit = opts.resetOnInit || false;
     this.isDestroyed = false;
-    this.minRevolvingDelay = opts.minRevolvingDelay || 32;
-    this.maxRevolvingDelay = opts.maxRevolvingDelay || 256;
+    this.minRevolvingDelay = opts.minRevolvingDelay || 128;
+    this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
     this.nextRevolutionTimeout = null;
 
     if (!opts.db) {
@@ -58,18 +53,32 @@ module.exports = class JoSk {
       return;
     }
 
-    this.collection = opts.db.collection(`__JobTasks__${this.prefix}`);
+    this.uniqueName = `__JobTasks__${this.prefix}`;
+    this.collection = opts.db.collection(this.uniqueName);
     this.collection.createIndex({uid: 1}, {background: false, unique: true}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [createIndex] [uid]', indexError);
+        _debug('[constructor] [collection] [createIndex] [uid]', indexError);
       }
     });
 
     this.collection.createIndex({executeAt: 1}, {background: false}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [createIndex] [executeAt]', indexError);
+        _debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
       }
     });
+
+    this.lockCollection = opts.db.collection(`${this.uniqueName}.lock`);
+    this.lockCollection.createIndex({expireAt: 1}, {background: false, expireAfterSeconds: 1}, (indexError) => {
+      if (indexError) {
+        _debug('[constructor] [lockCollection] [createIndex] [expireAt]', indexError);
+      }
+    });
+    this.lockCollection.createIndex({uniqueName: 1}, {background: false, unique: true}, (indexError) => {
+      if (indexError) {
+        _debug('[constructor] [lockCollection] [createIndex] [uid]', indexError);
+      }
+    });
+
 
     if (this.resetOnInit) {
       this.collection.deleteMany({
@@ -163,6 +172,45 @@ module.exports = class JoSk {
     return false;
   }
 
+  __aquireLock(cb) {
+    const expireAt = new Date(Date.now() + this.zombieTime);
+    const lockId = crypto.randomBytes(48).toString('hex');
+
+    this.lockCollection.insertOne({
+      lockId,
+      expireAt,
+      uniqueName: this.uniqueName,
+    }, (insertError, result) => {
+      if (insertError) {
+        if (insertError.code !== 11000) {
+          cb(insertError);
+        } else {
+          cb(void 0, false);
+        }
+      } else {
+        this.lockCollection.findOne({
+          _id: result.insertedId
+        }, {
+          projection: {
+            lockId: 1
+          }
+        }, (findError, lockRecord) => {
+          if (findError) {
+            cb(findError);
+          } else if (lockRecord && lockRecord.lockId === lockId){
+            cb(void 0, true);
+          } else {
+            cb(void 0, false);
+          }
+        });
+      }
+    });
+  }
+
+  __releaseLock(cb) {
+    this.lockCollection.deleteOne({ uniqueName: this.uniqueName }, cb);
+  }
+
   __checkState() {
     if (this.isDestroyed) {
       if (this.onError) {
@@ -180,7 +228,7 @@ module.exports = class JoSk {
   }
 
   __clear(uid) {
-    this.collection.deleteOne({ uid }, defaultWriteConcern, (deleteError) => {
+    this.collection.deleteOne({ uid }, (deleteError) => {
       this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
     });
 
@@ -247,7 +295,7 @@ module.exports = class JoSk {
         $set: {
           executeAt: _date
         }
-      }, defaultWriteConcern, (updateError) => {
+      }, (updateError) => {
         this.__errorHandler(updateError, '[__execute] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__execute()', task.uid);
       });
     };
@@ -307,67 +355,76 @@ module.exports = class JoSk {
 
     const _date = new Date();
     const nextExecuteAt = new Date(+_date + this.zombieTime);
-    try {
-      const cursor = this.collection.find({
-        executeAt: {
-          $lte: _date
-        }
-      }, {
-        projection: {
-          uid: 1
-        }
-      });
 
-      const uids = [];
-      cursor.forEach((task) => {
-        uids.push(task.uid);
-      }, (forEachError) => {
-        cursor.close();
-        if (forEachError) {
-          this.__setNext();
-          this.__errorHandler(forEachError, '[__runTasks] [forEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
-        } else if (uids.length) {
-          this.collection.updateMany({
-            uid: {
-              $in: uids
-            }
-          }, {
-            $set: {
-              executeAt: nextExecuteAt
-            }
-          }, (updateError) => {
-            if (updateError) {
-              this.__setNext();
-              this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
-            } else {
-              const tasksCursor = this.collection.find({
-                uid: {
-                  $in: uids
-                },
-                executeAt: nextExecuteAt
-              });
-
-              tasksCursor.forEach((task) => {
-                if (+task.executeAt === +nextExecuteAt) {
-                  this.__execute(task);
-                }
-              }, (tasksForEachError) => {
-                tasksCursor.close();
-                this.__setNext();
-                if (tasksForEachError) {
-                  this.__errorHandler(tasksForEachError, '[__runTasks] [tasksForEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
-                }
-              });
+    this.__aquireLock((lockError, success) => {
+      if (lockError) {
+        _debug('[__runTasks] [__aquireLock] Error:', lockError);
+      } else if (!success) {
+        this.__setNext();
+      } else {
+        const _ids = [];
+        const tasks = [];
+        const releaseLock = () => {
+          this.__releaseLock((releaseError) => {
+            this.__setNext();
+            if (releaseError) {
+              _debug('[__runTasks] [__releaseLock] Error:', releaseError);
             }
           });
-        } else {
+        };
+
+        try {
+          const cursor = this.collection.find({
+            executeAt: {
+              $lte: _date
+            }
+          }, {
+            projection: {
+              _id: 1,
+              uid: 1,
+              delay: 1,
+              isInterval: 1
+            }
+          });
+
+          cursor.forEach((task) => {
+            _ids.push(task._id);
+            tasks.push(task);
+          }, (forEachError) => {
+            cursor.close();
+            if (forEachError) {
+              releaseLock();
+              this.__errorHandler(forEachError, '[__runTasks] [forEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
+            } else if (_ids.length) {
+              this.collection.updateMany({
+                _id: {
+                  $in: _ids
+                }
+              }, {
+                $set: {
+                  executeAt: nextExecuteAt
+                }
+              }, (updateError) => {
+                if (updateError) {
+                  releaseLock();
+                  this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
+                } else {
+                  for (const task of tasks) {
+                    this.__execute(task);
+                  }
+                  releaseLock();
+                }
+              });
+            } else {
+              releaseLock();
+            }
+          });
+        } catch (_error) {
           this.__setNext();
+          this.__errorHandler(_error, '[__runTasks] [catch]', 'General Error during runtime in try-catch block of __runTasks()', null);
         }
-      });
-    } catch (_error) {
-      this.__setNext();
-      this.__errorHandler(_error, '[__runTasks] [catch]', 'General Error during runtime in try-catch block of __runTasks()', null);
-    }
+      }
+    });
   }
 
   __setNext() {

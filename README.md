@@ -14,23 +14,24 @@ __This is a server-only package.__
 
 ## ToC:
 
-- [Install](https://github.com/VeliovGroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
-- [Install Meteor](https://github.com/VeliovGroup/josk#install-meteor) as [Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
-- [API](https://github.com/VeliovGroup/josk#api)
-  - [Constructor `new JoSk()`](https://github.com/VeliovGroup/josk#initialization)
-  - [`JoSk#setInterval()`](https://github.com/VeliovGroup/josk#setintervalfunc-delay-uid)
-  - [`JoSk#setTimeout()`](https://github.com/VeliovGroup/josk#settimeoutfunc-delay-uid)
-  - [`JoSk#setImmediate()`](https://github.com/VeliovGroup/josk#setimmediatefunc-uid)
-  - [`JoSk#clearInterval()`](https://github.com/VeliovGroup/josk#clearintervaltimer)
-  - [`JoSk#clearTimeout()`](https://github.com/VeliovGroup/josk#cleartimeouttimer)
-  - [`JoSk#destroy()`](https://github.com/VeliovGroup/josk#destroy)
-- [~90% tests coverage](https://github.com/VeliovGroup/josk#running-tests)
+- [Install](https://github.com/veliovgroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
+- [Install Meteor](https://github.com/veliovgroup/josk#install-meteor) as [Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
+- [API](https://github.com/veliovgroup/josk#api)
+  - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk#initialization)
+  - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk#setintervalfunc-delay-uid)
+  - [`JoSk#setTimeout()`](https://github.com/veliovgroup/josk#settimeoutfunc-delay-uid)
+  - [`JoSk#setImmediate()`](https://github.com/veliovgroup/josk#setimmediatefunc-uid)
+  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk#clearintervaltimer)
+  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk#cleartimeouttimer)
+  - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
+- [~90% tests coverage](https://github.com/veliovgroup/josk#running-tests)
 
 ## Main features:
 
 - 👨‍🔬 ~90% tests coverage;
 - 📦 Zero dependencies, written from scratch for top performance;
 - 🏢 Synchronize single task across multiple servers;
+- 🔏 Collection locking to avoid simultaneous task executions across complex infrastructure;
 - 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫.
 
 ## Install:
@@ -87,11 +88,13 @@ job.setInterval(task, 60 * 60 * 1000, 'task');
 
 ## Notes:
 
-- This package is perfect when you have multiple servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app, not per server.
-- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc.
-- Accuracy — Delay of each task depends on MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution.
-- Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`32` and `256`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce load on MongoDB.
-- To avoid "DB locks" — it's recommended to use separate DB from "main" application DB (*same MongoDB server can have multiple DBs*)
+- This package is perfect when you have multiple servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app, not per server;
+- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc;
+- Accuracy — Delay of each task depends on MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution;
+- Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce load on MongoDB;
+- To avoid "DB locks" — it's recommended to use separate DB from "main" application DB (*same MongoDB server can have multiple DBs*).
+- This package implements "Collection Locking" via special collection ending with `.lock` prefix;
+- In total this package will add two new MongoDB collections per each `new JoSk({ prefix })` to a database it's connected.
 
 ## API:
 
@@ -102,8 +105,8 @@ job.setInterval(task, 60 * 60 * 1000, 'task');
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
 - `opts.resetOnInit` {*Boolean*} - [Optional] make sure all old tasks is completed before set new one. Useful when you run only one instance of app, or multiple app instances on one machine, in case machine was reloaded during running task and task is unfinished
 - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to less than a minute (*60000ms*)
-- `opts.minRevolvingDelay` {*Number*} - [Optional] Minimum revolving delay — the minimum delay between tasks executions in milliseconds. Default: `32`
-- `opts.maxRevolvingDelay` {*Number*} - [Optional] Maximum revolving delay — the maximum delay between tasks executions in milliseconds. Default: `256`
+- `opts.minRevolvingDelay` {*Number*} - [Optional] Minimum revolving delay — the minimum delay between tasks executions in milliseconds. Default: `128`
+- `opts.maxRevolvingDelay` {*Number*} - [Optional] Maximum revolving delay — the maximum delay between tasks executions in milliseconds. Default: `768`
 - `opts.onError` {*Function*} - [Optional] Informational hook, called instead of throwing exceptions. Default: `false`. Called with two arguments:
   - `title` {*String*}
   - `details` {*Object*}
@@ -121,7 +124,22 @@ job.setInterval(task, 60 * 60 * 1000, 'task');
 ### Initialization:
 
 ```js
-MongoClient.connect('url', (error, client) => {
+// Recommended MongoDB connection options
+// When used with ReplicaSet
+const options = {
+  writeConcern: {
+    j: true,
+    w: 'majority',
+    wtimeout: 30000
+  },
+  readConcern: {
+    level: 'linearizable'
+  },
+  readPreference: 'primary',
+  connectWithNoPrimary: false
+};
+
+MongoClient.connect('url', options, (error, client) => {
   // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
   const db = client.db('dbName');
   const job = new JoSk({db: db});
