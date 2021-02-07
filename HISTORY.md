@@ -1,1 +1,1 @@
-See full history at [releases on GitHub](https://github.com/VeliovGroup/josk/releases)
+See full history at [releases on GitHub](https://github.com/veliovgroup/josk/releases)
