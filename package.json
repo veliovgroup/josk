@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Scheduler and manager for jobs and tasks in Node.js on multi-server and clusters setup",
   "main": "index.js",
   "scripts": {
@@ -46,11 +46,11 @@
     "node": ">=8.9.0"
   },
   "devDependencies": {
-    "bson": "^4.2.2",
-    "bson-ext": "^2.0.5",
-    "chai": "^4.3.0",
-    "mocha": "^8.2.1",
-    "mongodb": "^3.6.4",
+    "bson": "^4.6.3",
+    "bson-ext": "^4.0.2",
+    "chai": "^4.3.6",
+    "mocha": "^10.0.0",
+    "mongodb": "^4.5.0",
     "pathval": "^1.1.1"
   },
   "dependencies": {}
