@@ -7,46 +7,23 @@ const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP        = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
+const noop        = (ready) => ((typeof ready === 'function') && ready());
 const MongoClient = require('mongodb').MongoClient;
 const JoSk        = require('../index.js');
 const mongoAddr   = (process.env.MONGO_URL || '');
 const dbName      = mongoAddr.split('/').pop().replace(/\/$/, '');
 
-const { assert }       = require('chai');
-const { it, describe } = require('mocha');
-const timestamps       = {};
-const callbacks        = {};
-const revolutions      = {};
+const { it, describe, before } = require('mocha');
+const { assert }  = require('chai');
+const timestamps  = {};
+const callbacks   = {};
+const revolutions = {};
 
-const testInterval = function (interval, job) {
-  it(`setInterval ${interval}`, function (done) {
-    const taskId = job.setInterval((ready) => ready(), interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + interval];
-    revolutions[taskId] = 0;
-  });
-};
-
-const testTimeout = function (delay, job) {
-  it(`setTimeout ${delay}`, function (done) {
-    const taskId = job.setTimeout((ready) => ready(), delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + delay];
-    revolutions[taskId] = 0;
-  });
-};
-
-describe('Has JoSk Object', function () {
-  it('JoSk is Constructor', function () {
-    assert.isFunction(JoSk, 'JoSk is Constructor');
-  });
-});
-
-describe('JoSk Instance', async function () {
-  this.slow(42500);
-  this.timeout(85000);
-
-  const client = await MongoClient.connect(mongoAddr, {
+let client;
+let job;
+let db;
+before(async function () {
+  client = await MongoClient.connect(mongoAddr, {
     writeConcern: {
       j: true,
       w: 'majority',
@@ -56,19 +33,19 @@ describe('JoSk Instance', async function () {
       level: 'majority'
     },
     readPreference: 'primary',
-    poolSize: 15,
+    // poolSize: 15,
     // reconnectTries: 60,
     socketTimeoutMS: 720000,
     useNewUrlParser: true,
     useUnifiedTopology: true,
     connectTimeoutMS: 120000,
     // reconnectInterval: 3072,
-    connectWithNoPrimary: false,
+    // connectWithNoPrimary: false,
     appname: 'josk-test-suite'
   });
-  const db = client.db(dbName);
+  db = client.db(dbName);
 
-  const job = new JoSk({
+  job = new JoSk({
     db: db,
     autoClear: false,
     prefix: 'testCaseNPM',
@@ -122,6 +99,35 @@ describe('JoSk Instance', async function () {
       }
     }
   });
+});
+
+const testInterval = function (interval) {
+  it(`setInterval ${interval}`, function (done) {
+    const taskId = job.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
+    callbacks[taskId] = done;
+    timestamps[taskId] = [Date.now() + interval];
+    revolutions[taskId] = 0;
+  });
+};
+
+const testTimeout = function (delay) {
+  it(`setTimeout ${delay}`, function (done) {
+    const taskId = job.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
+    callbacks[taskId] = done;
+    timestamps[taskId] = [Date.now() + delay];
+    revolutions[taskId] = 0;
+  });
+};
+
+describe('Has JoSk Object', function () {
+  it('JoSk is Constructor', function () {
+    assert.isFunction(JoSk, 'JoSk is Constructor');
+  });
+});
+
+describe('JoSk Instance', function () {
+  this.slow(42500);
+  this.timeout(85000);
 
   describe('JoSk Instance', function () {
     it('Check JoSk instance properties', function () {
@@ -139,37 +145,92 @@ describe('JoSk Instance', async function () {
   });
 
   describe('setInterval', function () {
-    this.slow(30000);
-    this.timeout(62000);
+    this.slow(7680 * 2);
+    this.timeout(8448 * 2);
 
-    testInterval(1024, job);
-    testInterval(1032, job);
-    testInterval(1040, job);
-    testInterval(1048, job);
-    testInterval(1056, job);
-    testInterval(1064, job);
-    testInterval(1072, job);
-    testInterval(1080, job);
-    testInterval(1088, job);
-    testInterval(1096, job);
-    testInterval(1104, job);
+    testInterval(384);
+    testInterval(512);
+    testInterval(640);
+    testInterval(768);
+    testInterval(778);
+    testInterval(788);
+    testInterval(789);
+    testInterval(800);
+    testInterval(801);
+    testInterval(802);
   });
 
   describe('setTimeout', function () {
-    this.slow(14000);
-    this.timeout(26000);
+    this.slow(7680);
+    this.timeout(8448);
 
-    testTimeout(1024, job);
-    testTimeout(1032, job);
-    testTimeout(1040, job);
-    testTimeout(1048, job);
-    testTimeout(1056, job);
-    testTimeout(1064, job);
-    testTimeout(1072, job);
-    testTimeout(1080, job);
-    testTimeout(1088, job);
-    testTimeout(1096, job);
-    testTimeout(1104, job);
+    testTimeout(384);
+    testTimeout(512);
+    testTimeout(640);
+    testTimeout(768);
+    testTimeout(778);
+    testTimeout(788);
+    testTimeout(789);
+    testTimeout(800);
+    testTimeout(801);
+    testTimeout(802);
+  });
+
+  describe('override settings', function () {
+    this.slow(2600);
+    this.timeout(4096);
+
+    it('setTimeout', function (done) {
+      const uid = job.setTimeout(noop, 2048, 'timeoutOverride');
+
+      setTimeout(async () => {
+        const task = await job.collection.findOne({ uid });
+
+        assert.ok(typeof task === 'object', 'setTimeout override — record exists');
+        assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
+        job.setTimeout(noop, 3072, 'timeoutOverride');
+
+        setTimeout(async () => {
+          const updatedTask = await job.collection.findOne({ uid });
+
+          assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
+
+          process.nextTick(() => {
+            job.clearTimeout(uid);
+            setTimeout(async () => {
+              assert.equal(await job.collection.findOne({ uid }), null, 'setTimeout override — Task cleared');
+              done();
+            }, 384);
+          });
+        }, 384);
+      }, 384);
+    });
+
+    it('setInterval', function (done) {
+      const uid = job.setInterval(noop, 1024, 'intervalOverride');
+
+      setTimeout(async () => {
+        const task = await job.collection.findOne({ uid });
+
+        assert.ok(typeof task === 'object', 'setInterval override — record exists');
+        assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
+        job.setInterval(noop, 2048, 'intervalOverride');
+
+        setTimeout(async () => {
+          const updatedTask = await job.collection.findOne({ uid });
+
+          assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
+
+          process.nextTick(() => {
+            job.clearInterval(uid);
+            setTimeout(async () => {
+              assert.equal(await job.collection.findOne({ uid }), null, 'setInterval override — Task cleared');
+              done();
+            }, 384);
+          });
+        }, 384);
+      }, 384);
+    });
   });
 
   describe('setImmediate', function () {
@@ -188,8 +249,8 @@ describe('JoSk Instance', async function () {
   });
 
   describe('zombieTime (stuck task recovery)', function () {
-    this.slow(18500);
-    this.timeout(26000);
+    this.slow(11000);
+    this.timeout(13000);
 
     it('setInterval', function (done) {
       let time = Date.now();
@@ -213,8 +274,8 @@ describe('JoSk Instance', async function () {
 
     it('setTimeout', function (done) {
       const time = Date.now();
-      const taskId = job.setInterval(() => {
-        job.clearInterval(taskId);
+      const taskId = job.setTimeout(() => {
+        job.clearTimeout(taskId);
         const _time = Date.now() - time;
 
         // console.log('taskTimeout-zombie-2500', _time, _time < (ZOMBIE_TIME + RANDOM_GAP), ZOMBIE_TIME + RANDOM_GAP);
@@ -224,26 +285,25 @@ describe('JoSk Instance', async function () {
     });
   });
 
-  describe('Cancel (abort) current timers', function () {
-    this.slow(4000);
-    this.timeout(5000);
+  describe('Clear (abort) current timers', function () {
+    this.slow(2304);
+    this.timeout(3072);
 
     it('setTimeout', function (done) {
       let check = false;
       const taskId = job.setTimeout((ready) => {
         check = true;
         ready();
-        throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-      }, 1200, 'taskTimeout-abort-1200');
+        // throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
+      }, 768, 'taskTimeout-clear-768');
 
       setTimeout(() => {
         job.clearTimeout(taskId);
-      }, 600);
-
-      setTimeout(() => {
-        assert.equal(check, false, 'setTimeout - is cleared and never executed');
-        done();
-      }, 1800);
+        setTimeout(() => {
+          assert.equal(check, false, 'setTimeout - is cleared and never executed');
+          done();
+        }, 768);
+      }, 384);
     });
 
     it('setInterval', function (done) {
@@ -251,44 +311,44 @@ describe('JoSk Instance', async function () {
       const taskId = job.setInterval((ready) => {
         check = true;
         ready();
-        throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-      }, 1200, 'taskInterval-abort-1200');
+        // throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
+      }, 768, 'taskInterval-clear-768');
 
       setTimeout(() => {
         job.clearInterval(taskId);
-      }, 600);
-
-      setTimeout(() => {
-        assert.equal(check, false, 'setInterval - is cleared and never executed');
-        done();
-      }, 1800);
+        setTimeout(() => {
+          assert.equal(check, false, 'setInterval - is cleared and never executed');
+          done();
+        }, 768);
+      }, 384);
     });
   });
 
   describe('Destroy (abort) current timers', function () {
-    this.slow(4000);
-    this.timeout(5000);
+    this.slow(2304);
+    this.timeout(3072);
 
     it('setTimeout', function (done) {
       let check = false;
       const timeout1 = job.setTimeout(() => {
         check = true;
-        throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-      }, 1200, 'taskTimeout-destroy-1200');
+        job.clearTimeout(timeout1);
+        // throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
+      }, 768, 'taskTimeout-destroy-768');
 
       setTimeout(() => {
         job.destroy();
-      }, 600);
-
-      setTimeout(() => {
-        job.clearTimeout(timeout1);
-        assert.equal(check, false, 'setTimeout - is cleared and never executed');
-        done();
-      }, 1800);
+        setTimeout(() => {
+          job.clearTimeout(timeout1);
+          assert.equal(check, false, 'setTimeout - is destroyed/cleared and never executed');
+          done();
+        }, 768);
+      }, 384);
     });
 
     it('setInterval + onError hook', function (done) {
-      let check = false;
+      let check1 = false;
+      let check2 = false;
       let gotError = false;
       const job2 = new JoSk({
         db: db,
@@ -302,27 +362,29 @@ describe('JoSk Instance', async function () {
         }
       });
 
-      let interval2;
       const interval1 = job2.setInterval(() => {
-        check = true;
-        throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-      }, 1200, 'taskInterval-destroy2-1200');
+        check1 = true;
+        job2.clearInterval(interval1);
+        // throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
+      }, 768, 'taskInterval-destroy2-768');
 
       setTimeout(() => {
         job2.destroy();
-        interval2 = job2.setInterval(() => {
-          check = true;
-          throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
-        }, 800, 'taskInterval-destroy2-800');
-      }, 300);
+        const interval2 = job2.setInterval(() => {
+          check2 = true;
+          // throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
+          job2.clearInterval(interval2);
+        }, 384, 'taskInterval-destroy2-384');
 
-      setTimeout(() => {
-        job2.clearInterval(interval1);
-        job2.clearInterval(interval2);
-        assert.equal(check, false, 'setInterval - is cleared and never executed');
-        assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
-        done();
-      }, 1800);
+        setTimeout(() => {
+          job2.clearInterval(interval1);
+          job2.clearInterval(interval2);
+          assert.equal(check1, false, 'setInterval (before .destroy()) - is destroyed/cleared and never executed');
+          assert.equal(check2, false, 'setInterval (after .destroy()) - is destroyed/cleared and never executed');
+          assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
+          done();
+        }, 768);
+      }, 384);
     });
   });
 });

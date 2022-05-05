@@ -7,10 +7,12 @@ const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP        = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
+const noop        = (ready) => ((typeof ready === 'function') && ready());
 const db          = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
 const timestamps  = {};
 const callbacks   = {};
 const revolutions = {};
+let cron;
 
 describe('Has JoSk Object', () => {
   it('JoSk is Constructor', () => {
@@ -18,63 +20,65 @@ describe('Has JoSk Object', () => {
   });
 });
 
-const cron = new JoSk({
-  db: db,
-  prefix: 'testCaseMeteor',
-  zombieTime: ZOMBIE_TIME,
-  minRevolvingDelay,
-  maxRevolvingDelay,
-  onError(message, details) {
-    console.error('[onError Hook] (this is purely informational message)', message, details);
-    if (message === 'One of your tasks is missing') {
-      // By the way same can be achieved with `autoClear: true`
-      // option passed to `new JoSk({/*...*/})`
-      cron.clearInterval(details.uid);
-    }
-  },
-  onExecuted(uid, task) {
-    if (!timestamps[task.uid]) {
-      return;
-    }
-
-    ++revolutions[task.uid];
-    if (timestamps[task.uid].length < 2) {
-      timestamps[task.uid].push(task.timestamp);
-    } else {
-      timestamps[task.uid][1] = task.timestamp;
-    }
-
-    if ((task.uid.includes('taskInterval') || task.uid.includes('taskTimeout')) && timestamps[task.uid].length === 2) {
-      const now      = Date.now();
-      const expected = timestamps[task.uid][0];
-      const _from    = expected - RANDOM_GAP;
-      const _to      = expected + RANDOM_GAP;
-      const diff     = now - expected;
-
-      // console.log(task.uid, {diff, revs: revolutions[task.uid], delay: task.delay});
-
-      if (task.uid.includes('taskInterval')) {
-        if (revolutions[task.uid] >= 2) {
-          cron.clearInterval(task.uid);
-          assert.equal(revolutions[task.uid], 2, 'Interval second run');
-          callbacks[task.uid]();
-        } else {
-          timestamps[task.uid][0] = now + task.delay;
-          assert.equal(revolutions[task.uid], 1, 'Interval first run');
-        }
-      } else {
-        assert.equal(revolutions[task.uid], 1, 'Timeout single run');
-        callbacks[task.uid]();
+before(function () {
+  cron = new JoSk({
+    db: db,
+    prefix: 'testCaseMeteor',
+    zombieTime: ZOMBIE_TIME,
+    minRevolvingDelay,
+    maxRevolvingDelay,
+    onError(message, details) {
+      console.error('[onError Hook] (this is purely informational message)', message, details);
+      if (message === 'One of your tasks is missing') {
+        // By the way same can be achieved with `autoClear: true`
+        // option passed to `new JoSk({/*...*/})`
+        cron.clearInterval(details.uid);
       }
-      assert.equal(_from < now && now < _to, true, 'Scheduled task has expected execution period');
-      assert.equal(diff < RANDOM_GAP, true, 'Time execution difference less than random gap');
+    },
+    onExecuted(uid, task) {
+      if (!timestamps[task.uid]) {
+        return;
+      }
+
+      ++revolutions[task.uid];
+      if (timestamps[task.uid].length < 2) {
+        timestamps[task.uid].push(task.timestamp);
+      } else {
+        timestamps[task.uid][1] = task.timestamp;
+      }
+
+      if ((task.uid.includes('taskInterval') || task.uid.includes('taskTimeout')) && timestamps[task.uid].length === 2) {
+        const now      = Date.now();
+        const expected = timestamps[task.uid][0];
+        const _from    = expected - RANDOM_GAP;
+        const _to      = expected + RANDOM_GAP;
+        const diff     = now - expected;
+
+        // console.log(task.uid, {diff, revs: revolutions[task.uid], delay: task.delay});
+
+        if (task.uid.includes('taskInterval')) {
+          if (revolutions[task.uid] >= 2) {
+            cron.clearInterval(task.uid);
+            assert.equal(revolutions[task.uid], 2, 'Interval second run');
+            callbacks[task.uid]();
+          } else {
+            timestamps[task.uid][0] = now + task.delay;
+            assert.equal(revolutions[task.uid], 1, 'Interval first run');
+          }
+        } else {
+          assert.equal(revolutions[task.uid], 1, 'Timeout single run');
+          callbacks[task.uid]();
+        }
+        assert.equal(_from < now && now < _to, true, 'Scheduled task has expected execution period');
+        assert.equal(diff < RANDOM_GAP, true, 'Time execution difference less than random gap');
+      }
     }
-  }
+  });
 });
 
 const testInterval = (interval) => {
   it(`setInterval ${interval}`, function (done) {
-    const taskId = cron.setInterval((ready) => ready(), interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
+    const taskId = cron.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
     callbacks[taskId] = done;
     timestamps[taskId] = [Date.now() + interval];
     revolutions[taskId] = 0;
@@ -83,7 +87,7 @@ const testInterval = (interval) => {
 
 const testTimeout = (delay) => {
   it(`setTimeout ${delay}`, function (done) {
-    const taskId = cron.setTimeout((ready) => ready(), delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
+    const taskId = cron.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
     callbacks[taskId] = done;
     timestamps[taskId] = [Date.now() + delay];
     revolutions[taskId] = 0;
@@ -106,35 +110,92 @@ describe('JoSk Instance', function () {
 });
 
 describe('setInterval', function () {
-  this.slow(30000);
-  this.timeout(32000);
+  this.slow(7680 * 2);
+  this.timeout(8448 * 2);
 
-  testInterval(1000);
-  testInterval(1001);
-  testInterval(1002);
-  testInterval(1003);
-  testInterval(1004);
-  testInterval(1005);
-  testInterval(1006);
-  testInterval(1007);
-  testInterval(1008);
-  testInterval(1009);
+  testInterval(384);
+  testInterval(512);
+  testInterval(640);
+  testInterval(768);
+  testInterval(778);
+  testInterval(788);
+  testInterval(789);
+  testInterval(800);
+  testInterval(801);
+  testInterval(802);
 });
 
 describe('setTimeout', function () {
-  this.slow(14000);
-  this.timeout(16000);
+  this.slow(7680);
+  this.timeout(8448);
 
-  testTimeout(1000);
-  testTimeout(1001);
-  testTimeout(1002);
-  testTimeout(1003);
-  testTimeout(1004);
-  testTimeout(1005);
-  testTimeout(1006);
-  testTimeout(1007);
-  testTimeout(1008);
-  testTimeout(1009);
+  testTimeout(384);
+  testTimeout(512);
+  testTimeout(640);
+  testTimeout(768);
+  testTimeout(778);
+  testTimeout(788);
+  testTimeout(789);
+  testTimeout(800);
+  testTimeout(801);
+  testTimeout(802);
+});
+
+describe('override settings', function () {
+  this.slow(2600);
+  this.timeout(4096);
+
+  it('setTimeout', function (done) {
+    const uid = cron.setTimeout(noop, 2048, 'timeoutOverride');
+
+    setTimeout(async () => {
+      const task = await cron.collection.findOne({ uid });
+
+      assert.ok(typeof task === 'object', 'setTimeout override — record exists');
+      assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
+      cron.setTimeout(noop, 3072, 'timeoutOverride');
+
+      setTimeout(async () => {
+        const updatedTask = await cron.collection.findOne({ uid });
+
+        assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
+
+        process.nextTick(() => {
+          cron.clearTimeout(uid);
+          setTimeout(async () => {
+            assert.equal(await cron.collection.findOne({ uid }), null, 'setTimeout override — Task cleared');
+            done();
+          }, 384);
+        });
+      }, 384);
+    }, 384);
+  });
+
+  it('setInterval', function (done) {
+    const uid = cron.setInterval(noop, 1024, 'intervalOverride');
+
+    setTimeout(async () => {
+      const task = await cron.collection.findOne({ uid });
+
+      assert.ok(typeof task === 'object', 'setInterval override — record exists');
+      assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
+      cron.setInterval(noop, 2048, 'intervalOverride');
+
+      setTimeout(async () => {
+        const updatedTask = await cron.collection.findOne({ uid });
+
+        assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
+
+        process.nextTick(() => {
+          cron.clearInterval(uid);
+          setTimeout(async () => {
+            assert.equal(await cron.collection.findOne({ uid }), null, 'setInterval override — Task cleared');
+            done();
+          }, 384);
+        });
+      }, 384);
+    }, 384);
+  });
 });
 
 describe('setImmediate', function () {
@@ -154,8 +215,8 @@ describe('setImmediate', function () {
 
 
 describe('zombieTime (stuck task recovery)', function () {
-  this.slow(10500);
-  this.timeout(18000);
+  this.slow(11000);
+  this.timeout(13000);
 
   it('setInterval', function (done) {
     let time = Date.now();
@@ -179,8 +240,8 @@ describe('zombieTime (stuck task recovery)', function () {
 
   it('setTimeout', function (done) {
     const time = Date.now();
-    const taskId = cron.setInterval(() => {
-      cron.clearInterval(taskId);
+    const taskId = cron.setTimeout(() => {
+      cron.clearTimeout(taskId);
       const _time = Date.now() - time;
 
       assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setTimeout - recovered within appropriate zombieTime time-frame (which is actually the first run as it\'s Timeout)');
@@ -189,26 +250,25 @@ describe('zombieTime (stuck task recovery)', function () {
   });
 });
 
-describe('Cancel (abort) current timers', function () {
-  this.slow(4000);
-  this.timeout(5000);
+describe('Clear (abort) current timers', function () {
+  this.slow(2304);
+  this.timeout(3072);
 
   it('setTimeout', function (done) {
     let check = false;
     const taskId = cron.setTimeout((ready) => {
       check = true;
       ready();
-      throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-    }, 1200, 'taskTimeout-abort-1200');
+      // throw new Error('[Clear (abort) current timers] [setTimeout] This shouldn\'t be executed');
+    }, 768, 'taskTimeout-clear-768');
 
     setTimeout(() => {
       cron.clearTimeout(taskId);
-    }, 600);
-
-    setTimeout(() => {
-      assert.equal(check, false, 'setTimeout - is cleared and never executed');
-      done();
-    }, 1800);
+      setTimeout(() => {
+        assert.equal(check, false, 'setTimeout - is cleared and never executed');
+        done();
+      }, 768);
+    }, 384);
   });
 
   it('setInterval', function (done) {
@@ -216,43 +276,43 @@ describe('Cancel (abort) current timers', function () {
     const taskId = cron.setInterval((ready) => {
       check = true;
       ready();
-      throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-    }, 1200, 'taskInterval-abort-1200');
+      // throw new Error('[Clear (abort) current timers] [setInterval] This shouldn\'t be executed');
+    }, 768, 'taskInterval-clear-768');
 
     setTimeout(() => {
       cron.clearInterval(taskId);
-    }, 600);
-
-    setTimeout(() => {
-      assert.equal(check, false, 'setInterval - is cleared and never executed');
-      done();
-    }, 1800);
+      setTimeout(() => {
+        assert.equal(check, false, 'setInterval - is cleared and never executed');
+        done();
+      }, 768);
+    }, 384);
   });
 });
 
 describe('Destroy (abort) current timers', function () {
-  this.slow(4000);
-  this.timeout(5000);
+  this.slow(2304);
+  this.timeout(3072);
 
   it('setTimeout', function (done) {
     let check = false;
-    cron.setTimeout(() => {
+    const uid = cron.setTimeout(() => {
       check = true;
-      throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-    }, 1200, 'taskTimeout-abort-1200');
+      // throw new Error('[Destroy JoSk instance] [destroy] [setTimeout] This shouldn\'t be executed');
+    }, 768, 'taskTimeout-destroy-768');
 
     setTimeout(() => {
       cron.destroy();
-    }, 600);
-
-    setTimeout(() => {
-      assert.equal(check, false, 'setTimeout - is cleared and never executed');
-      done();
-    }, 1800);
+      setTimeout(() => {
+        cron.clearTimeout(uid);
+        assert.equal(check, false, 'setTimeout - is destroyed/cleared and never executed');
+        done();
+      }, 768);
+    }, 384);
   });
 
   it('setInterval', function (done) {
-    let check = false;
+    let check1 = false;
+    let check2 = false;
     let gotError = false;
     const cron2 = new JoSk({
       db: db,
@@ -266,23 +326,28 @@ describe('Destroy (abort) current timers', function () {
       }
     });
 
-    cron2.setInterval(() => {
-      check = true;
-      throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-    }, 1200, 'taskInterval2-destroy2-1200');
+    const int2uid = cron2.setInterval(() => {
+      check1 = true;
+      cron2.clearInterval(int2uid);
+      // throw new Error('[Destroy JoSk instance] [destroy] [setInterval] This shouldn\'t be executed');
+    }, 768, 'taskInterval2-destroy2-768');
 
     setTimeout(() => {
       cron2.destroy();
-      cron2.setInterval(() => {
-        check = true;
-        throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
-      }, 800, 'taskInterval-destroy2-800');
-    }, 600);
+      const int2uid2 = cron2.setInterval(() => {
+        check2 = true;
+        cron2.clearInterval(int2uid2);
+        // throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
+      }, 384, 'taskInterval2-destroy2-384');
 
-    setTimeout(() => {
-      assert.equal(check, false, 'setInterval - is cleared and never executed');
-      assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
-      done();
-    }, 1800);
+      setTimeout(() => {
+        cron2.clearInterval(int2uid);
+        cron2.clearInterval(int2uid2);
+        assert.equal(check1, false, 'setInterval (before .destroy()) - is destroyed/cleared and never executed');
+        assert.equal(check2, false, 'setInterval (after .destroy()) - is destroyed/cleared and never executed');
+        assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
+        done();
+      }, 768);
+    }, 384);
   });
 });
