@@ -27,7 +27,21 @@ const errors = {
   }
 };
 
+/** Class representing a JoSk task runner (cron). */
 module.exports = class JoSk {
+  /**
+   * Create a Job-Task manager (CRON)
+   * @param {object} opts - configuration object
+   * @param {object} opts.db - Connection to MongoDB, like returned as argument from `MongoClient.connect()`
+   * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
+   * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
+   * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
+   * @param {number} [opts.zombieTime] - Time in milliseconds, after this period of time - task will be interpreted as "zombie". This parameter allows to rescue task from "zombie mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic
+   * @param {function} [opts.onExecuted] - Informational hook, called when task is finished, see readme for more details
+   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
+   * @param {number} [opts.minRevolvingDelay] - Minimum revolving delay — the minimum delay between tasks executions in milliseconds
+   * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
+   */
   constructor(opts = {}) {
     this.prefix = opts.prefix || '';
     this.onError = opts.onError || false;
@@ -90,6 +104,14 @@ module.exports = class JoSk {
     this.__setNext();
   }
 
+  /**
+   * Create recurring task (loop)
+   * @name setInterval
+   * @param {function} func - Function (task) to execute
+   * @param {number} delay - Delay between task execution in milliseconds
+   * @param {string} _uid - Unique function (task) identification as a string
+   * @returns {string} - Timer ID
+   */
   setInterval(func, delay, _uid) {
     if (this.__checkState()) {
       return '';
@@ -112,6 +134,14 @@ module.exports = class JoSk {
     return uid;
   }
 
+  /**
+   * Create delayed task
+   * @name setTimeout
+   * @param {function} func - Function (task) to execute
+   * @param {number} delay - Delay before task execution in milliseconds
+   * @param {string} _uid - Unique function (task) identification as a string
+   * @returns {string} - Timer ID
+   */
   setTimeout(func, delay, _uid) {
     if (this.__checkState()) {
       return '';
@@ -134,6 +164,13 @@ module.exports = class JoSk {
     return uid;
   }
 
+  /**
+   * Create task, which would get executed immediately and only once across multi-server setup
+   * @name setImmediate
+   * @param {function} func - Function (task) to execute
+   * @param {string} _uid - Unique function (task) identification as a string
+   * @returns {string} - Timer ID
+   */
   setImmediate(func, _uid) {
     if (this.__checkState()) {
       return '';
@@ -152,14 +189,33 @@ module.exports = class JoSk {
     return uid;
   }
 
+  /**
+   * Cancel (abort) current interval timer.
+   * Must be called in a separate event loop from `.setInterval()`
+   * @name clearInterval
+   * @param {string} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
+   * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
+   */
   clearInterval() {
     return this.__clear.apply(this, arguments);
   }
 
+  /**
+   * Cancel (abort) current timeout timer.
+   * Must be called in a separate event loop from `.setTimeout()`
+   * @name clearTimeout
+   * @param {string} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
+   * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
+   */
   clearTimeout() {
     return this.__clear.apply(this, arguments);
   }
 
+  /**
+   * Destroy JoSk instance and stop all tasks
+   * @name destroy
+   * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
+   */
   destroy() {
     if (!this.isDestroyed) {
       this.isDestroyed = true;
