@@ -25,7 +25,7 @@ __JoSk package made for a server-only environment.__
   - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk#clearintervaltimer)
   - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk#cleartimeouttimer)
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
-- [~90% tests coverage](https://github.com/veliovgroup/josk#running-tests)
+- [~95% tests coverage](https://github.com/veliovgroup/josk#running-tests)
 
 ## Main features:
 
