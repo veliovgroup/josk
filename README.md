@@ -6,14 +6,15 @@
 
 # JoSk
 
-Simple package with similar API to native `setTimeout` and `setInterval` methods, but synced between all running Node.js instances via MongoDB Collection.
+"JoSk" is a Node.js task manager package with a similar API to native `setTimeout` and `setInterval` methods, synced between all running instances via MongoDB.
 
-Multi-instance task manager for Node.js. This package has the support of clusters, multi-server and multi-threaded Node.js instances. This package goal is to make sure that the only single process of each *task* (*job*/*cron*) is running across *multi-server* (*multi-thread*/*multi-instance*) setup.
+This package supports clusters, multi-server, and multi-threaded Node.js instances, even when running on physically different machines and datacenters. This package goal is to ensure that the only single execution of each *task* (*job*, *cron*) occurs across a *multi-server* (*multi-thread*, *multi-instance*) setup.
 
-__This is a server-only package.__
+__JoSk package made for a server-only environment.__
 
 ## ToC:
 
+- [Prerequisites](https://github.com/veliovgroup/josk#prerequisites)
 - [Install](https://github.com/veliovgroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
 - [Install Meteor](https://github.com/veliovgroup/josk#install-meteor) as [Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
 - [API](https://github.com/veliovgroup/josk#api)
@@ -28,19 +29,24 @@ __This is a server-only package.__
 
 ## Main features:
 
-- 👨‍🔬 ~90% tests coverage;
+- 👨‍🔬 ~95% tests coverage;
 - 📦 Zero dependencies, written from scratch for top performance;
 - 🏢 Synchronize single task across multiple servers;
 - 🔏 Collection locking to avoid simultaneous task executions across complex infrastructure;
 - 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫.
 
+## Prerequisites
+
+- `mongod@>=4.0.0` — (MongoDB Server) Due to the difference in driver's API we recommend to use `mongod@4.*` or `mongod@5.*`, for older setups use `josk@=1.1.0`
+- `node@>=8.9.0` — For older setups use `josk@=1.1.0`
+
 ## Install:
 
 ```shell
-# for node@>=8.9.0
+# for node@>=8.9.0 and mongod@>=4.0.0 (MongoDB server)
 npm install josk --save
 
-# for node@<8.9.0
+# for node@<8.9.0 and mongod@<4.0.0 (MongoDB server)
 npm install josk@=1.1.0 --save
 ```
 
@@ -149,9 +155,10 @@ MongoClient.connect('url', options, (error, client) => {
 #### Initialization in Meteor:
 
 ```js
-// Meteor.users.rawDatabase() is available in most Meteor setups
-// If this is not your case, you can use `rawDatabase` form any other collection
-const db  = Meteor.users.rawDatabase();
+import { MongoInternals } from 'meteor/mongo';
+const db  = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
+// Alternatively `Meteor.users.rawDatabase()``can be used
+// Or `rawDatabase` method can be called on any other Meteor's collection
 const job = new JoSk({db: db});
 ```
 
@@ -159,7 +166,7 @@ Note: This library relies on job ID, so you can not pass same job (with the same
 
 ```js
 const task = function (ready) {
-  //...some code here
+  //... code here
   ready();
 };
 
@@ -171,23 +178,24 @@ Passing arguments (*not really fancy solution, sorry*):
 
 ```js
 const job = new JoSk({db: db});
-let globalVar = 'Some top level or env.variable (can be changed during runtime)';
+const myVar = { key: 'value' };
+let myLet = 'Some top level or env.variable (can be changed during runtime)';
 
 const task = function (arg1, arg2, ready) {
-  //...some code here
+  //... code here
   ready();
 };
 
+const taskA = function (ready) {
+  task(myVar, myLet, ready);
+};
+
 const taskB = function (ready) {
-  task(globalVar, 'b', ready);
+  task({ otherKey: 'Another Value' }, 'Some other arguments', ready);
 };
 
-const task1 = function (ready) {
-  task(1, globalVar, ready);
-};
-
+job.setInterval(taskA, 60 * 60 * 1000, 'taskA');
 job.setInterval(taskB, 60 * 60 * 1000, 'taskB');
-job.setInterval(task1, 60 * 60 * 1000, 'task1');
 ```
 
 Note: To clean up old tasks via MongoDB use next query pattern:
@@ -333,9 +341,19 @@ job.clearTimeout(timer);
 *Destroy JoSk instance*. This method shouldn't be called in normal circumstances. Stop internal interval timer. After JoSk is destroyed — calling public methods would end up logged to `std` or if `onError` hook was passed to JoSk it would receive an error. Only permitted methods are `clearTimeout` and `clearInterval`.
 
 ```js
+// EXAMPLE: DESTROY JoSk INSTANCE UPON SERVER PROCESS TERMINATION
 const job = new JoSk({db: db});
 
-job.destroy();
+const cleanUpBeforeTermination = function () {
+  /* ...CLEAN UP AND STOP OTHER THINGS HERE... */
+  job.destroy();
+  process.exit(1);
+};
+
+process.stdin.resume();
+process.on('uncaughtException', cleanUpBeforeTermination);
+process.on('exit', cleanUpBeforeTermination);
+process.on('SIGHUP', cleanUpBeforeTermination);
 ```
 
 ## Running Tests
