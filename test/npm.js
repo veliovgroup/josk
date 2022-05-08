@@ -2,16 +2,17 @@ if (!process.env.MONGO_URL) {
   throw new Error('MONGO_URL env.var is not defined! Please run test with MONGO_URL, like `MONGO_URL=mongodb://127.0.0.1:27017/dbname npm test`');
 }
 
-const ZOMBIE_TIME       = 8000;
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
-const RANDOM_GAP        = (maxRevolvingDelay - minRevolvingDelay) + 1024;
+const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
-const noop        = (ready) => ((typeof ready === 'function') && ready());
+const noop = (ready) => ((typeof ready === 'function') && ready());
+const JoSk = require('../index.js');
+const ZOMBIE_TIME = 8000;
 const MongoClient = require('mongodb').MongoClient;
-const JoSk        = require('../index.js');
-const mongoAddr   = (process.env.MONGO_URL || '');
-const dbName      = mongoAddr.split('/').pop().replace(/\/$/, '');
+
+const mongoAddr = (process.env.MONGO_URL || '');
+const dbName = mongoAddr.split('/').pop().replace(/\/$/, '');
 
 const { it, describe, before } = require('mocha');
 const { assert }  = require('chai');
@@ -22,6 +23,29 @@ const revolutions = {};
 let client;
 let job;
 let db;
+
+const testInterval = function (interval) {
+  it(`setInterval ${interval}`, function (done) {
+    const taskId = job.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
+    callbacks[taskId] = done;
+    timestamps[taskId] = [Date.now() + interval];
+    revolutions[taskId] = 0;
+  });
+};
+
+const testTimeout = function (delay) {
+  it(`setTimeout ${delay}`, function (done) {
+    const taskId = job.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
+    callbacks[taskId] = done;
+    timestamps[taskId] = [Date.now() + delay];
+    revolutions[taskId] = 0;
+  });
+};
+
+if (!dbName) {
+  throw new Error('Database name in the MONGO_URL env.var required! Example: `MONGO_URL=mongodb://127.0.0.1:27017/dbname`');
+}
+
 before(async function () {
   client = await MongoClient.connect(mongoAddr, {
     writeConcern: {
@@ -100,24 +124,6 @@ before(async function () {
     }
   });
 });
-
-const testInterval = function (interval) {
-  it(`setInterval ${interval}`, function (done) {
-    const taskId = job.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + interval];
-    revolutions[taskId] = 0;
-  });
-};
-
-const testTimeout = function (delay) {
-  it(`setTimeout ${delay}`, function (done) {
-    const taskId = job.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + delay];
-    revolutions[taskId] = 0;
-  });
-};
 
 describe('Has JoSk Object', function () {
   it('JoSk is Constructor', function () {
