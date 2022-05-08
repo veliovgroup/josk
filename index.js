@@ -158,7 +158,6 @@ module.exports = class JoSk {
     } else {
       throw new Error(errors.setTimeout.uid);
     }
-
     this.tasks[uid] = func;
     this.__addTask(uid, false, delay);
     return uid;
@@ -357,6 +356,10 @@ module.exports = class JoSk {
     };
 
     if (this.tasks && this.tasks[task.uid]) {
+      if (this.tasks[task.uid].isMissing === true) {
+        return;
+      }
+
       const ready = () => {
         const date = new Date();
         const timestamp = +date;
@@ -381,6 +384,9 @@ module.exports = class JoSk {
       }
     } else {
       done(new Date());
+      this.tasks[task.uid] = function () { };
+      this.tasks[task.uid].isMissing = true;
+
       if (this.autoClear) {
         this.__clear(task.uid);
         _debug(`[FYI] [${task.uid}] task was auto-cleared`);
