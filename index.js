@@ -34,6 +34,7 @@ module.exports = class JoSk {
    * @param {object} opts - configuration object
    * @param {object} opts.db - Connection to MongoDB, like returned as argument from `MongoClient.connect()`
    * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
+   * @param {string} [opts.lockCollectionName] - Name for *.lock collection
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
    * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
    * @param {number} [opts.zombieTime] - Time in milliseconds, after this period of time - task will be interpreted as "zombie". This parameter allows to rescue task from "zombie mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic
@@ -52,7 +53,9 @@ module.exports = class JoSk {
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
+    this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
     this.nextRevolutionTimeout = null;
+    this.tasks = {};
 
     if (!opts.db) {
       if (this.onError) {
@@ -75,13 +78,19 @@ module.exports = class JoSk {
       }
     });
 
+    this.collection.createIndex({uid: 1, isDeleted: 1}, {background: false}, (indexError) => {
+      if (indexError) {
+        _debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
+      }
+    });
+
     this.collection.createIndex({executeAt: 1}, {background: false}, (indexError) => {
       if (indexError) {
         _debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
       }
     });
 
-    this.lockCollection = opts.db.collection(`${this.uniqueName}.lock`);
+    this.lockCollection = opts.db.collection(this.lockCollectionName);
     this.lockCollection.createIndex({expireAt: 1}, {background: false, expireAfterSeconds: 1}, (indexError) => {
       if (indexError) {
         _debug('[constructor] [lockCollection] [createIndex] [expireAt]', indexError);
@@ -100,7 +109,6 @@ module.exports = class JoSk {
       }, mongoErrorHandler);
     }
 
-    this.tasks = {};
     this.__setNext();
   }
 
@@ -158,6 +166,7 @@ module.exports = class JoSk {
     } else {
       throw new Error(errors.setTimeout.uid);
     }
+
     this.tasks[uid] = func;
     this.__addTask(uid, false, delay);
     return uid;
@@ -193,6 +202,7 @@ module.exports = class JoSk {
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
    * @param {string} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
+   * @param {function} [callback] - optional callback
    * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
    */
   clearInterval() {
@@ -204,6 +214,7 @@ module.exports = class JoSk {
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
    * @param {string} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
+   * @param {function} [callback] - optional callback
    * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
    */
   clearTimeout() {
@@ -282,14 +293,38 @@ module.exports = class JoSk {
     return false;
   }
 
-  __clear(uid) {
-    this.collection.deleteOne({ uid }, (deleteError) => {
-      this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
+  __clear(uid, callback) {
+    if (!uid) {
+      typeof callback === 'function' && callback(new TypeError('{string} uid is not defined'), false);
+      return false;
+    }
+
+    this.collection.findOneAndUpdate({
+      uid,
+      isDeleted: false
+    }, {
+      $set: {
+        isDeleted: true
+      }
+    }, {
+      projection: {
+        _id: 1,
+        isDeleted: 1
+      },
+    }, (findAndUpdateError, result) => {
+      if (findAndUpdateError) {
+        this.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
+      } else if (result?.value?.isDeleted === false) {
+        this.collection.deleteOne({ _id: result.value._id }, (deleteError, deleteResult) => {
+          this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
+          if (this.tasks && this.tasks[uid]) {
+            delete this.tasks[uid];
+          }
+          typeof callback === 'function' && callback(deleteError, deleteResult?.deletedCount >= 1);
+        });
+      }
     });
 
-    if (this.tasks && this.tasks[uid]) {
-      delete this.tasks[uid];
-    }
     return true;
   }
 
@@ -308,21 +343,23 @@ module.exports = class JoSk {
           uid: uid,
           delay: delay,
           executeAt: new Date(Date.now() + delay),
-          isInterval: isInterval
+          isInterval: isInterval,
+          isDeleted: false
         }, (insertError) => {
           this.__errorHandler(insertError, '[__addTask] [insertOne] [insertError]', 'Error in a callback of .insertOne() method of .__addTask()', uid);
         });
-      } else {
+      } else if (task.isDeleted === false) {
         let update = null;
         if (task.delay !== delay) {
           update = { delay };
         }
 
-        if (+task.executeAt > Date.now() + delay) {
+        const next = Date.now() + delay;
+        if (+task.executeAt !== next) {
           if (!update) {
             update = {};
           }
-          update.executeAt = new Date(Date.now() + delay);
+          update.executeAt = new Date(next);
         }
 
         if (update) {
@@ -343,15 +380,16 @@ module.exports = class JoSk {
       return;
     }
 
-    const done = (_date) => {
+    const done = (_date, readyCallback) => {
       this.collection.updateOne({
         uid: task.uid
       }, {
         $set: {
           executeAt: _date
         }
-      }, (updateError) => {
+      }, (updateError, updateResult) => {
         this.__errorHandler(updateError, '[__execute] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__execute()', task.uid);
+        typeof readyCallback === 'function' && readyCallback(updateError, updateResult?.modifiedCount >= 1);
       });
     };
 
@@ -360,12 +398,14 @@ module.exports = class JoSk {
         return;
       }
 
-      const ready = () => {
+      const ready = (readyCallback) => {
         const date = new Date();
         const timestamp = +date;
 
         if (task.isInterval === true) {
-          done(new Date(timestamp + task.delay));
+          done(new Date(timestamp + task.delay), readyCallback);
+        } else {
+          typeof readyCallback === 'function' && readyCallback(void 0, true);
         }
 
         if (this.onExecuted) {
@@ -378,12 +418,18 @@ module.exports = class JoSk {
         }
       };
 
-      this.tasks[task.uid](ready);
       if (task.isInterval === false) {
-        this.__clear(task.uid);
+        const originalTask = this.tasks[task.uid];
+        this.__clear(task.uid, (error, isSuccess) => {
+          if (!error && isSuccess === true) {
+            originalTask(ready);
+          }
+        });
+      } else {
+        this.tasks[task.uid](ready);
       }
     } else {
-      done(new Date());
+      done(new Date(Date.now() + this.zombieTime));
       this.tasks[task.uid] = function () { };
       this.tasks[task.uid].isMissing = true;
 
@@ -493,6 +539,7 @@ module.exports = class JoSk {
     if (this.isDestroyed) {
       return;
     }
+
     this.nextRevolutionTimeout = setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
   }
 
