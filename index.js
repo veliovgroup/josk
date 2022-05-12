@@ -3,9 +3,6 @@ const mongoErrorHandler = (error) => {
     console.error('[josk] [mongoErrorHandler]:', error);
   }
 };
-const _debug = (...args) => {
-  console.info.call(console, '[DEBUG] [josk]', ...args);
-};
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
 const errors = {
@@ -32,6 +29,7 @@ module.exports = class JoSk {
    * Create a Job-Task manager (CRON)
    * @param {object} opts - configuration object
    * @param {object} opts.db - Connection to MongoDB, like returned as argument from `MongoClient.connect()`
+   * @param {boolean} [opts.db] - Enable debug logging
    * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
    * @param {string} [opts.lockCollectionName] - Name for *.lock collection
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
@@ -43,6 +41,7 @@ module.exports = class JoSk {
    * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
    */
   constructor(opts = {}) {
+    this.debug = opts.debug || false;
     this.prefix = opts.prefix || '';
     this.onError = opts.onError || false;
     this.autoClear = opts.autoClear || false;
@@ -56,6 +55,10 @@ module.exports = class JoSk {
     this.nextRevolutionTimeout = null;
     this.tasks = {};
 
+    this._debug = (...args) => {
+      this.debug === true && console.info.call(console, '[DEBUG] [josk]', ...args);
+    };
+
     if (!opts.db) {
       if (this.onError) {
         this.onError(errors.dbOption.error, {
@@ -64,7 +67,7 @@ module.exports = class JoSk {
           uid: null
         });
       } else {
-        _debug(`[constructor] ${errors.dbOption.description}`);
+        this._debug(`[constructor] ${errors.dbOption.description}`);
       }
       return;
     }
@@ -73,31 +76,31 @@ module.exports = class JoSk {
     this.collection = opts.db.collection(this.uniqueName);
     this.collection.createIndex({uid: 1}, {background: false, unique: true}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [collection] [createIndex] [uid]', indexError);
+        this._debug('[constructor] [collection] [createIndex] [uid]', indexError);
       }
     });
 
     this.collection.createIndex({uid: 1, isDeleted: 1}, {background: false}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
+        this._debug('[constructor] [collection] [createIndex] [uid, isDeleted]', indexError);
       }
     });
 
     this.collection.createIndex({executeAt: 1}, {background: false}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
+        this._debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
       }
     });
 
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     this.lockCollection.createIndex({expireAt: 1}, {background: false, expireAfterSeconds: 1}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [lockCollection] [createIndex] [expireAt]', indexError);
+        this._debug('[constructor] [lockCollection] [createIndex] [expireAt]', indexError);
       }
     });
     this.lockCollection.createIndex({uniqueName: 1}, {background: false, unique: true}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [lockCollection] [createIndex] [uniqueName]', indexError);
+        this._debug('[constructor] [lockCollection] [createIndex] [uniqueName]', indexError);
       }
     });
 
@@ -282,7 +285,7 @@ module.exports = class JoSk {
           uid: null
         });
       } else {
-        _debug('[__checkState] [warn] invoking methods of destroyed JoSk instance, call cause no action');
+        this._debug('[__checkState] [warn] invoking methods of destroyed JoSk instance, call cause no action');
       }
       return true;
     }
@@ -435,7 +438,7 @@ module.exports = class JoSk {
 
       if (this.autoClear) {
         this.__clear(task.uid);
-        _debug(`[FYI] [${task.uid}] task was auto-cleared`);
+        this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
       } else if (this.onError) {
         this.onError('One of your tasks is missing', {
           description: `Something went wrong with one of your tasks - is missing.
@@ -447,7 +450,7 @@ module.exports = class JoSk {
           uid: task.uid
         });
       } else {
-        _debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
+        this._debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
           Try to use different instances.
           It's safe to ignore this message.
           If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
@@ -466,7 +469,7 @@ module.exports = class JoSk {
 
     this.__aquireLock((lockError, success) => {
       if (lockError) {
-        _debug('[__runTasks] [__aquireLock] Error:', lockError);
+        this._debug('[__runTasks] [__aquireLock] Error:', lockError);
       } else if (!success) {
         this.__setNext();
       } else {
@@ -476,7 +479,7 @@ module.exports = class JoSk {
           this.__releaseLock((releaseError) => {
             this.__setNext();
             if (releaseError) {
-              _debug('[__runTasks] [__releaseLock] Error:', releaseError);
+              this._debug('[__runTasks] [__releaseLock] Error:', releaseError);
             }
           });
         };
