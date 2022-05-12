@@ -1,6 +1,7 @@
 import { MongoInternals } from 'meteor/mongo';
 import JoSk               from '../index.js';
 import { assert }         from 'meteor/practicalmeteor:chai';
+import parser             from 'cron-parser';
 
 const ZOMBIE_TIME       = 8000;
 const minRevolvingDelay = 32;
@@ -13,6 +14,7 @@ const timestamps  = {};
 const callbacks   = {};
 const revolutions = {};
 let cron;
+let createCronTask;
 
 describe('Has JoSk Object', () => {
   it('JoSk is Constructor', () => {
@@ -74,6 +76,21 @@ before(function () {
       }
     }
   });
+
+  createCronTask = (uniqueName, cronTask, task) => {
+    const next = +parser.parseExpression(cronTask).next().toDate();
+    const timeout = next - Date.now();
+
+    return cron.setTimeout(function (done) {
+      done(() => { // <- call `done()` right away
+        // MAKE SURE FURTHER LOGIC EXECUTED
+        // INSIDE done() CALLBACK
+        if (task()) { // <-- return false to stop CRON
+          createCronTask(uniqueName, cronTask, task);
+        }
+      });
+    }, timeout, uniqueName);
+  };
 });
 
 const testInterval = (interval) => {
@@ -198,6 +215,7 @@ describe('override settings', function () {
   });
 });
 
+
 describe('setImmediate', function () {
   this.slow(RANDOM_GAP * 3);
   this.timeout(RANDOM_GAP * 4);
@@ -213,6 +231,37 @@ describe('setImmediate', function () {
   });
 });
 
+describe('CRON Usage', function () {
+  this.slow(11000);
+  this.timeout(14000);
+
+  it('Test CRON intervals', function (endit) {
+    let last;
+    let counter = 0;
+    let maxRuns = 5;
+    let intervalSec = 2;
+
+    createCronTask('My every two seconds cron', `*/${intervalSec} * * * * *`, function () {
+      counter++;
+      const now = Date.now();
+      let duration = intervalSec * 1000;
+      if (last) {
+        duration = now - last;
+      }
+      last = Date.now();
+
+      assert.ok(duration >= (intervalSec * 1000) - 512, `CRON interval is within appropriate delays; >= -512; ${duration}`);
+      assert.ok(duration <= (intervalSec * 1000) + 512, `CRON interval is within appropriate delays; <= +512; ${duration}`);
+
+      if (counter >= maxRuns) {
+        endit();
+        return false;
+      }
+
+      return true;
+    });
+  });
+});
 
 describe('zombieTime (stuck task recovery)', function () {
   this.slow(11000);
