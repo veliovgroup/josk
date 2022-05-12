@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const mongoErrorHandler = (error) => {
   if (error) {
     console.error('[josk] [mongoErrorHandler]:', error);
@@ -98,7 +97,7 @@ module.exports = class JoSk {
     });
     this.lockCollection.createIndex({uniqueName: 1}, {background: false, unique: true}, (indexError) => {
       if (indexError) {
-        _debug('[constructor] [lockCollection] [createIndex] [uid]', indexError);
+        _debug('[constructor] [lockCollection] [createIndex] [uniqueName]', indexError);
       }
     });
 
@@ -106,6 +105,10 @@ module.exports = class JoSk {
     if (this.resetOnInit) {
       this.collection.deleteMany({
         isInterval: false
+      }, mongoErrorHandler);
+
+      this.lockCollection.deleteMany({
+        uniqueName: this.uniqueName
       }, mongoErrorHandler);
     }
 
@@ -240,35 +243,28 @@ module.exports = class JoSk {
 
   __aquireLock(cb) {
     const expireAt = new Date(Date.now() + this.zombieTime);
-    const lockId = crypto.randomBytes(48).toString('hex');
 
-    this.lockCollection.insertOne({
-      lockId,
-      expireAt,
-      uniqueName: this.uniqueName,
-    }, (insertError, result) => {
-      if (insertError) {
-        if (insertError.code !== 11000) {
-          cb(insertError);
+    this.lockCollection.findOneAndUpdate({
+      uniqueName: this.uniqueName
+    }, {
+      $set: {
+        expireAt,
+        uniqueName: this.uniqueName
+      }
+    }, {
+      upsert: true,
+      returnNewDocument: false
+    }, (findAndUpdateError, result) => {
+      if (findAndUpdateError) {
+        if (findAndUpdateError?.code !== 11000) {
+          cb(findAndUpdateError);
         } else {
           cb(void 0, false);
         }
+      } else if (result?.value === null) {
+        cb(void 0, true);
       } else {
-        this.lockCollection.findOne({
-          _id: result.insertedId
-        }, {
-          projection: {
-            lockId: 1
-          }
-        }, (findError, lockRecord) => {
-          if (findError) {
-            cb(findError);
-          } else if (lockRecord && lockRecord.lockId === lockId){
-            cb(void 0, true);
-          } else {
-            cb(void 0, false);
-          }
-        });
+        cb(void 0, false);
       }
     });
   }
@@ -307,13 +303,15 @@ module.exports = class JoSk {
         isDeleted: true
       }
     }, {
+      returnNewDocument: false,
       projection: {
         _id: 1,
         isDeleted: 1
-      },
+      }
     }, (findAndUpdateError, result) => {
       if (findAndUpdateError) {
         this.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
+        typeof callback === 'function' && callback(findAndUpdateError, false);
       } else if (result?.value?.isDeleted === false) {
         this.collection.deleteOne({ _id: result.value._id }, (deleteError, deleteResult) => {
           this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
@@ -322,6 +320,8 @@ module.exports = class JoSk {
           }
           typeof callback === 'function' && callback(deleteError, deleteResult?.deletedCount >= 1);
         });
+      } else {
+        typeof callback === 'function' && callback(void 0, false);
       }
     });
 
@@ -336,13 +336,14 @@ module.exports = class JoSk {
     this.collection.findOne({
       uid: uid
     }, (findError, task) => {
+      const next = Date.now() + delay;
       if (findError) {
         this.__errorHandler(findError, '[__addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .__addTask()', uid);
       } else if (!task) {
         this.collection.insertOne({
           uid: uid,
           delay: delay,
-          executeAt: new Date(Date.now() + delay),
+          executeAt: new Date(next),
           isInterval: isInterval,
           isDeleted: false
         }, (insertError) => {
@@ -354,7 +355,6 @@ module.exports = class JoSk {
           update = { delay };
         }
 
-        const next = Date.now() + delay;
         if (+task.executeAt !== next) {
           if (!update) {
             update = {};
@@ -376,7 +376,7 @@ module.exports = class JoSk {
   }
 
   __execute(task) {
-    if (this.isDestroyed) {
+    if (this.isDestroyed || task.isDeleted === true) {
       return;
     }
 
@@ -393,7 +393,7 @@ module.exports = class JoSk {
       });
     };
 
-    if (this.tasks && this.tasks[task.uid]) {
+    if (this.tasks && typeof this.tasks[task.uid] === 'function') {
       if (this.tasks[task.uid].isMissing === true) {
         return;
       }
@@ -491,6 +491,7 @@ module.exports = class JoSk {
               _id: 1,
               uid: 1,
               delay: 1,
+              isDeleted: 1,
               isInterval: 1
             }
           });
