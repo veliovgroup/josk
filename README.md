@@ -318,18 +318,24 @@ job.setImmediate(syncTask, 'syncTask');
 job.setImmediate(asyncTask, 'asyncTask');
 ```
 
-### `clearInterval(timer)`
+### `clearInterval(timer [, callback])`
 
-*Cancel (abort) current interval timer.* Must be called in a separate event loop from `setInterval`.
+- {*String*} `timer` — Timer id returned from `JoSk#setInterval()` method
+- {*Function*} `[callback]` — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
+
+*Cancel current interval timer.* Must be called in a separate event loop from `setInterval`.
 
 ```js
 const timer = job.setInterval(func, 34789, 'unique-taskid');
 job.clearInterval(timer);
 ```
 
-### `clearTimeout(timer)`
+### `clearTimeout(timer [, callback])`
 
-*Cancel (abort) current timeout timer.* Should be called in a separate event loop from `setTimeout`.
+- {*String*} `timer` — Timer id returned from `JoSk#setTimeout()` method
+- {*Function*} `[callback]` — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
+
+*Cancel current timeout timer.* Should be called in a separate event loop from `setTimeout`.
 
 ```js
 const timer = job.setTimeout(func, 34789, 'unique-taskid');
