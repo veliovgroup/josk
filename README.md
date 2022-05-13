@@ -25,6 +25,8 @@ __JoSk package made for a server-only environment.__
   - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk#clearintervaltimer)
   - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk#cleartimeouttimer)
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
+- [Examples](https://github.com/veliovgroup/josk#examples)
+  - [CRON usage](https://github.com/veliovgroup/josk#cron)
 - [~95% tests coverage](https://github.com/veliovgroup/josk#running-tests)
 
 ## Main features:
@@ -108,6 +110,8 @@ job.setInterval(task, 60 * 60 * 1000, 'task');
 
 - `opts.db` {*Object*} - [Required] Connection to MongoDB, like returned as argument from `MongoClient.connect()`
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
+- `opts.lockCollectionName` {*String*} - [Optional] By default all JoSk instances use the same `__JobTasks__.lock` collection for locking
+- `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
 - `opts.resetOnInit` {*Boolean*} - [Optional] make sure all old tasks is completed before setting a new one. Useful when you run a single instance of an app, or multiple app instances on __one__ machine, in case machine was reloaded during running task and task is unfinished
 - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to less than a minute (*60000ms*)
@@ -138,17 +142,13 @@ const options = {
     w: 'majority',
     wtimeout: 30000
   },
-  readConcern: {
-    level: 'linearizable'
-  },
-  readPreference: 'primary',
-  connectWithNoPrimary: false
+  readPreference: 'primary'
 };
 
 MongoClient.connect('url', options, (error, client) => {
   // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
   const db = client.db('dbName');
-  const job = new JoSk({db: db});
+  const job = new JoSk({ db });
 });
 ```
 
@@ -157,9 +157,9 @@ MongoClient.connect('url', options, (error, client) => {
 ```js
 import { MongoInternals } from 'meteor/mongo';
 const db  = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
-// Alternatively `Meteor.users.rawDatabase()``can be used
-// Or `rawDatabase` method can be called on any other Meteor's collection
-const job = new JoSk({db: db});
+// Alternatively `Meteor.users.rawDatabase()` can be used
+// `.rawDatabase()` method available on all Meteor's collection
+const job = new JoSk({ db });
 ```
 
 Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
@@ -174,12 +174,12 @@ job.setInterval(task, 60 * 60 * 1000, 'task-1000');
 job.setInterval(task, 60 * 60 * 2000, 'task-2000');
 ```
 
-Passing arguments (*not really fancy solution, sorry*):
+Passing arguments:
 
 ```js
 const job = new JoSk({db: db});
 const myVar = { key: 'value' };
-let myLet = 'Some top level or env.variable (can be changed during runtime)';
+let myLet = 'Some top level or env.variable (can get changed during runtime)';
 
 const task = function (arg1, arg2, ready) {
   //... code here
@@ -213,7 +213,7 @@ db.getCollection('__JobTasks__PrefixHere').remove({});
 - `delay` {*Number*}   - Delay for first run and interval between further executions in milliseconds
 - `uid`   {*String*}   - Unique app-wide task id
 
-*Set task into interval execution loop.* `ready()` *is passed as the first argument into task function.*
+*Set task into interval execution loop.* `ready()` *is passed as the first argument into a task function.*
 
 In this example, next task will not be scheduled until the current is ready:
 
@@ -224,7 +224,7 @@ const syncTask = function (ready) {
 };
 const asyncTask = function (ready) {
   asyncCall(function () {
-    //...run more async code
+    //...run async code
     ready();
   });
 };
@@ -243,7 +243,7 @@ const syncTask = function (ready) {
 const asyncTask = function (ready) {
   ready();
   asyncCall(function () {
-    //...run more async code
+    //...run async code
   });
 };
 
@@ -277,7 +277,7 @@ job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
 - `delay` {*Number*}   - Delay in milliseconds
 - `uid`   {*String*}   - Unique app-wide task id
 
-*Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task was executed only once.* `ready()` *is passed as the first argument into task function.*
+*Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *is passed as the first argument into a task function.*
 
 ```js
 const syncTask = function (ready) {
@@ -354,6 +354,44 @@ process.stdin.resume();
 process.on('uncaughtException', cleanUpBeforeTermination);
 process.on('exit', cleanUpBeforeTermination);
 process.on('SIGHUP', cleanUpBeforeTermination);
+```
+
+## Examples
+
+Use cases and usage examples
+
+### CRON
+
+Use JoSk to invoke synchronized tasks by CRON schedule. Use [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON tasks. `createCronTask` example
+
+```js
+import parser from 'cron-parser';
+
+const jobCron = new JoSk({
+  db: db,
+  maxRevolvingDelay: 256, // <- Speed up timer speed by lowering its max revolving delay
+  zombieTime: 1024, // <- will need to call `done()` right away
+  prefix: 'cron'
+});
+
+// CREATE HELPER FUNCTION
+const createCronTask = (uniqueName, cronTask, task) => {
+  const next = +parser.parseExpression(cronTask).next().toDate();
+  const timeout = next - Date.now();
+
+  return jobCron.setTimeout(function (done) {
+    done(() => { // <- call `done()` right away
+      // MAKE SURE FURTHER LOGIC EXECUTED
+      // INSIDE done() CALLBACK
+      task(); // <- Execute task
+      createCronTask(uniqueName, cronTask, task); // <- Create task for the next iteration
+    });
+  }, timeout, uniqueName);
+};
+
+createCronTask('My every two seconds cron', '*/2 * * * * *', function () {
+  console.log(new Date);
+});
 ```
 
 ## Running Tests
