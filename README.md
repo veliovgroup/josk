@@ -27,11 +27,11 @@ __JoSk package made for a server-only environment.__
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
 - [Examples](https://github.com/veliovgroup/josk#examples)
   - [CRON usage](https://github.com/veliovgroup/josk#cron)
-- [~95% tests coverage](https://github.com/veliovgroup/josk#running-tests)
+- [~97% tests coverage](https://github.com/veliovgroup/josk#running-tests)
 
 ## Main features:
 
-- 👨‍🔬 ~95% tests coverage;
+- 👨‍🔬 ~97% tests coverage;
 - 📦 Zero dependencies, written from scratch for top performance;
 - 🏢 Synchronize single task across multiple servers;
 - 🔏 Collection locking to avoid simultaneous task executions across complex infrastructure;

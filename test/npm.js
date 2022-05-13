@@ -8,6 +8,7 @@ const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
 const noop = (ready) => ((typeof ready === 'function') && ready());
 const JoSk = require('../index.js');
+const parser = require('cron-parser');
 const ZOMBIE_TIME = 8000;
 const MongoClient = require('mongodb').MongoClient;
 
@@ -22,6 +23,12 @@ const revolutions = {};
 
 let client;
 let job;
+let jobCron;
+// let jobExtra1;
+// let jobExtra2;
+// let jobExtra3;
+// let jobExtra4;
+// let jobExtra5;
 let db;
 
 const testInterval = function (interval) {
@@ -123,6 +130,22 @@ before(async function () {
       }
     }
   });
+
+  jobCron = new JoSk({
+    db: db,
+    debug: true,
+    maxRevolvingDelay: 256, // <- Speed up timer speed by lowering its max revolving delay
+    zombieTime: 1024, // <- will need to call `done()` right away
+    prefix: 'cron',
+    autoClear: true,
+    resetOnInit: true
+  });
+
+  // jobExtra1 = new JoSk({ db, prefix: 'jobExtra1', resetOnInit: true });
+  // jobExtra2 = new JoSk({ db, prefix: 'jobExtra2', resetOnInit: true });
+  // jobExtra3 = new JoSk({ db, prefix: 'jobExtra3', resetOnInit: true });
+  // jobExtra4 = new JoSk({ db, prefix: 'jobExtra4', resetOnInit: true });
+  // jobExtra5 = new JoSk({ db, prefix: 'jobExtra5', resetOnInit: true });
 });
 
 describe('Has JoSk Object', function () {
@@ -132,8 +155,10 @@ describe('Has JoSk Object', function () {
 });
 
 describe('JoSk Instance', function () {
-  this.slow(42500);
-  this.timeout(85000);
+  this.slow(55000);
+  this.timeout(100000);
+  let overloadCronTimeouts = [];
+  let overloadCronIntervals = [];
 
   describe('JoSk Instance', function () {
     it('Check JoSk instance properties', function () {
@@ -148,6 +173,117 @@ describe('JoSk Instance', function () {
       assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'job has maxRevolvingDelay');
       assert.instanceOf(job.tasks, Object, 'job has tasks');
     });
+  });
+
+  describe('CRON usage', function () {
+    this.slow(50000);
+    this.timeout(60000);
+    const maxRuns = 5;
+    const timers = {};
+    const runs = {};
+    const createCronTask = (uniqueName, cronTask, task, josk = jobCron) => {
+      const next = +parser.parseExpression(cronTask).next().toDate();
+      const timeout = next - Date.now();
+
+      timers[uniqueName] = josk.setTimeout(function (done) {
+        done(() => { // <- call `done()` right away
+          // MAKE SURE FURTHER LOGIC EXECUTED
+          // INSIDE done() CALLBACK
+          if (task()) { // <-- return false to stop CRON
+            createCronTask(uniqueName, cronTask, task);
+          }
+        });
+      }, timeout, uniqueName);
+
+      return timers[uniqueName];
+    };
+
+    it('Create multiple CRON tasks to simulate load an concurrency', function () {
+      // const createOverloadTask = (josk) => {
+      // const uuid = `${Math.random().toString(36).substring(2, 15)}`;
+      overloadCronTimeouts.push(createCronTask('overload CRON 1', '* * * * * *', () => {
+        // -- silence
+      }, jobCron));
+
+      overloadCronTimeouts.push(createCronTask('overload CRON 2', '*/2 * * * * *', () => {
+        // -- silence
+      }, jobCron));
+
+      overloadCronTimeouts.push(createCronTask('overload CRON 3', '*/3 * * * * *', () => {
+        // -- silence
+      }, jobCron));
+
+      overloadCronTimeouts.push(createCronTask('overload CRON 4', '*/4 * * * * *', () => {
+        // -- silence
+      }, jobCron));
+
+      overloadCronTimeouts.push(createCronTask('overload CRON 5', '* * * * * *', () => {
+        // -- silence
+      }, jobCron));
+
+      overloadCronIntervals.push(job.setInterval(() => {
+        // -- silence
+      }, 1024, 'overload Interval 1'));
+
+      overloadCronIntervals.push(job.setInterval(() => {
+        // -- silence
+      }, 1025, 'overload Interval 2'));
+
+      overloadCronIntervals.push(job.setInterval(() => {
+        // -- silence
+      }, 1026, 'overload Interval 3'));
+
+      overloadCronIntervals.push(job.setInterval(() => {
+        // -- silence
+      }, 1027, 'overload Interval 4'));
+
+      overloadCronIntervals.push(job.setInterval(() => {
+        // -- silence
+      }, 1028, 'overload Interval 5'));
+      // };
+
+      // createOverloadTask(job);
+      // createOverloadTask(jobCron);
+      // createOverloadTask(jobExtra1);
+      // createOverloadTask(jobExtra2);
+      // createOverloadTask(jobExtra3);
+      // createOverloadTask(jobExtra4);
+      // createOverloadTask(jobExtra5);
+    });
+
+    const testCreateCronTask = (sec) =>  {
+      it(`Check CRON-like task (${sec}sec) intervals`, function (endit) {
+        const cronTask = `*/${sec} * * * * *`;
+        let expected = +parser.parseExpression(cronTask).next().toDate();
+        const uniqueName = `every ${sec} seconds CRON` + Math.random();
+        runs[uniqueName] = 0;
+
+        createCronTask(uniqueName, cronTask, function runCronTask () {
+          runs[uniqueName]++;
+
+          const now = Date.now();
+          const diff = expected - now;
+          expected = +parser.parseExpression(cronTask).next().toDate();
+
+          assert.ok(diff < 512, `CRON task interval in correct time gaps (< 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
+          assert.ok(diff > -512, `CRON task interval in correct time gaps (> 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
+          assert.ok(runs[uniqueName] <= maxRuns, `CRON task runs only desired amount of cycles; diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
+
+          if (maxRuns === runs[uniqueName]) {
+            assert.ok(runs[uniqueName] === maxRuns, 'CRON task correctly cleared after 5 cycles');
+            endit();
+            return false;
+          }
+
+          return true;
+        });
+      });
+    };
+
+    testCreateCronTask(1);
+    testCreateCronTask(2);
+    testCreateCronTask(3);
+    testCreateCronTask(4);
   });
 
   describe('setInterval', function () {
@@ -391,6 +527,47 @@ describe('JoSk Instance', function () {
           done();
         }, 768);
       }, 384);
+    });
+  });
+
+  describe('clean up and wrap up', function () {
+    it('Disable overload CRONs', (endit) => {
+      const length = overloadCronTimeouts.length;
+      let cleared = 0;
+      overloadCronTimeouts.forEach((timerId) => {
+        jobCron.clearTimeout(timerId, (error, isRemoved) => {
+          cleared++;
+          if (!isRemoved) {
+            jobCron.clearTimeout(timerId);
+          }
+          if (cleared === length) {
+            endit();
+          }
+        });
+      });
+    });
+
+    it('Disable overload Intervals', (endit) => {
+      const length = overloadCronIntervals.length;
+      let cleared = 0;
+      overloadCronIntervals.forEach((timerId) => {
+        job.clearInterval(timerId, (error, isRemoved) => {
+          cleared++;
+          if (!isRemoved) {
+            job.clearInterval(timerId);
+          }
+          if (cleared === length) {
+            endit();
+          }
+        });
+      });
+    });
+
+    it('Check that collections are clear', async function () {
+      const count = await jobCron.collection.count();
+      const count2 = await job.collection.count();
+      assert.equal(count, 0, 'jobCron.count === 0');
+      assert.equal(count2, 0, 'job.count === 0');
     });
   });
 });
