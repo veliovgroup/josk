@@ -22,8 +22,8 @@ __JoSk package made for a server-only environment.__
   - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk#setintervalfunc-delay-uid)
   - [`JoSk#setTimeout()`](https://github.com/veliovgroup/josk#settimeoutfunc-delay-uid)
   - [`JoSk#setImmediate()`](https://github.com/veliovgroup/josk#setimmediatefunc-uid)
-  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk#clearintervaltimer)
-  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk#cleartimeouttimer)
+  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk#clearintervaltimer--callback)
+  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk#cleartimeouttimer--callback)
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
 - [Examples](https://github.com/veliovgroup/josk#examples)
   - [CRON usage](https://github.com/veliovgroup/josk#cron)
@@ -320,8 +320,8 @@ job.setImmediate(asyncTask, 'asyncTask');
 
 ### `clearInterval(timer [, callback])`
 
-- {*String*} `timer` — Timer id returned from `JoSk#setInterval()` method
-- {*Function*} `[callback]` — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
+- `timer` {*String*} — Timer id returned from `JoSk#setInterval()` method
+- `[callback]` {*Function*} — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
 
 *Cancel current interval timer.* Must be called in a separate event loop from `setInterval`.
 
@@ -332,8 +332,8 @@ job.clearInterval(timer);
 
 ### `clearTimeout(timer [, callback])`
 
-- {*String*} `timer` — Timer id returned from `JoSk#setTimeout()` method
-- {*Function*} `[callback]` — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
+- `timer` {*String*} — Timer id returned from `JoSk#setTimeout()` method
+- `[callback]` {*Function*} — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
 
 *Cancel current timeout timer.* Should be called in a separate event loop from `setTimeout`.
 
