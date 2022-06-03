@@ -438,6 +438,6 @@ MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" meteor test-packages 
 
 ## Support our open source contribution:
 
-- [Sponsor via GitHub](https://github.com/sponsors/dr-dimitru) — support open source contributions on a regular basis
-- [Support via PayPal](https://paypal.me/veliovgroup) — support open source contributions once
+- [Sponsor via GitHub](https://github.com/sponsors/dr-dimitru)
+- [Support via PayPal](https://paypal.me/veliovgroup)
 - Use [ostr.io](https://ostr.io) — [Monitoring](https://snmp-monitoring.com), [Analytics](https://ostr.io/info/web-analytics), [WebSec](https://domain-protection.info), [Web-CRON](https://web-cron.info) and [Pre-rendering](https://prerendering.com) for a website
