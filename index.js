@@ -470,6 +470,7 @@ module.exports = class JoSk {
     this.__aquireLock((lockError, success) => {
       if (lockError) {
         this._debug('[__runTasks] [__aquireLock] Error:', lockError);
+        this.__setNext();
       } else if (!success) {
         this.__setNext();
       } else {
