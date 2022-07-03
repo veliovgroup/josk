@@ -5,6 +5,7 @@
 .github
 .meteor
 .npm
+.meteorignore
 .versions
 cover.jpg
 cover.png

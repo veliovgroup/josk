@@ -1,7 +1,7 @@
 {
   "name": "josk",
-  "version": "3.0.1",
-  "description": "Scheduler and manager for jobs and tasks in Node.js on multi-server and clusters setup",
+  "version": "3.0.2",
+  "description": "Jobs scheduler and manager for Node.js on multi-server and clusters setup",
   "main": "index.js",
   "scripts": {
     "test": "mocha ./test/npm.js"
@@ -49,7 +49,7 @@
     "bson": "^4.6.4",
     "bson-ext": "^4.0.2",
     "chai": "^4.3.6",
-    "cron-parser": "^4.4.0",
+    "cron-parser": "^4.5.0",
     "mocha": "^10.0.0",
     "mongodb": "^4.7.0",
     "pathval": "^1.1.1"

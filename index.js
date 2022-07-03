@@ -247,27 +247,34 @@ module.exports = class JoSk {
   __aquireLock(cb) {
     const expireAt = new Date(Date.now() + this.zombieTime);
 
-    this.lockCollection.findOneAndUpdate({
+    this.lockCollection.findOne({
       uniqueName: this.uniqueName
     }, {
-      $set: {
-        expireAt,
-        uniqueName: this.uniqueName
+      projection: {
+        uniqueName: 1
       }
-    }, {
-      upsert: true,
-      returnNewDocument: false
-    }, (findAndUpdateError, result) => {
-      if (findAndUpdateError) {
-        if (findAndUpdateError?.code !== 11000) {
-          cb(findAndUpdateError);
-        } else {
-          cb(void 0, false);
-        }
-      } else if (result?.value === null) {
-        cb(void 0, true);
-      } else {
+    }, (findError, record) => {
+      if (findError) {
+        cb(findError);
+      } else if (record?.uniqueName === this.uniqueName) {
         cb(void 0, false);
+      } else {
+        this.lockCollection.insertOne({
+          uniqueName: this.uniqueName,
+          expireAt
+        }, (insertError, result) => {
+          if (insertError) {
+            if (insertError?.code === 11000) {
+              cb(void 0, false);
+            } else {
+              cb(insertError);
+            }
+          } else if (result.insertedId) {
+            cb(void 0, true);
+          } else {
+            cb(void 0, false);
+          }
+        });
       }
     });
   }
