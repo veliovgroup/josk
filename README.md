@@ -16,7 +16,6 @@ __JoSk package made for a server-only environment.__
 
 - [Prerequisites](https://github.com/veliovgroup/josk#prerequisites)
 - [Install](https://github.com/veliovgroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
-- [Install Meteor](https://github.com/veliovgroup/josk#install-meteor) as [Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
 - [API](https://github.com/veliovgroup/josk#api)
   - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk#initialization)
   - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk#setintervalfunc-delay-uid)
@@ -27,6 +26,7 @@ __JoSk package made for a server-only environment.__
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
 - [Examples](https://github.com/veliovgroup/josk#examples)
   - [CRON usage](https://github.com/veliovgroup/josk#cron)
+  - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
 - [~97% tests coverage](https://github.com/veliovgroup/josk#running-tests)
 
 ## Main features:
@@ -57,41 +57,6 @@ const JoSk = require('josk');
 
 //ES6 Style:
 import JoSk from 'josk';
-```
-
-## Install Meteor:
-
-```shell
-meteor add ostrio:cron-jobs
-```
-
-```js
-import JoSk from 'meteor/ostrio:cron-jobs';
-```
-
-### Known Meteor Issues:
-
-```log
-Error: Can't wait without a fiber
-```
-
-Can be easily solved via "bounding to Fiber":
-
-```js
-const bound = Meteor.bindEnvironment((callback) => {
-  callback();
-});
-
-const db  = Collection.rawDatabase();
-const job = new JoSk({db: db});
-
-const task = (ready) => {
-  bound(() => { // <-- use "bound" inside of a task
-    ready();
-  });
-};
-
-job.setInterval(task, 60 * 60 * 1000, 'task');
 ```
 
 ## Notes:
@@ -150,28 +115,6 @@ MongoClient.connect('url', options, (error, client) => {
   const db = client.db('dbName');
   const job = new JoSk({ db });
 });
-```
-
-#### Initialization in Meteor:
-
-```js
-import { MongoInternals } from 'meteor/mongo';
-const db  = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
-// Alternatively `Meteor.users.rawDatabase()` can be used
-// `.rawDatabase()` method available on all Meteor's collection
-const job = new JoSk({ db });
-```
-
-Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
-
-```js
-const task = function (ready) {
-  //... code here
-  ready();
-};
-
-job.setInterval(task, 60 * 60 * 1000, 'task-1000');
-job.setInterval(task, 60 * 60 * 2000, 'task-2000');
 ```
 
 Passing arguments:
@@ -413,21 +356,6 @@ npm install --save-dev
 
 # Before run tests you need to have running MongoDB
 MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm test
-
-# Be patient, tests are taking around 2 mins
-```
-
-### Running Tests in Meteor environment
-
-```shell
-# Default
-meteor test-packages ./ --driver-package=meteortesting:mocha
-
-# With custom port
-meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
-
-# With local MongoDB and custom port
-MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
 # Be patient, tests are taking around 2 mins
 ```
