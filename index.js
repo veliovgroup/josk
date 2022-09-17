@@ -23,6 +23,53 @@ const errors = {
   }
 };
 
+/**
+ * Ensure (create) index on MongoDB collection, catch and log exception if thrown
+ * @function ensureIndex
+ * @param {Collection} collection - Mongo's driver Collection instance
+ * @param {object} keys - Field and value pairs where the field is the index key and the value describes the type of index for that field
+ * @param {object} opts - Set of options that controls the creation of the index
+ * @returns {void 0}
+ */
+const ensureIndex = async (collection, keys, opts) => {
+  try {
+    await collection.createIndex(keys, opts);
+  } catch (e) {
+    if (e.code === 85) {
+      let indexName;
+      const indexes = await collection.indexes();
+      for (const index of indexes) {
+        let drop = true;
+        for (const indexKey of Object.keys(keys)) {
+          if (typeof index.key[indexKey] === 'undefined') {
+            drop = false;
+            break;
+          }
+        }
+
+        for (const indexKey of Object.keys(index.key)) {
+          if (typeof keys[indexKey] === 'undefined') {
+            drop = false;
+            break;
+          }
+        }
+
+        if (drop) {
+          indexName = index.name;
+          break;
+        }
+      }
+
+      if (indexName) {
+        await collection.dropIndex(indexName);
+        await collection.createIndex(keys, opts);
+      }
+    } else {
+      console.info(`[INFO] [josk] Can not set ${Object.keys(keys).join(' + ')} index on "${collection._name}" collection`, { keys, opts, details: e });
+    }
+  }
+};
+
 /** Class representing a JoSk task runner (cron). */
 module.exports = class JoSk {
   /**
@@ -39,6 +86,7 @@ module.exports = class JoSk {
    * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    * @param {number} [opts.minRevolvingDelay] - Minimum revolving delay — the minimum delay between tasks executions in milliseconds
    * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
+   * @param {string} [opts.participant.name] - Unique hostname within a cluster, default `os.hostname`
    */
   constructor(opts = {}) {
     this.debug = opts.debug || false;
@@ -74,35 +122,13 @@ module.exports = class JoSk {
 
     this.uniqueName = `__JobTasks__${this.prefix}`;
     this.collection = opts.db.collection(this.uniqueName);
-    this.collection.createIndex({uid: 1}, {background: false, unique: true}, (indexError) => {
-      if (indexError) {
-        this._debug('[constructor] [collection] [createIndex] [uid]', indexError);
-      }
-    });
-
-    this.collection.createIndex({uid: 1, isDeleted: 1}, {background: false}, (indexError) => {
-      if (indexError) {
-        this._debug('[constructor] [collection] [createIndex] [uid, isDeleted]', indexError);
-      }
-    });
-
-    this.collection.createIndex({executeAt: 1}, {background: false}, (indexError) => {
-      if (indexError) {
-        this._debug('[constructor] [collection] [createIndex] [executeAt]', indexError);
-      }
-    });
+    ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
+    ensureIndex(this.collection, {uid: 1, isDeleted: 1}, {background: false});
+    ensureIndex(this.collection, {executeAt: 1}, {background: false});
 
     this.lockCollection = opts.db.collection(this.lockCollectionName);
-    this.lockCollection.createIndex({expireAt: 1}, {background: false, expireAfterSeconds: 1}, (indexError) => {
-      if (indexError) {
-        this._debug('[constructor] [lockCollection] [createIndex] [expireAt]', indexError);
-      }
-    });
-    this.lockCollection.createIndex({uniqueName: 1}, {background: false, unique: true}, (indexError) => {
-      if (indexError) {
-        this._debug('[constructor] [lockCollection] [createIndex] [uniqueName]', indexError);
-      }
-    });
+    ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
+    ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
 
 
     if (this.resetOnInit) {
