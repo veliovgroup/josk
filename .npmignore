@@ -12,5 +12,7 @@ cover.png
 node_modules
 npm-debug.log*
 package.js
+docs/
+docs/*
 test/
 test/*
