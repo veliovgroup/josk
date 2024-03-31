@@ -20,8 +20,6 @@ import JoSk from 'meteor/ostrio:cron-jobs';
 import { MongoInternals } from 'meteor/mongo';
 import JoSk from 'meteor/ostrio:cron-jobs';
 const db = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
-// Alternatively `Meteor.users.rawDatabase()` can be used
-// `.rawDatabase()` method available on all Meteor's collection
 const job = new JoSk({ db });
 ```
 
@@ -33,8 +31,8 @@ const task = function (ready) {
   ready();
 };
 
-job.setInterval(task, 60 * 60 * 1000, 'task-1000');
-job.setInterval(task, 60 * 60 * 2000, 'task-2000');
+job.setInterval(task, 60 * 60 * 1000, 'task-1000'); // every minute
+job.setInterval(task, 60 * 60 * 2000, 'task-2000'); // every two minutes
 ```
 
 ### CRON scheduler
@@ -66,7 +64,7 @@ const setCron = (uniqueName, cronTask, task) => {
   }, timeout, uniqueName);
 };
 
-setCron('My every two seconds cron', '*/2 * * * * *', function () {
+setCron('Run every two seconds cron', '*/2 * * * * *', function () {
   console.log(new Date);
 });
 ```
@@ -91,6 +89,8 @@ MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" meteor test-packages 
 ```
 
 ## Known Meteor Issues:
+
+`meteor@1` and `meteor@2` known to rely on `fibers` an may cause the next exception:
 
 ```log
 Error: Can't wait without a fiber

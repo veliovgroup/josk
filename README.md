@@ -5,63 +5,68 @@
 
 # JoSk
 
-"JoSk" is a Node.js task manager package with a similar API to native `setTimeout` and `setInterval` methods, synced between all running instances via MongoDB.
+"JoSk" is a Node.js task manager for horizontally scaled apps, or for apps that plan horizontal scaling, or want to have an option to scale horizontally with ease once needed.
 
-This package supports clusters, multi-server, and multi-threaded Node.js instances, even when running on physically different machines and datacenters. This package goal is to ensure that the only single execution of each *task* (*job*, *cron*) occurs across a *multi-server* (*multi-thread*, *multi-instance*) setup.
+JoSk follows native API of `setTimeout` and `setInterval` methods, or as a [CRON task](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron), synced between all running instances via MongoDB.
 
-__JoSk package made for a server-only environment.__
+This package supports clusters, multi-server, and multi-threaded Node.js instances, even when running on physically different machines and data-centers. This package ensures that the only single execution of each *task* (*job*, *cron*) occurs across a *multi-server* (*multi-thread*, *multi-instance*) setup.
+
+__Note: JoSk is the server-only package.__
 
 ## ToC:
 
-- [Prerequisites](https://github.com/veliovgroup/josk#prerequisites)
-- [Install](https://github.com/veliovgroup/josk#install) as [NPM package](https://www.npmjs.com/package/josk)
-- [API](https://github.com/veliovgroup/josk#api)
-  - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk#initialization)
-  - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk#setintervalfunc-delay-uid)
-  - [`JoSk#setTimeout()`](https://github.com/veliovgroup/josk#settimeoutfunc-delay-uid)
-  - [`JoSk#setImmediate()`](https://github.com/veliovgroup/josk#setimmediatefunc-uid)
-  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk#clearintervaltimer--callback)
-  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk#cleartimeouttimer--callback)
-  - [`JoSk#destroy()`](https://github.com/veliovgroup/josk#destroy)
-- [Examples](https://github.com/veliovgroup/josk#examples)
-  - [CRON usage](https://github.com/veliovgroup/josk#cron)
+- [Prerequisites](https://github.com/veliovgroup/josk?tab=readme-ov-file#prerequisites)
+- [Install](https://github.com/veliovgroup/josk?tab=readme-ov-file#install) as [NPM package](https://www.npmjs.com/package/josk)
+- [API](https://github.com/veliovgroup/josk?tab=readme-ov-file#api)
+  - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#initialization)
+  - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#setintervalfunc-delay-uid)
+  - [`JoSk#setTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#settimeoutfunc-delay-uid)
+  - [`JoSk#setImmediate()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#setimmediatefunc-uid)
+  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#clearintervaltimer--callback)
+  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#cleartimeouttimer--callback)
+  - [`JoSk#destroy()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#destroy)
+- [Examples](https://github.com/veliovgroup/josk?tab=readme-ov-file#examples)
+  - [CRON usage](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron)
   - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
-- [~97% tests coverage](https://github.com/veliovgroup/josk#running-tests)
+- [~97% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 
 ## Main features:
 
-- 👨‍🔬 ~97% tests coverage;
-- 📦 Zero dependencies, written from scratch for top performance;
 - 🏢 Synchronize single task across multiple servers;
 - 🔏 Collection locking to avoid simultaneous task executions across complex infrastructure;
+- 📦 Zero dependencies, written from scratch for top performance;
+- 👨‍🔬 ~99% tests coverage;
 - 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫.
 
 ## Prerequisites
 
-- `mongod@>=4.0.0` — (MongoDB Server) Due to the difference in driver's API we recommend to use `mongod@4.*` or `mongod@5.*`, for older setups use `josk@=1.1.0`
-- `node@>=8.9.0` — For older setups use `josk@=1.1.0`
+- `mongod@>=4.0.0` — MongoDB Server Version
+- `node@>=14.20.0` — Node.js version
+
+### Older releases compatibility
+
+- `mongod@<4.0.0` — use `josk@=1.1.0`
+- `node@<14.20.0` — use `josk@=3.0.2`
+- `node@<8.9.0` — use `josk@=1.1.0`
 
 ## Install:
 
 ```shell
-# for node@>=8.9.0 and mongod@>=4.0.0 (MongoDB server)
 npm install josk --save
-
-# for node@<8.9.0 and mongod@<4.0.0 (MongoDB server)
-npm install josk@=1.1.0 --save
 ```
 
 ```js
-const JoSk = require('josk');
-
-//ES6 Style:
+// ES Module Style
 import JoSk from 'josk';
+
+// CommonJS
+const JoSk = require('josk');
 ```
 
 ## Notes:
 
-- This package is perfect when you have multiple servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app, not per server;
-- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: Email, SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch and etc;
+- This package is perfect when you have multiple horizontally scaled servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code when you need to run repeating tasks, and you need to run it only once per app/cluster, not per server;
+- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch, sync, and etc;
 - Accuracy — Delay of each task depends on MongoDB and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + MongoDB_Connection_And_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution;
 - Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce load on MongoDB;
 - To avoid "DB locks" — it's recommended to use separate DB from "main" application DB (*same MongoDB server can have multiple DBs*).
@@ -98,99 +103,77 @@ import JoSk from 'josk';
 ### Initialization:
 
 ```js
-// Recommended MongoDB connection options
-// When used with ReplicaSet
-const options = {
-  writeConcern: {
-    j: true,
-    w: 'majority',
-    wtimeout: 30000
-  },
-  readPreference: 'primary'
-};
-
-MongoClient.connect('url', options, (error, client) => {
+MongoClient.connect('mongodb://url', (error, client) => {
   // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
   const db = client.db('dbName');
   const job = new JoSk({ db });
 });
 ```
 
-Passing arguments:
-
 ```js
 const job = new JoSk({db: db});
-const myVar = { key: 'value' };
-let myLet = 'Some top level or env.variable (can get changed during runtime)';
 
-const task = function (arg1, arg2, ready) {
-  //... code here
+const task = function (ready) {
+  /* ...code here... */
   ready();
 };
 
-const taskA = function (ready) {
-  task(myVar, myLet, ready);
+const asyncTask = function (ready) {
+  /* ...code here... */
+  asyncCall(() => {
+    /* ...more code here...*/
+    ready()''
+  });
 };
 
-const taskB = function (ready) {
-  task({ otherKey: 'Another Value' }, 'Some other arguments', ready);
-};
-
-job.setInterval(taskA, 60 * 60 * 1000, 'taskA');
-job.setInterval(taskB, 60 * 60 * 1000, 'taskB');
-```
-
-Note: To clean up old tasks via MongoDB use next query pattern:
-
-```js
-// Run directly in MongoDB console:
-db.getCollection('__JobTasks__').remove({});
-// If you're using multiple JoSk instances with prefix:
-db.getCollection('__JobTasks__PrefixHere').remove({});
+job.setInterval(task, 60 * 60 * 1000, 'task1h'); // every hour
+job.setInterval(asyncTask, 15 * 60 * 1000, 'asyncTask15m'); // every 15 mins
 ```
 
 ### `setInterval(func, delay, uid)`
 
-- `func`  {*Function*} - Function to call on schedule
-- `delay` {*Number*}   - Delay for first run and interval between further executions in milliseconds
-- `uid`   {*String*}   - Unique app-wide task id
+- `func` {*Function*} - Function to call on schedule
+- `delay` {*Number*} - Delay for first run and interval between further executions in milliseconds
+- `uid` {*String*} - Unique app-wide task id
 
 *Set task into interval execution loop.* `ready()` *is passed as the first argument into a task function.*
 
-In this example, next task will not be scheduled until the current is ready:
+In the example below, next task __will not be scheduled__ until the current is ready:
 
 ```js
 const syncTask = function (ready) {
-  //...run sync code
+  /* ...run sync code... */
   ready();
 };
+
 const asyncTask = function (ready) {
   asyncCall(function () {
-    //...run async code
+    /* ...run async code... */
     ready();
   });
 };
 
-job.setInterval(syncTask, 60 * 60 * 1000, 'syncTask');
-job.setInterval(asyncTask, 60 * 60 * 1000, 'asyncTask');
+job.setInterval(syncTask, 60 * 60 * 1000, 'syncTask1h'); // will execute every hour + time to execute the task
+job.setInterval(asyncTask, 60 * 60 * 1000, 'asyncTask1h'); // will execute every hour + time to execute the task
 ```
 
-In this example, next task will not wait for the current task to finish:
+In the example below, next task __will not wait__ for the current task to finish:
 
 ```js
 const syncTask = function (ready) {
   ready();
-  //...run sync code
+  /* ...run sync code... */
 };
+
 const asyncTask = function (ready) {
   ready();
   asyncCall(function () {
-    //...run async code
+    /* ...run async code... */
   });
 };
 
-job.setInterval(syncTask, 60 * 60 * 1000, 'syncTask');
-job.setInterval(asyncTask, 60 * 60 * 1000, 'asyncTask');
+job.setInterval(syncTask, 60 * 60 * 1000, 'syncTask1h'); // will execute every hour
+job.setInterval(asyncTask, 60 * 60 * 1000, 'asyncTask1h'); // will execute every hour
 ```
 
 In this example, we're assuming to have long running task, executed in a loop without delay, but after full execution:
@@ -210,31 +193,32 @@ const longRunningAsyncTask = function (ready) {
   });
 };
 
-job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask');
+job.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
 ```
 
 ### `setTimeout(func, delay, uid)`
 
-- `func`  {*Function*} - Function to call on schedule
-- `delay` {*Number*}   - Delay in milliseconds
-- `uid`   {*String*}   - Unique app-wide task id
+- `func` {*Function*} - Function to call on schedule
+- `delay` {*Number*} - Delay in milliseconds
+- `uid` {*String*} - Unique app-wide task id
 
 *Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *is passed as the first argument into a task function.*
 
 ```js
 const syncTask = function (ready) {
-  //...run sync code
+  /* ...run sync code... */
   ready();
 };
+
 const asyncTask = function (ready) {
   asyncCall(function () {
-    //...run more async code
+    /* ...run async code... */
     ready();
   });
 };
 
-job.setTimeout(syncTask, 60 * 60 * 1000, 'syncTask');
-job.setTimeout(asyncTask, 60 * 60 * 1000, 'asyncTask');
+job.setTimeout(syncTask, 60 * 1000, 'syncTaskIn1m'); // will run only once across the cluster in a minute
+job.setTimeout(asyncTask, 60 * 1000, 'asyncTaskIn1m'); // will run only once across the cluster in a minute
 ```
 
 ### `setImmediate(func, uid)`
@@ -337,8 +321,67 @@ const createCronTask = (uniqueName, cronTask, task) => {
   }, timeout, uniqueName);
 };
 
-createCronTask('My every two seconds cron', '*/2 * * * * *', function () {
+createCronTask('This task runs every 2 seconds', '*/2 * * * * *', function () {
   console.log(new Date);
+});
+```
+
+### Pass arguments
+
+```js
+const job = new JoSk({db: db});
+const myVar = { key: 'value' };
+let myLet = 'Some top level or env.variable (can get changed during runtime)';
+
+const task = function (arg1, arg2, ready) {
+  //... code here
+  ready();
+};
+
+const taskA = function (ready) {
+  task(myVar, myLet, ready);
+};
+
+const taskB = function (ready) {
+  task({ otherKey: 'Another Value' }, 'Some other arguments', ready);
+};
+
+job.setInterval(taskA, 60 * 60 * 1000, 'taskA');
+job.setInterval(taskB, 60 * 60 * 1000, 'taskB');
+```
+
+### Clean up old tasks
+
+To clean up old tasks via MongoDB use next query pattern:
+
+```js
+// Run directly in MongoDB console:
+db.getCollection('__JobTasks__').remove({});
+// If you're using multiple JoSk instances with prefix:
+db.getCollection('__JobTasks__PrefixHere').remove({});
+```
+
+### MongoDB connection fine tunning
+
+```js
+// Recommended MongoDB connection options
+// When used with ReplicaSet
+const options = {
+  writeConcern: {
+    j: true,
+    w: 'majority',
+    wtimeout: 30000
+  },
+  readConcern: {
+    level: 'majority'
+  },
+  readPreference: 'primary'
+};
+
+MongoClient.connect('mongodb://url', options, (error, client) => {
+  // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
+  const db = client.db('dbName');
+  const job = new JoSk({ db });
 });
 ```
 
