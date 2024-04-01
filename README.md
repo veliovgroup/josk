@@ -27,6 +27,9 @@ __Note: JoSk is the server-only package.__
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#destroy)
 - [Examples](https://github.com/veliovgroup/josk?tab=readme-ov-file#examples)
   - [CRON usage](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron)
+  - [Passing arguments](https://github.com/veliovgroup/josk?tab=readme-ov-file#pass-arguments)
+  - [Clean up stale tasks](https://github.com/veliovgroup/josk?tab=readme-ov-file#clean-up-old-tasks)
+  - [MongoDB connection options](https://github.com/veliovgroup/josk?tab=readme-ov-file#mongodb-connection-fine-tunning)
   - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
 - [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 
