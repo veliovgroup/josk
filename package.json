@@ -1,14 +1,16 @@
 {
   "name": "josk",
-  "version": "3.0.2",
+  "version": "3.1.0",
   "description": "Jobs scheduler and manager for Node.js on multi-server and clusters setup",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "mocha ./test/npm.js"
   },
   "keywords": [
     "tasks",
     "jobs",
+    "horizontal scaling",
     "cluster",
     "scheduler",
     "agent",
@@ -22,6 +24,7 @@
   "tags": [
     "tasks",
     "jobs",
+    "horizontal scaling",
     "cluster",
     "scheduler",
     "agent",
@@ -43,15 +46,15 @@
   "author": "dr.dimitru (https://veliovgroup.com)",
   "license": "BSD-3-Clause",
   "engines": {
-    "node": ">=8.9.0"
+    "node": ">=14.20.0"
   },
   "devDependencies": {
-    "bson": "^4.6.4",
-    "bson-ext": "^4.0.2",
-    "chai": "^4.3.6",
-    "cron-parser": "^4.5.0",
-    "mocha": "^10.0.0",
-    "mongodb": "^4.7.0",
-    "pathval": "^1.1.1"
+    "bson": "^6.3.0",
+    "bson-ext": "^4.0.3",
+    "chai": "^4.4.1",
+    "cron-parser": "^4.9.0",
+    "mocha": "^10.3.0",
+    "mongodb": "^6.5.0",
+    "pathval": "^2.0.0"
   }
 }

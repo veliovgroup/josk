@@ -28,7 +28,7 @@ __Note: JoSk is the server-only package.__
 - [Examples](https://github.com/veliovgroup/josk?tab=readme-ov-file#examples)
   - [CRON usage](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron)
   - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
-- [~97% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
+- [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 
 ## Main features:
 

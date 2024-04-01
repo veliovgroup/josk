@@ -71,7 +71,7 @@ const ensureIndex = async (collection, keys, opts) => {
 };
 
 /** Class representing a JoSk task runner (cron). */
-module.exports = class JoSk {
+export default class JoSk {
   /**
    * Create a Job-Task manager (CRON)
    * @param {object} opts - configuration object
@@ -134,11 +134,11 @@ module.exports = class JoSk {
     if (this.resetOnInit) {
       this.collection.deleteMany({
         isInterval: false
-      }, mongoErrorHandler);
+      }).then(() => {}).catch(mongoErrorHandler);
 
       this.lockCollection.deleteMany({
         uniqueName: this.uniqueName
-      }, mongoErrorHandler);
+      }).then(() => {}).catch(mongoErrorHandler);
     }
 
     this.__setNext();
@@ -279,34 +279,38 @@ module.exports = class JoSk {
       projection: {
         uniqueName: 1
       }
-    }, (findError, record) => {
-      if (findError) {
-        cb(findError);
-      } else if (record?.uniqueName === this.uniqueName) {
+    }).then((record) => {
+      if (record?.uniqueName === this.uniqueName) {
         cb(void 0, false);
       } else {
         this.lockCollection.insertOne({
           uniqueName: this.uniqueName,
           expireAt
-        }, (insertError, result) => {
-          if (insertError) {
-            if (insertError?.code === 11000) {
-              cb(void 0, false);
-            } else {
-              cb(insertError);
-            }
-          } else if (result.insertedId) {
+        }).then((result) => {
+          if (result.insertedId) {
             cb(void 0, true);
           } else {
             cb(void 0, false);
           }
+        }).catch((insertError) => {
+          if (insertError?.code === 11000) {
+            cb(void 0, false);
+          } else {
+            cb(insertError);
+          }
         });
       }
+    }).catch((findError) => {
+      cb(findError);
     });
   }
 
   __releaseLock(cb) {
-    this.lockCollection.deleteOne({ uniqueName: this.uniqueName }, cb);
+    this.lockCollection.deleteOne({ uniqueName: this.uniqueName }).then(() => {
+      cb();
+    }).catch((deleteOneError) => {
+      cb(deleteOneError);
+    });
   }
 
   __checkState() {
@@ -344,21 +348,24 @@ module.exports = class JoSk {
         _id: 1,
         isDeleted: 1
       }
-    }, (findAndUpdateError, result) => {
-      if (findAndUpdateError) {
-        this.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
-        typeof callback === 'function' && callback(findAndUpdateError, false);
-      } else if (result?.value?.isDeleted === false) {
-        this.collection.deleteOne({ _id: result.value._id }, (deleteError, deleteResult) => {
-          this.__errorHandler(deleteError, '[__clear] [deleteOne] [deleteError]', 'Error in a callback of .deleteOne() method of .__clear()', uid);
-          if (this.tasks && this.tasks[uid]) {
-            delete this.tasks[uid];
-          }
-          typeof callback === 'function' && callback(deleteError, deleteResult?.deletedCount >= 1);
+    }).then((result) => {
+      const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
+      if (res?.isDeleted === false) {
+        if (this.tasks && this.tasks[uid]) {
+          delete this.tasks[uid];
+        }
+
+        this.collection.deleteOne({ _id: res._id }).then((deleteResult) => {
+          typeof callback === 'function' && callback(void 0, deleteResult?.deletedCount >= 1);
+        }).catch((deleteError) => {
+          typeof callback === 'function' && callback(deleteError, false);
         });
       } else {
         typeof callback === 'function' && callback(void 0, false);
       }
+    }).catch((findAndUpdateError) => {
+      this.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
+      typeof callback === 'function' && callback(findAndUpdateError, false);
     });
 
     return true;
@@ -371,18 +378,16 @@ module.exports = class JoSk {
 
     this.collection.findOne({
       uid: uid
-    }, (findError, task) => {
+    }).then((task) => {
       const next = Date.now() + delay;
-      if (findError) {
-        this.__errorHandler(findError, '[__addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .__addTask()', uid);
-      } else if (!task) {
+      if (!task) {
         this.collection.insertOne({
           uid: uid,
           delay: delay,
           executeAt: new Date(next),
           isInterval: isInterval,
           isDeleted: false
-        }, (insertError) => {
+        }).then(() => {}).catch((insertError) => {
           this.__errorHandler(insertError, '[__addTask] [insertOne] [insertError]', 'Error in a callback of .insertOne() method of .__addTask()', uid);
         });
       } else if (task.isDeleted === false) {
@@ -403,11 +408,13 @@ module.exports = class JoSk {
             uid: uid
           }, {
             $set: update
-          }, (updateError) => {
+          }).then(() => {}).catch((updateError) => {
             this.__errorHandler(updateError, '[__addTask] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__addTask()', uid);
           });
         }
       }
+    }).catch((findError) => {
+      this.__errorHandler(findError, '[__addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .__addTask()', uid);
     });
   }
 
@@ -423,9 +430,11 @@ module.exports = class JoSk {
         $set: {
           executeAt: _date
         }
-      }, (updateError, updateResult) => {
+      }).then((updateResult) => {
+        typeof readyCallback === 'function' && readyCallback(void 0, updateResult?.modifiedCount >= 1);
+      }).catch((updateError) => {
+        typeof readyCallback === 'function' && readyCallback(updateError);
         this.__errorHandler(updateError, '[__execute] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__execute()', task.uid);
-        typeof readyCallback === 'function' && readyCallback(updateError, updateResult?.modifiedCount >= 1);
       });
     };
 
@@ -536,12 +545,8 @@ module.exports = class JoSk {
           cursor.forEach((task) => {
             _ids.push(task._id);
             tasks.push(task);
-          }, (forEachError) => {
-            cursor.close();
-            if (forEachError) {
-              releaseLock();
-              this.__errorHandler(forEachError, '[__runTasks] [forEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
-            } else if (_ids.length) {
+          }).then(() => {
+            if (_ids.length) {
               this.collection.updateMany({
                 _id: {
                   $in: _ids
@@ -550,20 +555,23 @@ module.exports = class JoSk {
                 $set: {
                   executeAt: nextExecuteAt
                 }
-              }, (updateError) => {
-                if (updateError) {
-                  releaseLock();
-                  this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
-                } else {
-                  for (const task of tasks) {
-                    this.__execute(task);
-                  }
-                  releaseLock();
+              }).then(() => {
+                for (const task of tasks) {
+                  this.__execute(task);
                 }
+                releaseLock();
+              }).catch((updateError) => {
+                releaseLock();
+                this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
               });
             } else {
               releaseLock();
             }
+          }).catch((forEachError) => {
+            releaseLock();
+            this.__errorHandler(forEachError, '[__runTasks] [forEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
+          }).finally(() => {
+            cursor.close();
           });
         } catch (_error) {
           this.__setNext();
@@ -590,4 +598,4 @@ module.exports = class JoSk {
       }
     }
   }
-};
+}

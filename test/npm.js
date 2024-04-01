@@ -1,3 +1,9 @@
+import JoSk  from '../index.js';
+import parser  from 'cron-parser';
+import { MongoClient } from 'mongodb';
+import { it, describe, before } from 'mocha';
+import { assert } from 'chai';
+
 if (!process.env.MONGO_URL) {
   throw new Error('MONGO_URL env.var is not defined! Please run test with MONGO_URL, like `MONGO_URL=mongodb://127.0.0.1:27017/dbname npm test`');
 }
@@ -7,16 +13,11 @@ const maxRevolvingDelay = 256;
 const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
 const noop = (ready) => ((typeof ready === 'function') && ready());
-const JoSk = require('../index.js');
-const parser = require('cron-parser');
 const ZOMBIE_TIME = 8000;
-const MongoClient = require('mongodb').MongoClient;
 
 const mongoAddr = (process.env.MONGO_URL || '');
 const dbName = mongoAddr.split('/').pop().replace(/\/$/, '');
 
-const { it, describe, before } = require('mocha');
-const { assert }  = require('chai');
 const timestamps  = {};
 const callbacks   = {};
 const revolutions = {};
@@ -67,8 +68,8 @@ before(async function () {
     // poolSize: 15,
     // reconnectTries: 60,
     socketTimeoutMS: 720000,
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
+    // useNewUrlParser: true,
+    // useUnifiedTopology: true,
     connectTimeoutMS: 120000,
     // reconnectInterval: 3072,
     // connectWithNoPrimary: false,
@@ -198,7 +199,7 @@ describe('JoSk Instance', function () {
       return timers[uniqueName];
     };
 
-    it('Create multiple CRON tasks to simulate load an concurrency', function () {
+    it('Create multiple CRON tasks to simulate load an concurrency', function (endit) {
       // const createOverloadTask = (josk) => {
       // const uuid = `${Math.random().toString(36).substring(2, 15)}`;
       overloadCronTimeouts.push(createCronTask('overload CRON 1', '* * * * * *', () => {
@@ -249,6 +250,7 @@ describe('JoSk Instance', function () {
       // createOverloadTask(jobExtra3);
       // createOverloadTask(jobExtra4);
       // createOverloadTask(jobExtra5);
+      endit();
     });
 
     const testCreateCronTask = (sec) =>  {
@@ -535,11 +537,9 @@ describe('JoSk Instance', function () {
       const length = overloadCronTimeouts.length;
       let cleared = 0;
       overloadCronTimeouts.forEach((timerId) => {
-        jobCron.clearTimeout(timerId, (error, isRemoved) => {
+        jobCron.clearTimeout(timerId, (error) => {
           cleared++;
-          if (!isRemoved) {
-            jobCron.clearTimeout(timerId);
-          }
+          assert.equal(error, void 0, 'jobCron.clearTimeout.error !== void 0');
           if (cleared === length) {
             endit();
           }
@@ -553,9 +553,8 @@ describe('JoSk Instance', function () {
       overloadCronIntervals.forEach((timerId) => {
         job.clearInterval(timerId, (error, isRemoved) => {
           cleared++;
-          if (!isRemoved) {
-            job.clearInterval(timerId);
-          }
+          assert.equal(error, void 0, 'job.clearInterval.error !== void 0');
+          assert.equal(isRemoved, true, 'job.clearInterval.isRemoved !== true');
           if (cleared === length) {
             endit();
           }
@@ -564,8 +563,8 @@ describe('JoSk Instance', function () {
     });
 
     it('Check that collections are clear', async function () {
-      const count = await jobCron.collection.count();
-      const count2 = await job.collection.count();
+      const count = await jobCron.collection.countDocuments();
+      const count2 = await job.collection.countDocuments();
       assert.equal(count, 0, 'jobCron.count === 0');
       assert.equal(count2, 0, 'job.count === 0');
     });
