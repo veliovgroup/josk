@@ -5,11 +5,11 @@
 
 # JoSk
 
-"JoSk" is a Node.js task manager for horizontally scaled apps, apps planning horizontal scaling, and apps that need to easily scale horizontally in the future.
+"JoSk" is a Node.js task manager for horizontally scaled apps, apps planning horizontal scaling, and apps that would need to scale horizontally in the future with ease.
 
 "JoSk" follows `setTimeout` and `setInterval` methods native API. Tasks can get scheduled using [CRON expressions](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron). All queued tasks are synced between all running application instances via MongoDB.
 
-"JoSk" package support different horizontally scaled apps via clusters, multi-server, and multi-threaded Node.js instances. That are running on the same or different machines or different data-centers. "JoSk" ensures that the only single execution of each *task* occurs across all running instances of the application.
+"JoSk" package support different horizontally scaled apps as clusters, multi-server, and multi-threaded Node.js instances. That are running either on the same or different machines or different data-centers. "JoSk" ensures that the only single execution of each *task* occurs across all running instances of the application.
 
 __Note: JoSk is the server-only package.__
 

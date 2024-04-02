@@ -1,10 +1,15 @@
 {
   "name": "josk",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "Jobs scheduler and manager for Node.js on multi-server and clusters setup",
   "main": "index.js",
   "type": "module",
+  "exports": {
+    "import": "./index.js",
+    "require": "./index.cjs"
+  },
   "scripts": {
+    "prepublishOnly": "rollup index.js --file index.cjs --format cjs",
     "test": "mocha ./test/npm.js"
   },
   "keywords": [
@@ -49,12 +54,11 @@
     "node": ">=14.20.0"
   },
   "devDependencies": {
-    "bson": "^6.3.0",
+    "bson": "^6.6.0",
     "bson-ext": "^4.0.3",
     "chai": "^4.4.1",
     "cron-parser": "^4.9.0",
     "mocha": "^10.3.0",
-    "mongodb": "^6.5.0",
-    "pathval": "^2.0.0"
+    "mongodb": "^6.5.0"
   }
 }
