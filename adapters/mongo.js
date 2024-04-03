@@ -87,7 +87,7 @@ class MongoAdapter {
   }
 
   aquireLock(cb) {
-    const expireAt = new Date(Date.now() + this.zombieTime);
+    const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
 
     this.lockCollection.findOne({
       uniqueName: this.uniqueName
@@ -129,7 +129,7 @@ class MongoAdapter {
     });
   }
 
-  clear(uid, callback) {
+  clear(uid, cb) {
     this.collection.findOneAndUpdate({
       uid,
       isDeleted: false
@@ -146,21 +146,17 @@ class MongoAdapter {
     }).then((result) => {
       const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
       if (res?.isDeleted === false) {
-        if (this.tasks && this.tasks[uid]) {
-          delete this.tasks[uid];
-        }
-
         this.collection.deleteOne({ _id: res._id }).then((deleteResult) => {
-          typeof callback === 'function' && callback(void 0, deleteResult?.deletedCount >= 1);
+          cb(void 0, deleteResult?.deletedCount >= 1);
         }).catch((deleteError) => {
-          typeof callback === 'function' && callback(deleteError, false);
+          cb(deleteError, false);
         });
       } else {
-        typeof callback === 'function' && callback(void 0, false);
+        cb(void 0, false);
       }
     }).catch((findAndUpdateError) => {
       this.joskInstance.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
-      typeof callback === 'function' && callback(findAndUpdateError, false);
+      cb(findAndUpdateError, false);
     });
   }
 

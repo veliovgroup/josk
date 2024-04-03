@@ -218,7 +218,15 @@ class JoSk {
       return false;
     }
 
-    this.adapter.clear(uid, callback);
+    this.adapter.clear(uid, (clearError, isRemoved) => {
+      if (clearError) {
+        this.__errorHandler(clearError, '[__clear] [adapter.clear] clearError:', 'adapter.clear has returned an error', uid);
+      } else if (isRemoved && this.tasks && this.tasks[uid]) {
+        delete this.tasks[uid];
+      }
+
+      typeof callback === 'function' && callback(clearError, isRemoved);
+    });
     return true;
   }
 
