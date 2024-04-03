@@ -1,15 +1,9 @@
-const mongoErrorHandler = (error) => {
-  if (error) {
-    console.error('[josk] [mongoErrorHandler]:', error);
-  }
-};
+import { MongoAdapter } from './adapters/mongo.js';
+import { RedisAdapter } from './adapters/redis.js';
+
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
 const errors = {
-  dbOption: {
-    error: '{db} option is required',
-    description: 'MongoDB database {db} option is required, e.g. returned from `MongoClient.connect` method'
-  },
   setInterval: {
     delay: '[josk] [setInterval] delay must be positive Number!',
     uid: '[josk] [setInterval] [uid - task id must be specified (3rd argument)]'
@@ -23,62 +17,14 @@ const errors = {
   }
 };
 
-/**
- * Ensure (create) index on MongoDB collection, catch and log exception if thrown
- * @function ensureIndex
- * @param {Collection} collection - Mongo's driver Collection instance
- * @param {object} keys - Field and value pairs where the field is the index key and the value describes the type of index for that field
- * @param {object} opts - Set of options that controls the creation of the index
- * @returns {void 0}
- */
-const ensureIndex = async (collection, keys, opts) => {
-  try {
-    await collection.createIndex(keys, opts);
-  } catch (e) {
-    if (e.code === 85) {
-      let indexName;
-      const indexes = await collection.indexes();
-      for (const index of indexes) {
-        let drop = true;
-        for (const indexKey of Object.keys(keys)) {
-          if (typeof index.key[indexKey] === 'undefined') {
-            drop = false;
-            break;
-          }
-        }
-
-        for (const indexKey of Object.keys(index.key)) {
-          if (typeof keys[indexKey] === 'undefined') {
-            drop = false;
-            break;
-          }
-        }
-
-        if (drop) {
-          indexName = index.name;
-          break;
-        }
-      }
-
-      if (indexName) {
-        await collection.dropIndex(indexName);
-        await collection.createIndex(keys, opts);
-      }
-    } else {
-      console.info(`[INFO] [josk] Can not set ${Object.keys(keys).join(' + ')} index on "${collection._name}" collection`, { keys, opts, details: e });
-    }
-  }
-};
-
 /** Class representing a JoSk task runner (cron). */
-export default class JoSk {
+class JoSk {
   /**
    * Create a Job-Task manager (CRON)
    * @param {object} opts - configuration object
    * @param {object} opts.db - Connection to MongoDB, like returned as argument from `MongoClient.connect()`
-   * @param {boolean} [opts.db] - Enable debug logging
+   * @param {boolean} [opts.debug] - Enable debug logging
    * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
-   * @param {string} [opts.lockCollectionName] - Name for *.lock collection
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
    * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
    * @param {number} [opts.zombieTime] - Time in milliseconds, after this period of time - task will be interpreted as "zombie". This parameter allows to rescue task from "zombie mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic
@@ -86,7 +32,6 @@ export default class JoSk {
    * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    * @param {number} [opts.minRevolvingDelay] - Minimum revolving delay — the minimum delay between tasks executions in milliseconds
    * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
-   * @param {string} [opts.participant.name] - Unique hostname within a cluster, default `os.hostname`
    */
   constructor(opts = {}) {
     this.debug = opts.debug || false;
@@ -99,46 +44,27 @@ export default class JoSk {
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
-    this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
     this.nextRevolutionTimeout = null;
+
+    if (!opts.adapter) {
+      throw new Error('{adapter} option is required for JoSk', {
+        description: 'JoSk requires MongoAdapter, RedisAdapter, or CustomAdapter to connect to an intermediate database'
+      });
+    }
+
     this.tasks = {};
 
     this._debug = (...args) => {
       this.debug === true && console.info.call(console, '[DEBUG] [josk]', ...args);
     };
 
-    if (!opts.db) {
-      if (this.onError) {
-        this.onError(errors.dbOption.error, {
-          description: errors.dbOption.description,
-          error: errors.dbOption.error,
-          uid: null
-        });
-      } else {
-        this._debug(`[constructor] ${errors.dbOption.description}`);
+    this.adapter = new opts.adapter(this, opts);
+    const adapterMethods = ['aquireLock', 'releaseLock', 'clear', 'addTask', 'afterExecuted', 'runTasks'];
+
+    for (let i = adapterMethods.length - 1; i >= 0; i--) {
+      if (typeof this.adapter[adapterMethods[i]] !== 'function') {
+        throw new Error(`{adapter} is missing {${adapterMethods[i]}} method that is required!`);
       }
-      return;
-    }
-
-    this.uniqueName = `__JobTasks__${this.prefix}`;
-    this.collection = opts.db.collection(this.uniqueName);
-    ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
-    ensureIndex(this.collection, {uid: 1, isDeleted: 1}, {background: false});
-    ensureIndex(this.collection, {executeAt: 1}, {background: false});
-
-    this.lockCollection = opts.db.collection(this.lockCollectionName);
-    ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
-    ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
-
-
-    if (this.resetOnInit) {
-      this.collection.deleteMany({
-        isInterval: false
-      }).then(() => {}).catch(mongoErrorHandler);
-
-      this.lockCollection.deleteMany({
-        uniqueName: this.uniqueName
-      }).then(() => {}).catch(mongoErrorHandler);
     }
 
     this.__setNext();
@@ -270,49 +196,6 @@ export default class JoSk {
     return false;
   }
 
-  __aquireLock(cb) {
-    const expireAt = new Date(Date.now() + this.zombieTime);
-
-    this.lockCollection.findOne({
-      uniqueName: this.uniqueName
-    }, {
-      projection: {
-        uniqueName: 1
-      }
-    }).then((record) => {
-      if (record?.uniqueName === this.uniqueName) {
-        cb(void 0, false);
-      } else {
-        this.lockCollection.insertOne({
-          uniqueName: this.uniqueName,
-          expireAt
-        }).then((result) => {
-          if (result.insertedId) {
-            cb(void 0, true);
-          } else {
-            cb(void 0, false);
-          }
-        }).catch((insertError) => {
-          if (insertError?.code === 11000) {
-            cb(void 0, false);
-          } else {
-            cb(insertError);
-          }
-        });
-      }
-    }).catch((findError) => {
-      cb(findError);
-    });
-  }
-
-  __releaseLock(cb) {
-    this.lockCollection.deleteOne({ uniqueName: this.uniqueName }).then(() => {
-      cb();
-    }).catch((deleteOneError) => {
-      cb(deleteOneError);
-    });
-  }
-
   __checkState() {
     if (this.isDestroyed) {
       if (this.onError) {
@@ -335,39 +218,7 @@ export default class JoSk {
       return false;
     }
 
-    this.collection.findOneAndUpdate({
-      uid,
-      isDeleted: false
-    }, {
-      $set: {
-        isDeleted: true
-      }
-    }, {
-      returnNewDocument: false,
-      projection: {
-        _id: 1,
-        isDeleted: 1
-      }
-    }).then((result) => {
-      const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
-      if (res?.isDeleted === false) {
-        if (this.tasks && this.tasks[uid]) {
-          delete this.tasks[uid];
-        }
-
-        this.collection.deleteOne({ _id: res._id }).then((deleteResult) => {
-          typeof callback === 'function' && callback(void 0, deleteResult?.deletedCount >= 1);
-        }).catch((deleteError) => {
-          typeof callback === 'function' && callback(deleteError, false);
-        });
-      } else {
-        typeof callback === 'function' && callback(void 0, false);
-      }
-    }).catch((findAndUpdateError) => {
-      this.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
-      typeof callback === 'function' && callback(findAndUpdateError, false);
-    });
-
+    this.adapter.clear(uid, callback);
     return true;
   }
 
@@ -376,46 +227,7 @@ export default class JoSk {
       return;
     }
 
-    this.collection.findOne({
-      uid: uid
-    }).then((task) => {
-      const next = Date.now() + delay;
-      if (!task) {
-        this.collection.insertOne({
-          uid: uid,
-          delay: delay,
-          executeAt: new Date(next),
-          isInterval: isInterval,
-          isDeleted: false
-        }).then(() => {}).catch((insertError) => {
-          this.__errorHandler(insertError, '[__addTask] [insertOne] [insertError]', 'Error in a callback of .insertOne() method of .__addTask()', uid);
-        });
-      } else if (task.isDeleted === false) {
-        let update = null;
-        if (task.delay !== delay) {
-          update = { delay };
-        }
-
-        if (+task.executeAt !== next) {
-          if (!update) {
-            update = {};
-          }
-          update.executeAt = new Date(next);
-        }
-
-        if (update) {
-          this.collection.updateOne({
-            uid: uid
-          }, {
-            $set: update
-          }).then(() => {}).catch((updateError) => {
-            this.__errorHandler(updateError, '[__addTask] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__addTask()', uid);
-          });
-        }
-      }
-    }).catch((findError) => {
-      this.__errorHandler(findError, '[__addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .__addTask()', uid);
-    });
+    this.adapter.addTask(uid, isInterval, delay);
   }
 
   __execute(task) {
@@ -423,20 +235,7 @@ export default class JoSk {
       return;
     }
 
-    const done = (_date, readyCallback) => {
-      this.collection.updateOne({
-        uid: task.uid
-      }, {
-        $set: {
-          executeAt: _date
-        }
-      }).then((updateResult) => {
-        typeof readyCallback === 'function' && readyCallback(void 0, updateResult?.modifiedCount >= 1);
-      }).catch((updateError) => {
-        typeof readyCallback === 'function' && readyCallback(updateError);
-        this.__errorHandler(updateError, '[__execute] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .__execute()', task.uid);
-      });
-    };
+    const done = this.adapter.afterExecuted(task);
 
     if (this.tasks && typeof this.tasks[task.uid] === 'function') {
       if (this.tasks[task.uid].isMissing === true) {
@@ -506,77 +305,27 @@ export default class JoSk {
       return;
     }
 
-    const _date = new Date();
-    const nextExecuteAt = new Date(+_date + this.zombieTime);
+    const nextExecuteAt = new Date(Date.now() + this.zombieTime);
 
-    this.__aquireLock((lockError, success) => {
+    this.adapter.aquireLock((lockError, success) => {
       if (lockError) {
-        this._debug('[__runTasks] [__aquireLock] Error:', lockError);
+        this._debug('[__runTasks] [adapter.aquireLock] Error:', lockError);
         this.__setNext();
       } else if (!success) {
         this.__setNext();
       } else {
-        const _ids = [];
-        const tasks = [];
-        const releaseLock = () => {
-          this.__releaseLock((releaseError) => {
+        this.adapter.runTasks(nextExecuteAt, (runError) => {
+          if (runError) {
+            this.__errorHandler(runError, '[__runTasks] runError:', 'adapter.runTasks has returned an error', null);
+          }
+
+          this.adapter.releaseLock((releaseError) => {
             this.__setNext();
             if (releaseError) {
-              this._debug('[__runTasks] [__releaseLock] Error:', releaseError);
+              this._debug('[__runTasks] [adapter.releaseLock] releaseError:', releaseError);
             }
           });
-        };
-
-        try {
-          const cursor = this.collection.find({
-            executeAt: {
-              $lte: _date
-            }
-          }, {
-            projection: {
-              _id: 1,
-              uid: 1,
-              delay: 1,
-              isDeleted: 1,
-              isInterval: 1
-            }
-          });
-
-          cursor.forEach((task) => {
-            _ids.push(task._id);
-            tasks.push(task);
-          }).then(() => {
-            if (_ids.length) {
-              this.collection.updateMany({
-                _id: {
-                  $in: _ids
-                }
-              }, {
-                $set: {
-                  executeAt: nextExecuteAt
-                }
-              }).then(() => {
-                for (const task of tasks) {
-                  this.__execute(task);
-                }
-                releaseLock();
-              }).catch((updateError) => {
-                releaseLock();
-                this.__errorHandler(updateError, '[__runTasks] [updateMany] [updateError]', 'General Error during runtime in updateMany callback block of __runTasks()', null);
-              });
-            } else {
-              releaseLock();
-            }
-          }).catch((forEachError) => {
-            releaseLock();
-            this.__errorHandler(forEachError, '[__runTasks] [forEachError]', 'General Error during runtime in forEach endCallback block of __runTasks()', null);
-          }).finally(() => {
-            cursor.close();
-          });
-        } catch (_error) {
-          this.__setNext();
-          this.__errorHandler(_error, '[__runTasks] [catch]', 'General Error during runtime in try-catch block of __runTasks()', null);
-        }
+        });
       }
     });
   }
@@ -594,8 +343,10 @@ export default class JoSk {
       if (this.onError) {
         this.onError(title, { description, error, uid });
       } else {
-        mongoErrorHandler(error);
+        console.error(title, { description, error, uid });
       }
     }
   }
 }
+
+export { JoSk, MongoAdapter, RedisAdapter };
