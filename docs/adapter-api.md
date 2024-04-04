@@ -20,7 +20,7 @@ List of required methods and its arguments
 - `Adapter#clear(uid, cb) - {void 0}`
   - `{string} uid` - Unique ID of the task
   - `{function} cb`
-- `Adapter#addTask(uid, cb) - {void 0}`
+- `Adapter#addTask(uid, isInterval, delay) - {void 0}`
   - `{string} uid` - Unique ID of the task
   - `{boolean} isInterval` - true/false defining loop or one-time task
   - `{number} delay` - Delay in milliseconds
