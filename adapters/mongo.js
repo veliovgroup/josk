@@ -51,7 +51,16 @@ const ensureIndex = async (collection, keys, opts) => {
   }
 };
 
+/** Class representing MongoDB adapter for JoSk */
 class MongoAdapter {
+  /**
+   * Create a MongoAdapter instance
+   * @param {JoSk} joskInstance - JoSk instance
+   * @param {object} opts - configuration object
+   * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#client.db()` method
+   * @param {string} [opts.lockCollectionName] - custom "lock" collection name
+   * @param {string} [opts.prefix] - prefix for scope isolation
+   */
   constructor(joskInstance, opts = {}) {
     this.name = 'mongo';
     this.joskInstance = joskInstance;
@@ -74,8 +83,7 @@ class MongoAdapter {
     ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
     ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
 
-
-    if (this.resetOnInit) {
+    if (this.joskInstance.resetOnInit) {
       this.collection.deleteMany({
         isInterval: false
       }).then(() => {}).catch(mongoErrorHandler);
@@ -86,7 +94,7 @@ class MongoAdapter {
     }
   }
 
-  aquireLock(cb) {
+  acquireLock(cb) {
     const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
 
     this.lockCollection.findOne({
@@ -155,7 +163,7 @@ class MongoAdapter {
         cb(void 0, false);
       }
     }).catch((findAndUpdateError) => {
-      this.joskInstance.__errorHandler(findAndUpdateError, '[__clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .__clear()', uid);
+      this.joskInstance.__errorHandler(findAndUpdateError, '[clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .clear()', uid);
       cb(findAndUpdateError, false);
     });
   }
@@ -203,19 +211,19 @@ class MongoAdapter {
     });
   }
 
-  afterExecuted(task) {
-    return (_date, readyCallback) => {
+  getDoneCallback(task) {
+    return (nextExecuteAt, readyCallback) => {
       this.collection.updateOne({
         uid: task.uid
       }, {
         $set: {
-          executeAt: _date
+          executeAt: nextExecuteAt
         }
       }).then((updateResult) => {
         typeof readyCallback === 'function' && readyCallback(void 0, updateResult?.modifiedCount >= 1);
       }).catch((updateError) => {
         typeof readyCallback === 'function' && readyCallback(updateError);
-        this.joskInstance.__errorHandler(updateError, '[afterExecuted] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .afterExecuted()', task.uid);
+        this.joskInstance.__errorHandler(updateError, '[getDoneCallback] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .getDoneCallback()', task.uid);
       });
     };
   }
