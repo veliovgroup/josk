@@ -1,6 +1,6 @@
 # JoSk Custom Adapter API
 
-JoSk library supports 3rd party storage adapters. By default it comes with support of MongoDB and Redis drivers. This document intended for developing custom 3rd party "JoSk Adapter". 
+JoSk library supports 3rd party storage adapters. By default JoSk shipped with MongoDB and Redis support (official `mongodb` and `redis` NPM drivers). This document intended for developers of custom 3rd party "JoSk Adapters".
 
 ## Create a new Adapter
 
