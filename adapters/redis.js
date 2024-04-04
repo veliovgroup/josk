@@ -1,7 +1,7 @@
 /** Class representing Redis adapter for JoSk */
 class RedisAdapter {
   /**
-   * Create a MongoAdapter instance
+   * Create a RedisAdapter instance
    * @param {JoSk} joskInstance - JoSk instance
    * @param {object} opts - configuration object
    * @param {RedisClient} opts.client - Required, Redis'es `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
