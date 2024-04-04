@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "3.1.1",
+  "version": "4.0.0",
   "description": "Jobs scheduler and manager for Node.js on multi-server and clusters setup",
   "main": "index.js",
   "type": "module",
@@ -10,35 +10,47 @@
   },
   "scripts": {
     "prepublishOnly": "rollup index.js --file index.cjs --format cjs",
-    "test": "mocha ./test/npm.js"
+    "test": "mocha ./test/npm.js",
+    "test-redis": "mocha ./test/npm-redis.js",
+    "test-mongo": "mocha ./test/npm-mongo.js"
   },
   "keywords": [
-    "tasks",
-    "jobs",
-    "horizontal scaling",
-    "cluster",
-    "scheduler",
-    "agent",
     "agenda",
+    "agent",
+    "cluster",
+    "CRON",
+    "high load",
+    "horizontal scaling",
+    "job",
+    "jobs",
+    "mongo",
+    "mongodb",
+    "redis",
+    "redisdb",
+    "schedule",
+    "scheduler",
     "servers",
     "task",
-    "job",
-    "schedule",
-    "CRON"
+    "tasks"
   ],
   "tags": [
-    "tasks",
-    "jobs",
-    "horizontal scaling",
-    "cluster",
-    "scheduler",
-    "agent",
     "agenda",
+    "agent",
+    "cluster",
+    "CRON",
+    "high load",
+    "horizontal scaling",
+    "job",
+    "jobs",
+    "mongo",
+    "mongodb",
+    "redis",
+    "redisdb",
+    "schedule",
+    "scheduler",
     "servers",
     "task",
-    "job",
-    "schedule",
-    "CRON"
+    "tasks"
   ],
   "repository": {
     "type": "git",
@@ -56,9 +68,10 @@
   "devDependencies": {
     "bson": "^6.6.0",
     "bson-ext": "^4.0.3",
-    "chai": "^4.4.1",
+    "chai": "^5.1.0",
     "cron-parser": "^4.9.0",
-    "mocha": "^10.3.0",
-    "mongodb": "^6.5.0"
+    "mocha": "^10.4.0",
+    "mongodb": "^6.5.0",
+    "redis": "^4.6.13"
   }
 }

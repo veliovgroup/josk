@@ -80,8 +80,8 @@ const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
 `new JoSk({opts})`:
 
 - `opts.adapter` {*RedisAdapter*|*MongoAdapter*} - [Required] `RedisAdapter` or `MongoAdapter` or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
-- `opts.client` {*Object*} - [*Required for RedisAdapter*] `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
-- `opts.db` {*Object*} - [*Required for MongoAdapter*] Mongo's `Db` instance, like one returned from `MongoClient#db()` method
+- `opts.client` {*RedisClient*} - [*Required for RedisAdapter*] `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
+- `opts.db` {*Db*} - [*Required for MongoAdapter*] Mongo's `Db` instance, like one returned from `MongoClient#db()` method
 - `opts.lockCollectionName` {*String*} - [*Optional for MongoAdapter*] By default all JoSk instances use the same `__JobTasks__.lock` collection for locking
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development

@@ -22,7 +22,6 @@ class JoSk {
   /**
    * Create a JoSk instance
    * @param {object} opts - configuration object
-   * @param {object} opts.db - Connection to MongoDB, like returned as argument from `MongoClient.connect()`
    * @param {boolean} [opts.debug] - Enable debug logging
    * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
