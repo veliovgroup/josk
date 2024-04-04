@@ -20,7 +20,7 @@ const errors = {
 /** Class representing a JoSk task runner (cron). */
 class JoSk {
   /**
-   * Create a Job-Task manager (CRON)
+   * Create a JoSk instance
    * @param {object} opts - configuration object
    * @param {object} opts.db - Connection to MongoDB, like returned as argument from `MongoClient.connect()`
    * @param {boolean} [opts.debug] - Enable debug logging
@@ -59,7 +59,7 @@ class JoSk {
     };
 
     this.adapter = new opts.adapter(this, opts);
-    const adapterMethods = ['aquireLock', 'releaseLock', 'clear', 'addTask', 'afterExecuted', 'runTasks'];
+    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks'];
 
     for (let i = adapterMethods.length - 1; i >= 0; i--) {
       if (typeof this.adapter[adapterMethods[i]] !== 'function') {
@@ -243,7 +243,7 @@ class JoSk {
       return;
     }
 
-    const done = this.adapter.afterExecuted(task);
+    const done = this.adapter.getDoneCallback(task);
 
     if (this.tasks && typeof this.tasks[task.uid] === 'function') {
       if (this.tasks[task.uid].isMissing === true) {
@@ -315,9 +315,9 @@ class JoSk {
 
     const nextExecuteAt = new Date(Date.now() + this.zombieTime);
 
-    this.adapter.aquireLock((lockError, success) => {
+    this.adapter.acquireLock((lockError, success) => {
       if (lockError) {
-        this._debug('[__runTasks] [adapter.aquireLock] Error:', lockError);
+        this._debug('[__runTasks] [adapter.acquireLock] Error:', lockError);
         this.__setNext();
       } else if (!success) {
         this.__setNext();
