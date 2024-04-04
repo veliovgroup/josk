@@ -2,7 +2,7 @@
 
 NPM `josk` package can be used in Meteor environment just perfectly fine since it's server-only Node.js package.
 
-If Meteor.js packages are preferred in you project/environment follow this document to install JoSk as `ostrio:cron-jobs` [Atmosphere](https://atmospherejs.com/ostrio/cron-jobs) or  [Packosphere](https://packosphere.com/ostrio/cron-jobs) package
+If Meteor.js packages are preferred in your project/environment follow this document to install JoSk as `ostrio:cron-jobs` [Atmosphere](https://atmospherejs.com/ostrio/cron-jobs) or  [Packosphere](https://packosphere.com/ostrio/cron-jobs) package
 
 ## Install
 
@@ -61,7 +61,7 @@ const setCron = (uniqueName, cronTask, task) => {
   return jobsCron.setTimeout(function (done) {
     done(() => {
       task(); // <- Execute task
-      createCronTask(uniqueName, cronTask, task); // <- Create task for the next iteration
+      setCron(uniqueName, cronTask, task); // <- Create task for the next iteration
     });
   }, timeout, uniqueName);
 };

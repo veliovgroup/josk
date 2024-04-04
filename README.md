@@ -5,16 +5,19 @@
 
 # JoSk
 
-"JoSk" is a Node.js task manager for horizontally scaled apps, apps planning horizontal scaling, and apps that would need to scale horizontally in the future with ease.
+"JoSk" is a Node.js task manager for horizontally scaled apps, apps planning for horizontal scaling, and apps that would need to scale horizontally in the future with ease.
 
-"JoSk" follows `setTimeout` and `setInterval` methods native API. Optionally tasks can get scheduled using [CRON expressions](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron). All queued tasks are synced between all running application instances via Redis, MongoDB, or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md).
+"JoSk" mimics the native API of `setTimeout` and `setInterval`. Tasks also can get scheduled using [CRON expressions](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron). All queued tasks are synced between all running application instances via Redis, MongoDB, or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md).
 
-"JoSk" package support different horizontally scaled apps as clusters, multi-server, and multi-threaded Node.js instances. That are running either on the same or different machines or different data-centers. "JoSk" ensures that the only single execution of each *task* occurs across all running instances of the application.
+"JoSk" package made for different variety of horizontally scaled apps as clusters, multi-server, and multi-threaded Node.js instances. That are running either on the same or different machines or even different data-centers. "JoSk" ensures that the only single execution of each *task* occurs across all running instances of the application.
+
+Although "JoSk" is made with multi-instance apps in mind, — it works on a single-instance applications seamlessly.
 
 __Note: JoSk is the server-only package.__
 
 ## ToC
 
+- [Main features](https://github.com/veliovgroup/josk?tab=readme-ov-file#main-features)
 - [Prerequisites](https://github.com/veliovgroup/josk?tab=readme-ov-file#prerequisites)
 - [Install](https://github.com/veliovgroup/josk?tab=readme-ov-file#install) as [NPM package](https://www.npmjs.com/package/josk)
 - [API](https://github.com/veliovgroup/josk?tab=readme-ov-file#api)
@@ -33,12 +36,15 @@ __Note: JoSk is the server-only package.__
   - [Clean up stale tasks](https://github.com/veliovgroup/josk?tab=readme-ov-file#clean-up-old-tasks)
   - [MongoDB connection options](https://github.com/veliovgroup/josk?tab=readme-ov-file#mongodb-connection-fine-tuning)
   - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
+- [Important notes](https://github.com/veliovgroup/josk?tab=readme-ov-file#notes)
 - [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
+- [Why it's named "JoSk"](https://github.com/veliovgroup/josk?tab=readme-ov-file#why-josk)
+- [Support Section](https://github.com/veliovgroup/josk?tab=readme-ov-file#support-our-open-source-contribution)
 
 ## Main features
 
 - 🏢 Synchronize single task across multiple servers;
-- 🔏 Collection locking to avoid simultaneous task executions across complex infrastructure;
+- 🔏 Read locking to avoid simultaneous task executions across complex infrastructure;
 - 📦 Zero dependencies, written from scratch for top performance;
 - 👨‍🔬 ~99% tests coverage;
 - 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫.
@@ -69,14 +75,6 @@ import { JoSk, RedisAdapter, MongoAdapter } from 'josk';
 const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
 ```
 
-## Notes
-
-- This package is perfect when you have multiple horizontally scaled servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code running repeating tasks that needs to run only once per application/cluster, not per server/instance;
-- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch, sync, and etc;
-- Accuracy — Delay of each task depends on storage and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + Storage_Request_Delay)`. That means this package won't fit when you need to run a task with very certain delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution;
-- Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce storage read/writes;
-- This package implements "Read Locking" via "RedLock" for Redis and dedicated `.lock` collection for MongoDB.
-
 ## API:
 
 `new JoSk({opts})`:
@@ -88,8 +86,8 @@ const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
-- `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks is completed before setting a new one. Useful when you run a single instance of an app, or multiple app instances on __one__ machine, in case machine was reloaded during running task and task is unfinished
-- `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to less than a minute (*60000ms*)
+- `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks are completed during initialization. Useful for single-instance apps to clean up unfinished that occurred due to intermediate shutdown, reboot, or exception. Default: `false`
+- `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to below `60000` (*one minute*)
 - `opts.minRevolvingDelay` {*Number*} - [Optional] Minimum revolving delay — the minimum delay between tasks executions in milliseconds. Default: `128`
 - `opts.maxRevolvingDelay` {*Number*} - [Optional] Maximum revolving delay — the maximum delay between tasks executions in milliseconds. Default: `768`
 - `opts.onError` {*Function*} - [Optional] Informational hook, called instead of throwing exceptions. Default: `false`. Called with two arguments:
@@ -108,11 +106,11 @@ const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
 
 ### Initialization
 
-JoSk is storage-agnostic (since `v4.0.0`). It's shipped with Redis and MongoDb "adapters" out of the box, with option to extend its capabilities by creating and passing a [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
+JoSk is storage-agnostic (since `v4.0.0`). It's shipped with Redis and MongoDB "adapters" out of the box, with option to extend its capabilities by creating and passing a [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
 
 #### Redis Adapter
 
-JoSk has no dependencies, hence make sure `redis` NPM package is installed in order to support Redis Storage Adapter. `RedisAdapter` utilize basic set of commands `SET`, `GET`, `DEL`, `EXISTS`, `HSET`, `HGETALL`, and `SCAN`. `RedisAdapter` is compatible with all Redis-alike databases, was well-tested with [Redis](https://redis.io/) and [KeyDB](https://docs.keydb.dev/)
+JoSk has no dependencies, hence make sure `redis` NPM package is installed in order to support Redis Storage Adapter. `RedisAdapter` utilize basic set of commands `SET`, `GET`, `DEL`, `EXISTS`, `HSET`, `HGETALL`, and `SCAN`. `RedisAdapter` is compatible with all Redis-alike databases, and was well-tested with [Redis](https://redis.io/) and [KeyDB](https://docs.keydb.dev/)
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -130,7 +128,7 @@ const jobs = new JoSk({
 
 #### MongoDB Adapter
 
-JoSk has no dependencies, hence make sure `mongodb` NPM package is installed in order to support MongoDB Storage Adapter. Note: this package will add two new MongoDB collections per each `new JoSk({ prefix })`. One collection for tasks and another one for "Read Locking" with `.lock` suffix
+JoSk has no dependencies, hence make sure `mongodb` NPM package is installed in order to support MongoDB Storage Adapter. Note: this package will add two new MongoDB collections per each `new JoSk({ prefix })`. One collection for tasks and second for "Read Locking" with `.lock` suffix
 
 ```js
 import { JoSk, MongoAdapter } from 'josk';
@@ -184,8 +182,9 @@ jobs.setInterval(asyncAwaitTask, 30 * 60 * 1000, 'asyncAwaitTask30m'); // every 
 ### `setInterval(func, delay, uid)`
 
 - `func` {*Function*} - Function to call on schedule
-- `delay` {*Number*} - Delay for first run and interval between further executions in milliseconds
+- `delay` {*Number*} - Delay for the first run and interval between further executions in milliseconds
 - `uid` {*String*} - Unique app-wide task id
+- Returns: {*String*}
 
 *Set task into interval execution loop.* `ready()` *callback is passed as the first argument into a task function.*
 
@@ -231,7 +230,7 @@ jobs.setInterval(syncTask, 60 * 60 * 1000, 'syncTask1h'); // will execute every 
 jobs.setInterval(asyncAwaitTask, 60 * 60 * 1000, 'asyncAwaitTask1h'); // will execute every hour
 ```
 
-In this example, we're assuming to have long running task, executed in a loop without delay, but after full execution:
+In the next example, a long running task is executed in a loop without delay after the full execution:
 
 ```js
 const longRunningAsyncTask = function (ready) {
@@ -240,8 +239,13 @@ const longRunningAsyncTask = function (ready) {
       ready(); // <-- Always run `ready()`, even if call was unsuccessful
     } else {
       anotherCall(result.data, ['param'], (error, response) => {
+        if (error) {
+          ready(); // <-- Always run `ready()`, even if call was unsuccessful
+          return;
+        }
+
         waitForSomethingElse(response, () => {
-          ready(); // <-- End of full execution
+          ready(); // <-- End of the full execution
         });
       });
     }
@@ -253,11 +257,12 @@ jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a l
 
 ### `setTimeout(func, delay, uid)`
 
-- `func` {*Function*} - Function to call on schedule
+- `func` {*Function*} - Function to call after `delay`
 - `delay` {*Number*} - Delay in milliseconds
 - `uid` {*String*} - Unique app-wide task id
+- Returns: {*String*}
 
-*Set task into timeout execution.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *callback is passed as the first argument into a task function.*
+*Run a task after delay in ms.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *callback is passed as the first argument into a task function.*
 
 ```js
 const syncTask = function (ready) {
@@ -292,6 +297,7 @@ jobs.setTimeout(asyncAwaitTask, 60 * 1000, 'asyncAwaitTaskIn1m'); // will run on
 
 - `func` {*Function*} - Function to execute
 - `uid`  {*String*}   - Unique app-wide task id
+- Returns: {*String*}
 
 *Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the first argument into the task function.*
 
@@ -473,9 +479,20 @@ const options = {
 MongoClient.connect('mongodb://url', options, (error, client) => {
   // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
   const db = client.db('dbName');
-  const jobs = new JoSk({ db });
+  const jobs = new JoSk({
+    adapter: MongoAdapter,
+    db: db,
+  });
 });
 ```
+
+## Notes
+
+- This package is perfect when you have multiple horizontally scaled servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code running repeating tasks that needs to run only once per application/cluster, not per server/instance;
+- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch, sync, and etc;
+- Accuracy — Delay of each task depends on storage and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + Storage_Request_Delay)`. That means this package won't fit when you need to run a task with very precise delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution;
+- Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce storage read/writes;
+- This package implements "Read Locking" via "RedLock" for Redis and dedicated `.lock` collection for MongoDB.
 
 ## Running Tests
 
