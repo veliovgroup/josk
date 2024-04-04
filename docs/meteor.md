@@ -1,6 +1,8 @@
 # JoSk usage within Meteor.js
 
-NPM `josk` package can be used in Meteor environment just perfectly fine since it's server-only Node.js package. Alternatively follow this documentation to [install JoSk](https://github.com/veliovgroup/josk#install-meteor) as [`ostrio:cron-jobs` Atmosphere package](https://atmospherejs.com/ostrio/cron-jobs)
+NPM `josk` package can be used in Meteor environment just perfectly fine since it's server-only Node.js package.
+
+If Meteor.js packages are preferred in you project/environment follow this document to install JoSk as `ostrio:cron-jobs` [Atmosphere](https://atmospherejs.com/ostrio/cron-jobs) or  [Packosphere](https://packosphere.com/ostrio/cron-jobs) package
 
 ## Install
 
@@ -11,16 +13,20 @@ meteor add ostrio:cron-jobs
 ## Usage
 
 ```js
-import JoSk from 'meteor/ostrio:cron-jobs';
+import { JoSk, RedisAdapter, MongoAdapter } from 'meteor/ostrio:cron-jobs';
 ```
 
 ### Initialization
 
+JoSk is storage-agnostic (since `v4.0.0`). It's shipped with Redis and MongoDb "adapters" out of the box. Documentation below related to working with MongoDB provided and managed by Meteor.js. If you wish to use Redis as a driver for JoSk follow [Redis-related documentation from NPM version of the package](https://github.com/veliovgroup/josk?tab=readme-ov-file#redis-adapter). NPM section of the documentation is fully applicable to package installed from Atmosphere/Packosphere, the only difference is in how package imported
+
 ```js
 import { MongoInternals } from 'meteor/mongo';
-import JoSk from 'meteor/ostrio:cron-jobs';
-const db = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
-const job = new JoSk({ db });
+import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
+const jobs = new JoSk({
+  adapter: MongoAdapter,
+  db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
+});
 ```
 
 Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
@@ -31,8 +37,8 @@ const task = function (ready) {
   ready();
 };
 
-job.setInterval(task, 60 * 60 * 1000, 'task-1000'); // every minute
-job.setInterval(task, 60 * 60 * 2000, 'task-2000'); // every two minutes
+jobs.setInterval(task, 60 * 60 * 1000, 'task-1000'); // every minute
+jobs.setInterval(task, 60 * 60 * 2000, 'task-2000'); // every two minutes
 ```
 
 ### CRON scheduler
@@ -42,10 +48,8 @@ import { MongoInternals } from 'meteor/mongo';
 import JoSk from 'meteor/ostrio:cron-jobs';
 import parser from 'cron-parser';
 
-const jobCron = new JoSk({
+const jobsCron = new JoSk({
   db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
-  maxRevolvingDelay: 256, // <- Speed up timer speed by lowering its max revolving delay
-  zombieTime: 1024, // <- will need to call `done()` right away
   prefix: 'cron'
 });
 
@@ -54,10 +58,8 @@ const setCron = (uniqueName, cronTask, task) => {
   const next = +parser.parseExpression(cronTask).next().toDate();
   const timeout = next - Date.now();
 
-  return jobCron.setTimeout(function (done) {
-    done(() => { // <- call `done()` right away
-      // MAKE SURE FURTHER LOGIC EXECUTED
-      // INSIDE done() CALLBACK
+  return jobsCron.setTimeout(function (done) {
+    done(() => {
       task(); // <- Execute task
       createCronTask(uniqueName, cronTask, task); // <- Create task for the next iteration
     });
@@ -72,20 +74,21 @@ setCron('Run every two seconds cron', '*/2 * * * * *', function () {
 ## Running Tests
 
 1. Clone this package
-2. In Terminal (*Console*) go to directory where package is cloned
-3. Then run:
+2. Make sure Redis Server is installed and running
+3. In Terminal (*Console*) go to directory where package is cloned
+4. Then run:
 
 ```shell
 # Default
-meteor test-packages ./ --driver-package=meteortesting:mocha
+REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha
 
 # With custom port
-meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
 # With local MongoDB and custom port
-MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
-# Be patient, tests are taking around 2 mins
+# Be patient, tests are taking around 4 mins
 ```
 
 ## Known Meteor Issues:
@@ -104,7 +107,7 @@ const bound = Meteor.bindEnvironment((callback) => {
 });
 
 const db  = Collection.rawDatabase();
-const job = new JoSk({db: db});
+const jobs = new JoSk({db: db});
 
 const task = (ready) => {
   bound(() => { // <-- use "bound" inside of a task
@@ -112,5 +115,5 @@ const task = (ready) => {
   });
 };
 
-job.setInterval(task, 60 * 60 * 1000, 'task');
+jobs.setInterval(task, 60 * 60 * 1000, 'task');
 ```
