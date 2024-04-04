@@ -57,7 +57,7 @@ class MongoAdapter {
    * Create a MongoAdapter instance
    * @param {JoSk} joskInstance - JoSk instance
    * @param {object} opts - configuration object
-   * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#client.db()` method
+   * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#db()` method
    * @param {string} [opts.lockCollectionName] - custom "lock" collection name
    * @param {string} [opts.prefix] - prefix for scope isolation
    */
