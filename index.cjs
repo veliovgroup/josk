@@ -75,6 +75,7 @@ class MongoAdapter {
       });
     }
 
+    this.db = opts.db;
     this.uniqueName = `__JobTasks__${this.prefix}`;
     this.collection = opts.db.collection(this.uniqueName);
     ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
@@ -94,6 +95,40 @@ class MongoAdapter {
         uniqueName: this.uniqueName
       }).then(() => {}).catch(mongoErrorHandler);
     }
+  }
+
+  /**
+   * @async
+   * @memberOf MongoAdapter
+   * @name ping
+   * @description Check connection to MongoDB
+   * @returns {Promise<object>}
+   */
+  async ping() {
+    try {
+      const ping = await this.db.command({ ping: 1 });
+      if (ping?.ok === 1) {
+        return {
+          status: 'OK',
+          code: 200,
+          statusCode: 200,
+        };
+      }
+    } catch (pingError) {
+      return {
+        status: 'Internal Server Error',
+        code: 500,
+        statusCode: 500,
+        error: pingError
+      };
+    }
+
+    return {
+      status: 'Service Unavailable',
+      code: 503,
+      statusCode: 503,
+      error: new Error('Service Unavailable')
+    };
   }
 
   acquireLock(cb) {
@@ -319,6 +354,35 @@ class RedisAdapter {
     }
   }
 
+  /**
+   * @async
+   * @memberOf RedisAdapter
+   * @name ping
+   * @description Check connection to Redis
+   * @returns {Promise<object>}
+   */
+  async ping() {
+    try {
+      const ping = await this.client.ping();
+      if (ping === 'PONG') {
+        return {
+          status: 'OK',
+          code: 200,
+          statusCode: 200,
+        };
+      }
+
+      throw new Error(`Unexpected response from Redis#ping received: ${ping}`);
+    } catch (pingError) {
+      return {
+        status: 'Internal Server Error',
+        code: 500,
+        statusCode: 500,
+        error: pingError
+      };
+    }
+  }
+
   acquireLock(cb) {
     this.client.exists([this.lockKey]).then((isLocked) => {
       if (isLocked >= 1) {
@@ -512,7 +576,7 @@ class JoSk {
     };
 
     this.adapter = new opts.adapter(this, opts);
-    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks'];
+    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks', 'ping'];
 
     for (let i = adapterMethods.length - 1; i >= 0; i--) {
       if (typeof this.adapter[adapterMethods[i]] !== 'function') {
@@ -521,6 +585,18 @@ class JoSk {
     }
 
     this.__setNext();
+  }
+
+  /**
+   * @async
+   * @memberOf JoSk
+   * @name ping
+   * @description Check package readiness and connection to Storage
+   * @returns {Promise<object>}
+   * @throws {mix}
+   */
+  async ping() {
+    return await this.adapter.ping();
   }
 
   /**
