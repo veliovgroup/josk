@@ -1,7 +1,7 @@
 {
   "name": "josk",
-  "version": "4.0.0",
-  "description": "Jobs scheduler and manager for Node.js on multi-server and clusters setup",
+  "version": "4.1.0",
+  "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications",
   "main": "index.js",
   "type": "module",
   "exports": {
@@ -19,10 +19,12 @@
     "agent",
     "cluster",
     "CRON",
+    "highload",
     "high load",
     "horizontal scaling",
     "job",
     "jobs",
+    "manager",
     "mongo",
     "mongodb",
     "redis",
@@ -31,6 +33,8 @@
     "scheduler",
     "servers",
     "task",
+    "task manager",
+    "task scheduler",
     "tasks"
   ],
   "tags": [
@@ -38,10 +42,12 @@
     "agent",
     "cluster",
     "CRON",
+    "highload",
     "high load",
     "horizontal scaling",
     "job",
     "jobs",
+    "manager",
     "mongo",
     "mongodb",
     "redis",
@@ -50,6 +56,8 @@
     "scheduler",
     "servers",
     "task",
+    "task manager",
+    "task scheduler",
     "tasks"
   ],
   "repository": {

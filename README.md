@@ -383,7 +383,7 @@ process.on('SIGHUP', cleanUpBeforeTermination);
 // EXAMPLE: DESTROY JoSk INSTANCE UPON SERVER PROCESS TERMINATION
 const jobs = new JoSk({ /* ... */ });
 
-const pingResult = jobs.ping();
+const pingResult = await jobs.ping();
 console.log(pingResult)
 /**
 In case of the successful response

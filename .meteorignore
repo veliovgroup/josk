@@ -5,6 +5,7 @@
 .DS_Store
 .eslintcache
 .eslintrc
+adapters/blank-example.js
 cover.jpg
 cover.png
 node_modules
