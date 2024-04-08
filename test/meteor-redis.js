@@ -136,6 +136,17 @@ describe('redis - JoSk Instance', function () {
   });
 });
 
+describe('redis - JoSk Methods', function () {
+  it('ping', async function () {
+    const pingRes = await cron.ping();
+    assert.isObject(pingRes, 'ping response is Object');
+    assert.equal(pingRes.status, 'OK', 'ping.status');
+    assert.equal(pingRes.code, 200, 'ping.code');
+    assert.equal(pingRes.statusCode, 200, 'ping.statusCode');
+    assert.isUndefined(pingRes.error, 'ping.error is undefined');
+  });
+});
+
 describe('redis - setInterval', function () {
   this.slow(7680 * 2);
   this.timeout(8448 * 2);
