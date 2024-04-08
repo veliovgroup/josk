@@ -121,13 +121,13 @@ describe('Redis - Has JoSk Object', function () {
   });
 });
 
-describe('Redis - JoSk Instance', function () {
+describe('Redis - JoSk', function () {
   this.slow(55000);
   this.timeout(100000);
   let overloadCronTimeouts = [];
   let overloadCronIntervals = [];
 
-  describe('Redis - JoSk Instance', function () {
+  describe('Redis - Instance', function () {
     it('Check JoSk instance properties', function () {
       assert.instanceOf(job, JoSk, 'job is instance of JoSk');
       assert.equal(job.prefix, 'testCaseNPM', 'job has prefix');
@@ -139,6 +139,17 @@ describe('Redis - JoSk Instance', function () {
       assert.equal(job.minRevolvingDelay, minRevolvingDelay, 'job has minRevolvingDelay');
       assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'job has maxRevolvingDelay');
       assert.instanceOf(job.tasks, Object, 'job has tasks');
+    });
+  });
+
+  describe('Redis - Methods', function () {
+    it('ping', async function () {
+      const pingRes = await job.ping();
+      assert.isObject(pingRes, 'ping response is Object');
+      assert.equal(pingRes.status, 'OK', 'ping.status');
+      assert.equal(pingRes.code, 200, 'ping.code');
+      assert.equal(pingRes.statusCode, 200, 'ping.statusCode');
+      assert.isUndefined(pingRes.error, 'ping.error is undefined');
     });
   });
 

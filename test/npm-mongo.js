@@ -158,13 +158,13 @@ describe('Mongo - Has JoSk Object', function () {
   });
 });
 
-describe('Mongo - JoSk Instance', function () {
+describe('Mongo - JoSk', function () {
   this.slow(55000);
   this.timeout(100000);
   let overloadCronTimeouts = [];
   let overloadCronIntervals = [];
 
-  describe('Mongo - JoSk Instance', function () {
+  describe('Mongo - Instance', function () {
     it('Check JoSk instance properties', function () {
       assert.instanceOf(job, JoSk, 'job is instance of JoSk');
       assert.equal(job.prefix, 'testCaseNPM', 'job has prefix');
@@ -176,6 +176,17 @@ describe('Mongo - JoSk Instance', function () {
       assert.equal(job.minRevolvingDelay, minRevolvingDelay, 'job has minRevolvingDelay');
       assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'job has maxRevolvingDelay');
       assert.instanceOf(job.tasks, Object, 'job has tasks');
+    });
+  });
+
+  describe('Mongo - Methods', function () {
+    it('ping', async function () {
+      const pingRes = await job.ping();
+      assert.isObject(pingRes, 'ping response is Object');
+      assert.equal(pingRes.status, 'OK', 'ping.status');
+      assert.equal(pingRes.code, 200, 'ping.code');
+      assert.equal(pingRes.statusCode, 200, 'ping.statusCode');
+      assert.isUndefined(pingRes.error, 'ping.error is undefined');
     });
   });
 
