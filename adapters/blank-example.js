@@ -28,6 +28,35 @@ class BlankAdapter {
   }
 
   /**
+   * @async
+   * @memberOf BlankAdapter
+   * @name ping
+   * @description Check connection to Storage
+   * @returns {Promise<object>}
+   */
+  async ping() {
+    try {
+      const ping = await this.requiredOption.ping();
+      if (ping === 'PONG') {
+        return {
+          status: 'OK',
+          code: 200,
+          statusCode: 200,
+        };
+      }
+
+      throw new Error(`Unexpected response from Storage#ping received: ${ping}`);
+    } catch (pingError) {
+      return {
+        status: 'Internal Server Error',
+        code: 500,
+        statusCode: 500,
+        error: pingError
+      };
+    }
+  }
+
+  /**
    * Function called to remove task from the storage
    * @name releaseLock
    * @param {function} cb - callback that must get called after releaseLock

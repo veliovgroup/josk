@@ -37,6 +37,35 @@ class RedisAdapter {
     }
   }
 
+  /**
+   * @async
+   * @memberOf RedisAdapter
+   * @name ping
+   * @description Check connection to Redis
+   * @returns {Promise<object>}
+   */
+  async ping() {
+    try {
+      const ping = await this.client.ping();
+      if (ping === 'PONG') {
+        return {
+          status: 'OK',
+          code: 200,
+          statusCode: 200,
+        };
+      }
+
+      throw new Error(`Unexpected response from Redis#ping received: ${ping}`);
+    } catch (pingError) {
+      return {
+        status: 'Internal Server Error',
+        code: 500,
+        statusCode: 500,
+        error: pingError
+      };
+    }
+  }
+
   acquireLock(cb) {
     this.client.exists([this.lockKey]).then((isLocked) => {
       if (isLocked >= 1) {

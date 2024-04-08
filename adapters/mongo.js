@@ -73,6 +73,7 @@ class MongoAdapter {
       });
     }
 
+    this.db = opts.db;
     this.uniqueName = `__JobTasks__${this.prefix}`;
     this.collection = opts.db.collection(this.uniqueName);
     ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
@@ -92,6 +93,40 @@ class MongoAdapter {
         uniqueName: this.uniqueName
       }).then(() => {}).catch(mongoErrorHandler);
     }
+  }
+
+  /**
+   * @async
+   * @memberOf MongoAdapter
+   * @name ping
+   * @description Check connection to MongoDB
+   * @returns {Promise<object>}
+   */
+  async ping() {
+    try {
+      const ping = await this.db.command({ ping: 1 });
+      if (ping?.ok === 1) {
+        return {
+          status: 'OK',
+          code: 200,
+          statusCode: 200,
+        };
+      }
+    } catch (pingError) {
+      return {
+        status: 'Internal Server Error',
+        code: 500,
+        statusCode: 500,
+        error: pingError
+      };
+    }
+
+    return {
+      status: 'Service Unavailable',
+      code: 503,
+      statusCode: 503,
+      error: new Error('Service Unavailable')
+    };
   }
 
   acquireLock(cb) {

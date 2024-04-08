@@ -58,7 +58,7 @@ class JoSk {
     };
 
     this.adapter = new opts.adapter(this, opts);
-    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks'];
+    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks', 'ping'];
 
     for (let i = adapterMethods.length - 1; i >= 0; i--) {
       if (typeof this.adapter[adapterMethods[i]] !== 'function') {
@@ -67,6 +67,18 @@ class JoSk {
     }
 
     this.__setNext();
+  }
+
+  /**
+   * @async
+   * @memberOf JoSk
+   * @name ping
+   * @description Check package readiness and connection to Storage
+   * @returns {Promise<object>}
+   * @throws {mix}
+   */
+  async ping() {
+    return await this.adapter.ping();
   }
 
   /**

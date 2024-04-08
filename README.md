@@ -30,6 +30,7 @@ __Note: JoSk is the server-only package.__
   - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#clearintervaltimer--callback)
   - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#cleartimeouttimer--callback)
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#destroy)
+  - [`JoSk#ping()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#ping)
 - [Examples](https://github.com/veliovgroup/josk?tab=readme-ov-file#examples)
   - [CRON usage](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron)
   - [Passing arguments](https://github.com/veliovgroup/josk?tab=readme-ov-file#pass-arguments)
@@ -372,6 +373,34 @@ process.stdin.resume();
 process.on('uncaughtException', cleanUpBeforeTermination);
 process.on('exit', cleanUpBeforeTermination);
 process.on('SIGHUP', cleanUpBeforeTermination);
+```
+
+### `ping()`
+
+*Ping JoSk instance*. Check scheduler readiness and its connection to the "storage adapter"
+
+```js
+// EXAMPLE: DESTROY JoSk INSTANCE UPON SERVER PROCESS TERMINATION
+const jobs = new JoSk({ /* ... */ });
+
+const pingResult = jobs.ping();
+console.log(pingResult)
+/**
+In case of the successful response
+{
+  status: 'OK',
+  code: 200,
+  statusCode: 200,
+}
+
+Failed response
+{
+  status: 'Error reason',
+  code: 500,
+  statusCode: 500,
+  error: ErrorObject
+}
+*/
 ```
 
 ## Examples

@@ -13,6 +13,7 @@ List of required methods and its arguments
 - `new Adapter(joskInstance, opts)` constructor
   - `{JoSk} joskInstance`
   - `{object} opts`
+- async `Adapter#ping - {object}`
 - `Adapter#acquireLock(cb) - {void 0}`
   - `{function} cb`
 - `Adapter#releaseLock(cb) - {void 0}`
