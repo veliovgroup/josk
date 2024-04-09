@@ -1,15 +1,15 @@
 class BlankAdapter {
   /**
    * Create a BlankAdapter instance
-   * @param {JoSk} joskInstance - JoSk instance
    * @param {object} opts - configuration object
    * @param {object} opts.requiredOption - Required option description
-   * @param {string} [opts.prefix] - prefix for scope isolation
+   * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
+   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    */
-  constructor(joskInstance, opts = {}) {
+  constructor(opts = {}) {
     this.name = 'adapter-name'; // set unique adapter name
-    this.joskInstance = joskInstance; // Pass down JoSk instance
     this.prefix = opts.prefix || 'default'; // Pass down user-defined prefix
+    this.resetOnInit = opts.resetOnInit || false;
     this.uniqueName = `josk-${this.prefix}`; // Unique ID when multiple instances of JoSk are used
     this.lockKey = `${this.uniqueName}.lock`; // Key used for storage lock/release while tasks are running
 
@@ -22,7 +22,7 @@ class BlankAdapter {
     }
 
     this.requiredOption = opts.requiredOption;
-    if (this.joskInstance.resetOnInit) { // Check if user wish to reset storage on init
+    if (this.resetOnInit) { // Check if user wish to reset storage on init
       // REMOVE TASKS RECORDS ONLY WITHIN this.uniqueName SCOPE!
     }
   }
@@ -35,6 +35,17 @@ class BlankAdapter {
    * @returns {Promise<object>}
    */
   async ping() {
+    // LEAVE THIS if BLOCK UNCHANGED
+    if (!this.joskInstance) {
+      const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
+      return {
+        status: reason,
+        code: 503,
+        statusCode: 503,
+        error: new Error(reason),
+      };
+    }
+
     try {
       const ping = await this.requiredOption.ping();
       if (ping === 'PONG') {
@@ -57,121 +68,121 @@ class BlankAdapter {
   }
 
   /**
-   * Function called to remove task from the storage
-   * @name releaseLock
-   * @param {function} cb - callback that must get called after releaseLock
-   * @returns {void 0}
+   * @async
+   * @memberOf BlankAdapter
+   * Function called to acquire read/write lock on Storage adapter
+   * @name acquireLock
+   * @returns {Promise<boolean>}
    */
-  acquireLock(cb) {
+  async acquireLock() {
+    const isLocked = await this.requiredOption.lock();
     if (isLocked) {
       // Lock not available
-      cb(void 0, false);
-    } else if (error) {
-      // Error occurred
-      cb(error, false);
-    } else {
-      // Lock acquired
-      cb(void 0, true);
+      return false;
     }
+    // Lock acquired
+    return true;
   }
 
   /**
-   * Function called to remove task from the storage
+   * @async
+   * @memberOf BlankAdapter
+   * Function called to release write/read lock from Storage adapter
    * @name releaseLock
-   * @param {function} cb - callback that must get called after releaseLock
-   * @returns {void 0}
+   * @returns {Promise<void 0>}
    */
-  releaseLock(cb) {
-    if (isReleased) {
-      // Lock released
-      cb();
-    } else if (error) {
-      // Error occurred
-      cb(error);
-    } else {
-      // Can not release
-      cb(new Error('Can not release storage-lock at the moment'));
-    }
+  async releaseLock() {
+    await this.requiredOption.release();
   }
 
   /**
+   * @async
+   * @memberOf BlankAdapter
    * Function called to remove task from the storage
-   * @name clear
+   * @name remove
    * @param {string} uid - Unique ID of the task
-   * @param {function} cb - callback that must get called after task is removed
-   * @returns {void 0}
+   * @returns {Promise<boolean>}
    */
-  clear(uid, cb) {
+  async remove(uid) {
+    const isRemoved = await this.requiredOption.remove(uid);
     if (isRemoved) {
       // Task removed
-      cb(void 0, true);
-    } else if (error) {
-      // Error occurred
-      cb(error, false);
-    } else {
-      // Can not remove the task
-      cb(new Error('Can not stop task at the moment'), false);
+      return true;
     }
+    // Can not remove the task
+    return false;
   }
 
   /**
+   * @async
+   * @memberOf BlankAdapter
    * Function called to add task to the storage
-   * @name addTask
+   * @name add
    * @param {string} uid - Unique ID of the task
    * @param {boolean} isInterval - true/false defining loop or one-time task
    * @param {number} delay - Delay in milliseconds
-   * @returns {void 0}
+   * @returns {Promise<void 0>}
    */
-  addTask(uid, isInterval, delay) {
+  async add(uid, isInterval, delay) {
     const next = Date.now() + delay;
     // STORE TASK IN THE STORAGE IN THE NEXT FORMAT
     this.requiredOption.save({
       uid: uid, // String
       delay: delay, // Number
-      executeAt: next, // Number
+      executeAt: next, // Date or Number
       isInterval: isInterval, // Boolean
       isDeleted: false // Boolean
     });
   }
 
   /**
+   * @async
+   * @memberOf BlankAdapter
    * Function called after executing tasks
    * Used by "Interval" tasks to set the next execution
-   * @name getDoneCallback
+   * @name update
    * @param {object} task - Full object of the task from storage
-   * @returns {function} - callback function `doneCallback`
+   * @param {Date} nextExecuteAt - Date defining time of the next execution for "Interval" tasks
+   * @returns {Promise<boolean>} - `true` if updated, `false` id doesn't exist
    */
-  getDoneCallback(task) {
-    /**
-     * Create and return callback function
-     * that called for "interval" tasks to set time of the next run
-     * @name doneCallback
-     * @param {Date} nextExecuteAt - Date defining time of the next execution
-     * @param {function} [readyCallback] - optional callback
-     * @returns {void 0}
-     */
-    return (nextExecuteAt, readyCallback) => {
-      this.requiredOption.update({
+  async update(task, nextExecuteAt) {
+    if (typeof task !== 'object' || typeof task.uid !== 'string') {
+      this.joskInstance.__errorHandler({ task }, '[StorageAdapter] [update] [task]', 'Task malformed or undefined');
+      return false;
+    }
+
+    if (!nextExecuteAt instanceof Date) {
+      this.joskInstance.__errorHandler({ nextExecuteAt }, '[StorageAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
+      return false;
+    }
+
+    try {
+      const exists = await this.requiredOption.exists(task.uid);
+      if (!exists) {
+        return false;
+      }
+      await this.requiredOption.update({
         uid: task.uid
       }, {
-        executeAt: +nextExecuteAt, // Convert Date to Number (timestamp)
-      }).then(() => {
-        typeof readyCallback === 'function' && readyCallback(void 0, true);
-      }).catch((updateError) => {
-        typeof readyCallback === 'function' && readyCallback(updateError);
-        this.joskInstance.__errorHandler(updateError, '[getDoneCallback] [done] [hSet] updateError:', 'Error in a .catch() of .hSet() method of .getDoneCallback()', task.uid);
+        executeAt: nextExecuteAt
       });
-    };
+      return true;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[StorageAdapter] [update] [opError]', 'Exception inside StorageAdapter#update() method', task.uid);
+      return false;
+    }
   }
 
   /**
+   * @async
+   * @memberOf BlankAdapter
    * Find and run tasks one by one
-   * @name runTasks
+   * @name iterate
    * @param {Date} nextExecuteAt - Date defining time of the next execution for "zombie" tasks
    * @param {function} cb - callback that must get called after looping over tasks
    * @returns {void 0}
    */
-  runTasks(nextExecuteAt, cb) {
+  async iterate(nextExecuteAt) {
     // GET TASKS WITHIN this.uniqueName SCOPE!
     // AND ONLY WHERE executeAt <= now
     // RUN ONE BY ONE VIA this.joskInstance.__execute() METHOD
@@ -183,9 +194,9 @@ class BlankAdapter {
       }
     });
 
-    for (const task of cursorWithTasks) {
+    for await (const task of cursorWithTasks) {
       // "Lock task" by setting the next execution far ahead (timestamp + zombieTime)
-      this.requiredOption.update({
+      await this.requiredOption.update({
         uid: task.uid
       }, {
         executeAt: +nextExecuteAt, // Convert Date to Number (timestamp)
@@ -194,14 +205,11 @@ class BlankAdapter {
       // EXECUTE TASK
       this.joskInstance.__execute(task);
     }
-
-    // CALL cb() AFTER LOOPING OVER TASKS
-    cb();
   }
 
-  __customProvateMethod() {
+  __customPrivateMethod() {
     // DEFINE PREFIXED __ CUSTOM METHODS
-    // WHEN NECESSARY FOR THE ADAPTER
+    // WHEN NEEDED FOR THE ADAPTER
     return true;
   }
 }
