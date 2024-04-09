@@ -332,7 +332,7 @@ class JoSk {
 
       if (returnedPromise instanceof Promise) {
         await returnedPromise;
-        ready();
+        await ready();
       }
     } else {
       await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
