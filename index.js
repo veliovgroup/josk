@@ -247,7 +247,7 @@ class JoSk {
     if (isRemoved && this.tasks?.[timerId]) {
       delete this.tasks[timerId];
     }
-    return true;
+    return isRemoved;
   }
 
   async __add(uid, isInterval, delay) {
