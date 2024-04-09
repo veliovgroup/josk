@@ -5,16 +5,19 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
 const errors = {
   setInterval: {
+    func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be positive Number!',
     uid: '[josk] [setInterval] [uid - task id must be specified (3rd argument)]'
   },
   setTimeout: {
+    func: '[josk] [setTimeout] the first argument must be a function!',
     delay: '[josk] [setTimeout] delay must be positive Number!',
     uid: '[josk] [setTimeout] [uid - task id must be specified (3rd argument)]'
   },
   setImmediate: {
+    func: '[josk] [setImmediate] the first argument must be a function!',
     uid: '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]'
-  }
+  },
 };
 
 /** Class representing a JoSk task runner (cron). */
@@ -23,29 +26,25 @@ class JoSk {
    * Create a JoSk instance
    * @param {object} opts - configuration object
    * @param {boolean} [opts.debug] - Enable debug logging
-   * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
    * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
    * @param {number} [opts.zombieTime] - Time in milliseconds, after this period of time - task will be interpreted as "zombie". This parameter allows to rescue task from "zombie mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic
    * @param {function} [opts.onExecuted] - Informational hook, called when task is finished, see readme for more details
-   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    * @param {number} [opts.minRevolvingDelay] - Minimum revolving delay — the minimum delay between tasks executions in milliseconds
    * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
    */
   constructor(opts = {}) {
     this.debug = opts.debug || false;
-    this.prefix = opts.prefix || '';
     this.onError = opts.onError || false;
     this.autoClear = opts.autoClear || false;
     this.zombieTime = opts.zombieTime || 900000;
     this.onExecuted = opts.onExecuted || false;
-    this.resetOnInit = opts.resetOnInit || false;
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
     this.nextRevolutionTimeout = null;
 
-    if (!opts.adapter) {
+    if (!opts.adapter || typeof opts.adapter !== 'object') {
       throw new Error('{adapter} option is required for JoSk', {
         description: 'JoSk requires MongoAdapter, RedisAdapter, or CustomAdapter to connect to an intermediate database'
       });
@@ -57,8 +56,9 @@ class JoSk {
       this.debug === true && console.info.call(console, '[DEBUG] [josk]', ...args);
     };
 
-    this.adapter = new opts.adapter(this, opts);
-    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks', 'ping'];
+    this.adapter = opts.adapter;
+    this.adapter.joskInstance = this;
+    const adapterMethods = ['acquireLock', 'releaseLock', 'remove', 'add', 'update', 'iterate', 'ping'];
 
     for (let i = adapterMethods.length - 1; i >= 0; i--) {
       if (typeof this.adapter[adapterMethods[i]] !== 'function') {
@@ -66,7 +66,7 @@ class JoSk {
       }
     }
 
-    this.__setNext();
+    this.__tick();
   }
 
   /**
@@ -82,115 +82,129 @@ class JoSk {
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Create recurring task (loop)
    * @name setInterval
    * @param {function} func - Function (task) to execute
    * @param {number} delay - Delay between task execution in milliseconds
-   * @param {string} _uid - Unique function (task) identification as a string
-   * @returns {string} - Timer ID
+   * @param {string} uid - Unique function (task) identification as a string
+   * @returns {Promise<string>} - Timer ID
    */
-  setInterval(func, delay, _uid) {
+  async setInterval(func, delay, uid) {
     if (this.__checkState()) {
       return '';
     }
 
-    let uid = _uid;
+    if (typeof func !== 'function') {
+      throw new Error(errors.setInterval.func);
+    }
 
     if (delay < 0) {
       throw new Error(errors.setInterval.delay);
     }
 
-    if (uid) {
-      uid += 'setInterval';
-    } else {
+    if (typeof uid !== 'string') {
       throw new Error(errors.setInterval.uid);
     }
 
-    this.tasks[uid] = func;
-    this.__addTask(uid, true, delay);
-    return uid;
+    const timerId = `${uid}setInterval`;
+    this.tasks[timerId] = func;
+    await this.__add(timerId, true, delay);
+    return timerId;
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Create delayed task
    * @name setTimeout
    * @param {function} func - Function (task) to execute
    * @param {number} delay - Delay before task execution in milliseconds
-   * @param {string} _uid - Unique function (task) identification as a string
-   * @returns {string} - Timer ID
+   * @param {string} uid - Unique function (task) identification as a string
+   * @returns {Promise<string>} - Timer ID
    */
-  setTimeout(func, delay, _uid) {
+  async setTimeout(func, delay, uid) {
     if (this.__checkState()) {
       return '';
     }
 
-    let uid = _uid;
+    if (typeof func !== 'function') {
+      throw new Error(errors.setTimeout.func);
+    }
 
     if (delay < 0) {
       throw new Error(errors.setTimeout.delay);
     }
 
-    if (uid) {
-      uid += 'setTimeout';
-    } else {
+    if (typeof uid !== 'string') {
       throw new Error(errors.setTimeout.uid);
     }
 
-    this.tasks[uid] = func;
-    this.__addTask(uid, false, delay);
-    return uid;
+    const timerId = `${uid}setInterval`;
+    this.tasks[timerId] = func;
+    await this.__add(timerId, false, delay);
+    return timerId;
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Create task, which would get executed immediately and only once across multi-server setup
    * @name setImmediate
    * @param {function} func - Function (task) to execute
-   * @param {string} _uid - Unique function (task) identification as a string
-   * @returns {string} - Timer ID
+   * @param {string} uid - Unique function (task) identification as a string
+   * @returns {Promise<string>} - Timer ID
    */
-  setImmediate(func, _uid) {
+  async setImmediate(func, uid) {
     if (this.__checkState()) {
       return '';
     }
 
-    let uid = _uid;
+    if (typeof func !== 'function') {
+      throw new Error(errors.setImmediate.func);
+    }
 
-    if (uid) {
-      uid += 'setImmediate';
-    } else {
+    if (typeof uid !== 'string') {
       throw new Error(errors.setImmediate.uid);
     }
 
-    this.tasks[uid] = func;
-    this.__addTask(uid, false, 0);
-    return uid;
+    const timerId = `${uid}setInterval`;
+    this.tasks[timerId] = func;
+    await this.__add(timerId, false, 0);
+    return timerId;
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Cancel (abort) current interval timer.
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
    * @param {string} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
    * @param {function} [callback] - optional callback
-   * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
+   * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
-  clearInterval() {
-    return this.__clear.apply(this, arguments);
+  async clearInterval(timerId) {
+    return await this.__remove(timerId);
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Cancel (abort) current timeout timer.
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
    * @param {string} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
    * @param {function} [callback] - optional callback
-   * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
+   * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
-  clearTimeout() {
-    return this.__clear.apply(this, arguments);
+  async clearTimeout(timerId) {
+    return await this.__remove(timerId);
   }
 
   /**
+   * @memberOf JoSk
    * Destroy JoSk instance and stop all tasks
    * @name destroy
    * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
@@ -210,9 +224,10 @@ class JoSk {
   __checkState() {
     if (this.isDestroyed) {
       if (this.onError) {
-        this.onError('JoSk instance destroyed', {
+        const reason = 'JoSk instance destroyed';
+        this.onError(reason, {
           description: 'invoking methods of destroyed JoSk instance',
-          error: 'JoSk instance destroyed',
+          error: new Error(reason),
           uid: null
         });
       } else {
@@ -223,50 +238,67 @@ class JoSk {
     return false;
   }
 
-  __clear(uid, callback) {
-    if (!uid) {
-      typeof callback === 'function' && callback(new TypeError('{string} uid is not defined'), false);
+  async __remove(timerId) {
+    if (typeof timerId !== 'string') {
       return false;
     }
 
-    this.adapter.clear(uid, (clearError, isRemoved) => {
-      if (clearError) {
-        this.__errorHandler(clearError, '[__clear] [adapter.clear] clearError:', 'adapter.clear has returned an error', uid);
-      } else if (isRemoved && this.tasks && this.tasks[uid]) {
-        delete this.tasks[uid];
-      }
-
-      typeof callback === 'function' && callback(clearError, isRemoved);
-    });
+    const isRemoved = await this.adapter.remove(timerId);
+    if (isRemoved && this.tasks?.[timerId]) {
+      delete this.tasks[timerId];
+    }
     return true;
   }
 
-  __addTask(uid, isInterval, delay) {
+  async __add(uid, isInterval, delay) {
     if (this.isDestroyed) {
       return;
     }
 
-    this.adapter.addTask(uid, isInterval, delay);
+    await this.adapter.add(uid, isInterval, delay);
   }
 
-  __execute(task) {
+  async __execute(task) {
     if (this.isDestroyed || task.isDeleted === true) {
       return;
     }
 
-    const done = this.adapter.getDoneCallback(task);
+    if (!task || typeof task !== 'object' || typeof task.uid !== 'string') {
+      if (this.onError) {
+        this.onError('JoSk#__execute received malformed task', {
+          description: 'Something went wrong with one of your tasks - malformed or undefined',
+          error: null,
+          task: task,
+          uid: task.uid,
+        });
+      } else {
+        this._debug('[__execute] received malformed task', task);
+      }
+      return;
+    }
+
+    let executionsQty = 0;
 
     if (this.tasks && typeof this.tasks[task.uid] === 'function') {
       if (this.tasks[task.uid].isMissing === true) {
         return;
       }
 
-      const ready = (readyCallback) => {
+      const ready = async (readyCallback) => {
+        executionsQty++;
+        if (executionsQty >= 2) {
+          const error = new Error(`[josk] [${task.uid}] "ready" callback of this task was called more than once!`);
+          if (typeof readyCallback === 'function') {
+            readyCallback(error, false);
+            return false;
+          }
+          throw error;
+        }
         const date = new Date();
         const timestamp = +date;
 
         if (task.isInterval === true) {
-          done(new Date(timestamp + task.delay), readyCallback);
+          await this.adapter.update(task, new Date(timestamp + task.delay));
         } else {
           typeof readyCallback === 'function' && readyCallback(void 0, true);
         }
@@ -279,26 +311,41 @@ class JoSk {
             timestamp: timestamp
           });
         }
+
+        return true;
       };
 
+      let returnedPromise;
       if (task.isInterval === false) {
         const originalTask = this.tasks[task.uid];
-        this.__clear(task.uid, (error, isSuccess) => {
-          if (!error && isSuccess === true) {
-            originalTask(ready);
+        try {
+          const isSuccess = await this.__remove(task.uid);
+          if (isSuccess === true) {
+            returnedPromise = originalTask(ready);
           }
-        });
+        } catch (removeError) {
+          this._debug(`[${task.uid}] [__execute] [__remove] has thrown an exception; removeError:`, removeError);
+        }
       } else {
-        this.tasks[task.uid](ready);
+        returnedPromise = this.tasks[task.uid](ready);
+      }
+
+      if (returnedPromise instanceof Promise) {
+        await returnedPromise;
+        ready();
       }
     } else {
-      done(new Date(Date.now() + this.zombieTime));
+      await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
       this.tasks[task.uid] = function () { };
       this.tasks[task.uid].isMissing = true;
 
       if (this.autoClear) {
-        this.__clear(task.uid);
-        this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
+        try {
+          await this.__remove(task.uid);
+          this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
+        } catch (removeError) {
+          this._debug(`[${task.uid}] [__execute] [this.autoClear] [__remove] has thrown an exception; removeError:`, removeError);
+        }
       } else if (this.onError) {
         this.onError('One of your tasks is missing', {
           description: `Something went wrong with one of your tasks - is missing.
@@ -319,42 +366,31 @@ class JoSk {
     }
   }
 
-  __runTasks() {
+  async __iterate() {
     if (this.isDestroyed) {
       return;
     }
 
     const nextExecuteAt = new Date(Date.now() + this.zombieTime);
 
-    this.adapter.acquireLock((lockError, success) => {
-      if (lockError) {
-        this._debug('[__runTasks] [adapter.acquireLock] Error:', lockError);
-        this.__setNext();
-      } else if (!success) {
-        this.__setNext();
-      } else {
-        this.adapter.runTasks(nextExecuteAt, (runError) => {
-          if (runError) {
-            this.__errorHandler(runError, '[__runTasks] runError:', 'adapter.runTasks has returned an error', null);
-          }
-
-          this.adapter.releaseLock((releaseError) => {
-            this.__setNext();
-            if (releaseError) {
-              this._debug('[__runTasks] [adapter.releaseLock] releaseError:', releaseError);
-            }
-          });
-        });
+    try {
+      const isAcquired = await this.adapter.acquireLock();
+      if (isAcquired) {
+        await this.adapter.iterate(nextExecuteAt);
+        await this.adapter.releaseLock();
       }
-    });
+      this.__tick();
+    } catch (runError) {
+      this.__errorHandler(runError, '[__iterate] runError:', 'adapter.iterate has returned an error', null);
+    }
   }
 
-  __setNext() {
+  __tick() {
     if (this.isDestroyed) {
       return;
     }
 
-    this.nextRevolutionTimeout = setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
+    this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
   }
 
   __errorHandler(error, title, description, uid) {
