@@ -25,20 +25,24 @@ let job;
 let jobCron;
 
 const testInterval = function (interval) {
-  it(`setInterval ${interval}`, function (done) {
-    const taskId = job.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + interval];
-    revolutions[taskId] = 0;
+  it(`setInterval ${interval}`, function (endit) {
+    process.nextTick(async () => {
+      const taskId = await job.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
+      callbacks[taskId] = endit;
+      timestamps[taskId] = [Date.now() + interval];
+      revolutions[taskId] = 0;
+    });
   });
 };
 
 const testTimeout = function (delay) {
-  it(`setTimeout ${delay}`, function (done) {
-    const taskId = job.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + delay];
-    revolutions[taskId] = 0;
+  it(`setTimeout ${delay}`, function (endit) {
+    process.nextTick(async () => {
+      const taskId = await job.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
+      callbacks[taskId] = endit;
+      timestamps[taskId] = [Date.now() + delay];
+      revolutions[taskId] = 0;
+    });
   });
 };
 
@@ -48,17 +52,19 @@ before(async function () {
   }).connect();
 
   job = new JoSk({
-    adapter: RedisAdapter,
-    client: client,
+    adapter: new RedisAdapter({
+      client: client,
+      prefix: 'testCaseNPM',
+      resetOnInit: true
+    }),
     autoClear: false,
-    prefix: 'testCaseNPM',
     zombieTime: ZOMBIE_TIME,
     minRevolvingDelay,
     maxRevolvingDelay,
     onError(message, details) {
       console.info('[onError Hook] (this is purely informational message)', message, details);
       if (message === 'One of your tasks is missing') {
-        // By the way same can be achieved with `autoClear: true`
+        // By the way the same can get achieved via `autoClear: true`
         // option passed to `new JoSk({/*...*/})`
         job.clearInterval(details.uid);
       }
@@ -104,14 +110,15 @@ before(async function () {
   });
 
   jobCron = new JoSk({
-    adapter: RedisAdapter,
-    client: client,
+    adapter: new RedisAdapter({
+      client: client,
+      prefix: 'cron',
+      resetOnInit: true
+    }),
     debug: true,
     maxRevolvingDelay: 256, // <- Speed up timer speed by lowering its max revolving delay
-    zombieTime: 1024, // <- will need to call `done()` right away
-    prefix: 'cron',
+    zombieTime: 1024, // <- will need to call `endit()` right away
     autoClear: true,
-    resetOnInit: true
   });
 });
 
@@ -130,15 +137,17 @@ describe('Redis - JoSk', function () {
   describe('Redis - Instance', function () {
     it('Check JoSk instance properties', function () {
       assert.instanceOf(job, JoSk, 'job is instance of JoSk');
-      assert.equal(job.prefix, 'testCaseNPM', 'job has prefix');
-      assert.instanceOf(job.onError, Function, 'job has onError');
-      assert.equal(job.autoClear, false, 'job has autoClear');
-      assert.equal(job.zombieTime, ZOMBIE_TIME, 'job has zombieTime');
-      assert.instanceOf(job.onExecuted, Function, 'job has onExecuted');
-      assert.equal(job.resetOnInit, false, 'job has resetOnInit');
-      assert.equal(job.minRevolvingDelay, minRevolvingDelay, 'job has minRevolvingDelay');
-      assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'job has maxRevolvingDelay');
-      assert.instanceOf(job.tasks, Object, 'job has tasks');
+      assert.instanceOf(job.adapter, RedisAdapter, 'JoSk#adapter is instance of RedisAdapter');
+      assert.equal(job.adapter.prefix, 'testCaseNPM', 'JoSk#adapter has .prefix');
+      assert.equal(job.adapter.resetOnInit, true, 'JoSk#adapter has .resetOnInit');
+      assert.isString(job.adapter.name, 'JoSk#adapter.name is {string}');
+      assert.instanceOf(job.onError, Function, 'JoSk# has .onError');
+      assert.equal(job.autoClear, false, 'JoSk# has .autoClear');
+      assert.equal(job.zombieTime, ZOMBIE_TIME, 'JoSk# has .zombieTime');
+      assert.instanceOf(job.onExecuted, Function, 'JoSk# has .onExecuted');
+      assert.equal(job.minRevolvingDelay, minRevolvingDelay, 'JoSk# has .minRevolvingDelay');
+      assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'JoSk# has .maxRevolvingDelay');
+      assert.instanceOf(job.tasks, Object, 'JoSk# has .tasks');
     });
   });
 
@@ -159,14 +168,14 @@ describe('Redis - JoSk', function () {
     const maxRuns = 5;
     const timers = {};
     const runs = {};
-    const createCronTask = (uniqueName, cronTask, task, josk = jobCron) => {
+    const createCronTask = async (uniqueName, cronTask, task, josk = jobCron) => {
       const next = +parser.parseExpression(cronTask).next().toDate();
       const timeout = next - Date.now();
 
-      timers[uniqueName] = josk.setTimeout(function (done) {
-        done(() => { // <- call `done()` right away
+      timers[uniqueName] = await josk.setTimeout(function (ready) {
+        ready(() => { // <- call `endit()` right away
           // MAKE SURE FURTHER LOGIC EXECUTED
-          // INSIDE done() CALLBACK
+          // INSIDE endit() CALLBACK
           if (task()) { // <-- return false to stop CRON
             createCronTask(uniqueName, cronTask, task);
           }
@@ -176,52 +185,53 @@ describe('Redis - JoSk', function () {
       return timers[uniqueName];
     };
 
-    it('Create multiple CRON tasks to simulate load an concurrency', function (endit) {
-      overloadCronTimeouts.push(createCronTask('overload CRON 1', '* * * * * *', () => {
+    it('Create multiple CRON tasks to simulate load an concurrency', async function () {
+      overloadCronTimeouts.push(await createCronTask('overload CRON 1', '* * * * * *', () => {
         // -- silence
       }, jobCron));
 
-      overloadCronTimeouts.push(createCronTask('overload CRON 2', '*/2 * * * * *', () => {
+      overloadCronTimeouts.push(await createCronTask('overload CRON 2', '*/2 * * * * *', () => {
         // -- silence
       }, jobCron));
 
-      overloadCronTimeouts.push(createCronTask('overload CRON 3', '*/3 * * * * *', () => {
+      overloadCronTimeouts.push(await createCronTask('overload CRON 3', '*/3 * * * * *', () => {
         // -- silence
       }, jobCron));
 
-      overloadCronTimeouts.push(createCronTask('overload CRON 4', '*/4 * * * * *', () => {
+      overloadCronTimeouts.push(await createCronTask('overload CRON 4', '*/4 * * * * *', () => {
         // -- silence
       }, jobCron));
 
-      overloadCronTimeouts.push(createCronTask('overload CRON 5', '* * * * * *', () => {
+      overloadCronTimeouts.push(await createCronTask('overload CRON 5', '* * * * * *', () => {
         // -- silence
       }, jobCron));
 
-      overloadCronIntervals.push(job.setInterval(() => {
+      overloadCronIntervals.push(await job.setInterval(() => {
         // -- silence
       }, 1024, 'overload Interval 1'));
 
-      overloadCronIntervals.push(job.setInterval(() => {
+      overloadCronIntervals.push(await job.setInterval(() => {
         // -- silence
       }, 1025, 'overload Interval 2'));
 
-      overloadCronIntervals.push(job.setInterval(() => {
+      overloadCronIntervals.push(await job.setInterval(() => {
         // -- silence
       }, 1026, 'overload Interval 3'));
 
-      overloadCronIntervals.push(job.setInterval(() => {
+      overloadCronIntervals.push(await job.setInterval(() => {
         // -- silence
       }, 1027, 'overload Interval 4'));
 
-      overloadCronIntervals.push(job.setInterval(() => {
+      overloadCronIntervals.push(await job.setInterval(() => {
         // -- silence
       }, 1028, 'overload Interval 5'));
-
-      endit();
     });
 
     const testCreateCronTask = (sec) =>  {
       it(`Check CRON-like task (${sec}sec) intervals`, function (endit) {
+        this.slow(sec * 1000 * maxRuns);
+        this.timeout((sec * 1000 * maxRuns) + 2000);
+
         const cronTask = `*/${sec} * * * * *`;
         let expected = +parser.parseExpression(cronTask).next().toDate();
         const uniqueName = `every ${sec} seconds CRON` + Math.random();
@@ -238,7 +248,7 @@ describe('Redis - JoSk', function () {
           assert.ok(diff > -512, `CRON task interval in correct time gaps (> 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
           assert.ok(runs[uniqueName] <= maxRuns, `CRON task runs only desired amount of cycles; diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
 
-          if (maxRuns === runs[uniqueName]) {
+          if (runs[uniqueName] >= maxRuns) {
             assert.ok(runs[uniqueName] === maxRuns, 'CRON task correctly cleared after 5 cycles');
             endit();
             return false;
@@ -288,59 +298,37 @@ describe('Redis - JoSk', function () {
   });
 
   describe('Redis - override settings', function () {
-    this.slow(2600);
-    this.timeout(4096);
+    this.slow(512);
+    this.timeout(1024);
 
-    it('setTimeout', function (done) {
-      const uid = job.setTimeout(noop, 2048, 'timeoutOverride');
+    it('setTimeout', async function () {
+      const uid = await job.setTimeout(noop, 2048, 'timeoutOverride');
+      const task = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
 
-      setTimeout(async () => {
-        const task = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
+      assert.ok(typeof task === 'object', 'setTimeout override — record exists');
+      assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
+      await job.setTimeout(noop, 3072, 'timeoutOverride');
 
-        assert.ok(typeof task === 'object', 'setTimeout override — record exists');
-        assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
-        job.setTimeout(noop, 3072, 'timeoutOverride');
+      assert.equal((await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`)).delay, 3072, 'setTimeout override — Have correct updated delay');
 
-        setTimeout(async () => {
-          const updatedTask = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
-
-          assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
-
-          process.nextTick(() => {
-            job.clearTimeout(uid);
-            setTimeout(async () => {
-              assert.equal(await job.adapter.client.exists([`${job.adapter.uniqueName}:task:${uid}`]), false, 'setTimeout override — Task cleared');
-              done();
-            }, 384);
-          });
-        }, 384);
-      }, 384);
+      const isRemoved = await job.clearTimeout(uid);
+      assert.isTrue(isRemoved, 'timeoutOverride task is properly removed');
+      assert.equal(await job.adapter.client.exists([`${job.adapter.uniqueName}:task:${uid}`]), false, 'setTimeout override — Task cleared');
     });
 
-    it('setInterval', function (done) {
-      const uid = job.setInterval(noop, 1024, 'intervalOverride');
+    it('setInterval', async function () {
+      const uid = await job.setInterval(noop, 1024, 'intervalOverride');
+      const task = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
 
-      setTimeout(async () => {
-        const task = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
+      assert.ok(typeof task === 'object', 'setInterval override — record exists');
+      assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
+      await job.setInterval(noop, 2048, 'intervalOverride');
 
-        assert.ok(typeof task === 'object', 'setInterval override — record exists');
-        assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
-        job.setInterval(noop, 2048, 'intervalOverride');
+      assert.equal((await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`)).delay, 2048, 'setInterval override — Have correct updated delay');
 
-        setTimeout(async () => {
-          const updatedTask = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
-
-          assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
-
-          process.nextTick(() => {
-            job.clearInterval(uid);
-            setTimeout(async () => {
-              assert.equal(await job.adapter.client.exists([`${job.adapter.uniqueName}:task:${uid}`]), false, 'setInterval override — Task cleared');
-              done();
-            }, 384);
-          });
-        }, 384);
-      }, 384);
+      const isRemoved = await job.clearInterval(uid);
+      assert.isTrue(isRemoved, 'intervalOverride task is properly removed');
+      assert.equal(await job.adapter.client.exists([`${job.adapter.uniqueName}:task:${uid}`]), false, 'setInterval override — Task cleared');
     });
   });
 
@@ -348,51 +336,54 @@ describe('Redis - JoSk', function () {
     this.slow(RANDOM_GAP * 3);
     this.timeout(RANDOM_GAP * 4);
 
-    it('setImmediate - Execution time', function (done) {
+    it('setImmediate - Execution time', function (endit) {
       const time = Date.now();
       job.setImmediate((ready) => {
-        // console.log('IMMEDIATE', Date.now() - time, ((RANDOM_GAP * 2) + 1), Date.now() - time < ((RANDOM_GAP * 2) + 1));
         assert.equal(Date.now() - time < ((RANDOM_GAP * 2) + 1), true, 'setImmediate - executed within appropriate time');
         ready();
-        done();
+        endit();
       }, 'taskImmediate-0');
     });
   });
 
   describe('Redis - zombieTime (stuck task recovery)', function () {
-    this.slow(11000);
-    this.timeout(13000);
+    this.slow(768 * 3 + RANDOM_GAP);
+    this.timeout(768 * 4 + RANDOM_GAP);
 
-    it('setInterval', function (done) {
+    it('setInterval', function (endit) {
       let time = Date.now();
       let i = 0;
-      const taskId = job.setInterval(() => {
-        i++;
-        if (i === 1) {
-          const _time = Date.now() - time;
-          assert.equal(_time < 2500 + RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
-          time = Date.now();
-        } else if (i === 2) {
-          job.clearInterval(taskId);
-          const _time = Date.now() - time;
+      process.nextTick(async () => {
+        const taskId = await job.setInterval(async () => {
+          i++;
+          if (i === 1) {
+            const _time = Date.now() - time;
+            assert.equal(_time < 768 + RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
+            time = Date.now();
+          } else if (i === 2) {
+            const _time = Date.now() - time;
 
-          // console.log('taskInterval-zombie-2500', _time, _time < (ZOMBIE_TIME + RANDOM_GAP), ZOMBIE_TIME + RANDOM_GAP);
-          assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
-          done();
-        }
-      }, 2500, 'taskInterval-zombie-2500');
+            assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
+            const isRemoved = await job.clearInterval(taskId);
+            assert.isTrue(isRemoved, 'taskInterval-zombie task is properly removed');
+            endit();
+          }
+        }, 768, 'taskInterval-zombie-768');
+      });
     });
 
-    it('setTimeout', function (done) {
+    it('setTimeout', function (endit) {
       const time = Date.now();
-      const taskId = job.setTimeout(() => {
-        job.clearTimeout(taskId);
-        const _time = Date.now() - time;
+      process.nextTick(async () => {
+        const taskId = await job.setTimeout(async () => {
+          const _time = Date.now() - time;
 
-        // console.log('taskTimeout-zombie-2500', _time, _time < (ZOMBIE_TIME + RANDOM_GAP), ZOMBIE_TIME + RANDOM_GAP);
-        assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setTimeout - recovered within appropriate zombieTime time-frame (which is actually the first run as it\'s Timeout)');
-        done();
-      }, 2500, 'taskTimeout-zombie-2500');
+          assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setTimeout - recovered within appropriate zombieTime time-frame (which is actually the first run as it\'s Timeout)');
+          const isRemoved = await job.clearTimeout(taskId);
+          assert.isTrue(isRemoved, 'taskTimeout-zombie task is properly removed');
+          endit();
+        }, 768, 'taskTimeout-zombie-768');
+      });
     });
   });
 
@@ -400,38 +391,44 @@ describe('Redis - JoSk', function () {
     this.slow(2304);
     this.timeout(3072);
 
-    it('setTimeout', function (done) {
+    it('setTimeout', function (endit) {
       let check = false;
-      const taskId = job.setTimeout((ready) => {
-        check = true;
-        ready();
-        // throw new Error('[Cancel (abort) current timers] [setTimeout] This shouldn\'t be executed');
-      }, 768, 'taskTimeout-clear-768');
+      process.nextTick(async () => {
+        const taskId = await job.setTimeout((ready) => {
+          check = true;
+          ready();
+          assert.fail('setTimeout - executed after abort');
+        }, 512, 'taskTimeout-clear-512');
 
-      setTimeout(() => {
-        job.clearTimeout(taskId);
-        setTimeout(() => {
-          assert.equal(check, false, 'setTimeout - is cleared and never executed');
-          done();
-        }, 768);
-      }, 384);
+        setTimeout(async () => {
+          const isRemoved = await job.clearTimeout(taskId);
+          assert.isTrue(isRemoved, 'setTimeout-clear task is properly removed');
+          setTimeout(() => {
+            assert.equal(check, false, 'setTimeout - is cleared and never executed');
+            endit();
+          }, 768);
+        }, 384);
+      });
     });
 
-    it('setInterval', function (done) {
+    it('setInterval', function (endit) {
       let check = false;
-      const taskId = job.setInterval((ready) => {
-        check = true;
-        ready();
-        // throw new Error('[Cancel (abort) current timers] [setInterval] This shouldn\'t be executed');
-      }, 768, 'taskInterval-clear-768');
+      process.nextTick(async () => {
+        const taskId = await job.setInterval((ready) => {
+          check = true;
+          ready();
+          assert.fail('setInterval - executed after abort');
+        }, 512, 'taskInterval-clear-512');
 
-      setTimeout(() => {
-        job.clearInterval(taskId);
-        setTimeout(() => {
-          assert.equal(check, false, 'setInterval - is cleared and never executed');
-          done();
-        }, 768);
-      }, 384);
+        setTimeout(async () => {
+          const isRemoved = await job.clearInterval(taskId);
+          assert.isTrue(isRemoved, 'taskInterval-clear task is properly removed');
+          setTimeout(() => {
+            assert.equal(check, false, 'setInterval - is cleared and never executed');
+            endit();
+          }, 768);
+        }, 384);
+      });
     });
   });
 
@@ -439,64 +436,74 @@ describe('Redis - JoSk', function () {
     this.slow(2304);
     this.timeout(3072);
 
-    it('setTimeout', function (done) {
+    it('setTimeout', function (endit) {
       let check = false;
-      const timeout1 = job.setTimeout(() => {
-        check = true;
-        job.clearTimeout(timeout1);
-        // throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-      }, 768, 'taskTimeout-destroy-768');
-
-      setTimeout(() => {
-        job.destroy();
-        setTimeout(() => {
+      process.nextTick(async () => {
+        const timeout1 = await job.setTimeout(() => {
+          check = true;
           job.clearTimeout(timeout1);
-          assert.equal(check, false, 'setTimeout - is destroyed/cleared and never executed');
-          done();
-        }, 768);
-      }, 384);
+          assert.fail('setInterval - executed after abort');
+        }, 512, 'taskTimeout-destroy-512');
+
+        setTimeout(() => {
+          job.destroy();
+          setTimeout(async () => {
+            const isRemoved = await job.clearTimeout(timeout1);
+            assert.isTrue(isRemoved, 'setTimeout-destroy task is properly removed');
+            assert.equal(check, false, 'setTimeout - is destroyed/cleared and never executed');
+            endit();
+          }, 768);
+        }, 384);
+      });
     });
 
-    it('setInterval + onError hook', function (done) {
+    it('setInterval + onError hook', function (endit) {
       let check1 = false;
       let check2 = false;
       let gotError = false;
       const job2 = new JoSk({
-        adapter: RedisAdapter,
-        client: client,
+        adapter: new RedisAdapter({
+          client: client,
+          prefix: 'testCaseNPM2',
+          resetOnInit: true
+        }),
         autoClear: false,
-        prefix: 'testCaseNPM2',
         zombieTime: ZOMBIE_TIME,
         minRevolvingDelay,
         maxRevolvingDelay,
-        onError() {
-          gotError = true;
+        onError(error) {
+          gotError = error;
         }
       });
 
-      const interval1 = job2.setInterval(() => {
-        check1 = true;
-        job2.clearInterval(interval1);
-        // throw new Error('[Destroy JoSk instance] [destroy] This shouldn\'t be executed');
-      }, 768, 'taskInterval-destroy2-768');
-
-      setTimeout(() => {
-        job2.destroy();
-        const interval2 = job2.setInterval(() => {
-          check2 = true;
-          // throw new Error('[setInterval + onError hook] [setInterval] This shouldn\'t be executed');
-          job2.clearInterval(interval2);
-        }, 384, 'taskInterval-destroy2-384');
-
-        setTimeout(() => {
+      process.nextTick(async () => {
+        const interval1 = await job2.setInterval(() => {
+          check1 = true;
           job2.clearInterval(interval1);
-          job2.clearInterval(interval2);
-          assert.equal(check1, false, 'setInterval (before .destroy()) - is destroyed/cleared and never executed');
-          assert.equal(check2, false, 'setInterval (after .destroy()) - is destroyed/cleared and never executed');
-          assert.equal(gotError, true, 'setInterval not possible to use after JoSk#destroy');
-          done();
-        }, 768);
-      }, 384);
+          assert.fail('setInterval 1 - executed after destroy');
+        }, 512, 'taskInterval-destroy2-512');
+
+        setTimeout(async () => {
+          job2.destroy();
+          const interval2 = await job2.setInterval(() => {
+            check2 = true;
+            job2.clearInterval(interval2);
+            assert.fail('setInterval 2 - executed after destroy');
+          }, 384, 'taskInterval-destroy2-384');
+
+          setTimeout(async () => {
+            const isRemoved1 = await job2.clearInterval(interval1);
+            assert.isTrue(isRemoved1, 'taskInterval-destroy1 task is properly removed');
+            const isRemoved2 = await job2.clearInterval(interval2);
+            assert.isTrue(isRemoved2, 'taskInterval-destroy2 task is properly removed');
+
+            assert.equal(check1, false, 'setInterval (before .destroy()) - is destroyed/cleared and never executed');
+            assert.equal(check2, false, 'setInterval (after .destroy()) - is destroyed/cleared and never executed');
+            assert.equal(gotError, 'JoSk instance destroyed', 'setInterval not possible to use after JoSk#destroy');
+            endit();
+          }, 768);
+        }, 384);
+      });
     });
   });
 
@@ -508,14 +515,12 @@ describe('Redis - JoSk', function () {
         endit();
         return;
       }
-      overloadCronTimeouts.forEach((timerId) => {
-        jobCron.clearTimeout(timerId, (error) => {
-          cleared++;
-          assert.equal(error, void 0, 'jobCron.clearTimeout.error !== void 0');
-          if (cleared === length) {
-            endit();
-          }
-        });
+      overloadCronTimeouts.forEach(async (timerId) => {
+        await jobCron.clearTimeout(timerId);
+        cleared++;
+        if (cleared === length) {
+          endit();
+        }
       });
     });
 
@@ -526,15 +531,13 @@ describe('Redis - JoSk', function () {
         endit();
         return;
       }
-      overloadCronIntervals.forEach((timerId) => {
-        job.clearInterval(timerId, (error, isRemoved) => {
-          cleared++;
-          assert.equal(error, void 0, 'job.clearInterval.error !== void 0');
-          assert.equal(isRemoved, true, 'job.clearInterval.isRemoved !== true');
-          if (cleared === length) {
-            endit();
-          }
-        });
+      overloadCronIntervals.forEach(async (timerId) => {
+        const isRemoved = await job.clearInterval(timerId);
+        cleared++;
+        assert.equal(isRemoved, true, 'job.clearInterval.isRemoved !== true');
+        if (cleared === length) {
+          endit();
+        }
       });
     });
 
