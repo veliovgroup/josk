@@ -27,8 +27,8 @@ __Note: JoSk is the server-only package.__
   - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#setintervalfunc-delay-uid)
   - [`JoSk#setTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#settimeoutfunc-delay-uid)
   - [`JoSk#setImmediate()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#setimmediatefunc-uid)
-  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#clearintervaltimer--callback)
-  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#cleartimeouttimer--callback)
+  - [`JoSk#clearInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#clearintervaltimer)
+  - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#cleartimeouttimer)
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#destroy)
   - [`JoSk#ping()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#ping)
 - [Examples](https://github.com/veliovgroup/josk?tab=readme-ov-file#examples)
@@ -78,16 +78,13 @@ const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
 
 ## API:
 
-`new JoSk({opts})`:
+Constructor options for *JoSK*, *MongoAdapter*, and *RedisAdapter*
 
-- `opts.adapter` {*RedisAdapter*|*MongoAdapter*} - [Required] `RedisAdapter` or `MongoAdapter` or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
-- `opts.client` {*RedisClient*} - [*Required for RedisAdapter*] `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
-- `opts.db` {*Db*} - [*Required for MongoAdapter*] Mongo's `Db` instance, like one returned from `MongoClient#db()` method
-- `opts.lockCollectionName` {*String*} - [*Optional for MongoAdapter*] By default all JoSk instances use the same `__JobTasks__.lock` collection for locking
-- `opts.prefix` {*String*} - [Optional] use to create multiple named instances
+### `new JoSk(opts)`
+
+- `opts.adapter` {*RedisAdapter*|*MongoAdapter*} - [Required] Instance of `RedisAdapter` or `MongoAdapter` or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
-- `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks are completed during initialization. Useful for single-instance apps to clean up unfinished that occurred due to intermediate shutdown, reboot, or exception. Default: `false`
 - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to below `60000` (*one minute*)
 - `opts.minRevolvingDelay` {*Number*} - [Optional] Minimum revolving delay — the minimum delay between tasks executions in milliseconds. Default: `128`
 - `opts.maxRevolvingDelay` {*Number*} - [Optional] Maximum revolving delay — the maximum delay between tasks executions in milliseconds. Default: `768`
@@ -104,6 +101,23 @@ const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
   - `details.date` {*Date*} - Execution timestamp as JS {*Date*}
   - `details.delay` {*Number*} - Execution `delay` (e.g. `interval` for `.setInterval()`)
   - `details.timestamp` {*Number*} - Execution timestamp as unix {*Number*}
+
+### `new RedisAdapter(opts)`
+
+*Since* `v5.0.0`
+
+- `opts.client` {*RedisClient*} - [*Required*] `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
+- `opts.prefix` {*String*} - [Optional] use to create multiple named instances
+- `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks are completed during initialization. Useful for single-instance apps to clean up unfinished that occurred due to intermediate shutdown, reboot, or exception. Default: `false`
+
+### `new MongoAdapter(opts)`
+
+*Since* `v5.0.0`
+
+- `opts.db` {*Db*} - [*Required*] Mongo's `Db` instance, like one returned from `MongoClient#db()` method
+- `opts.prefix` {*String*} - [Optional] use to create multiple named instances
+- `opts.lockCollectionName` {*String*} - [Optional] By default all JoSk instances use the same `__JobTasks__.lock` collection for locking
+- `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks are completed during initialization. Useful for single-instance apps to clean up unfinished that occurred due to intermediate shutdown, reboot, or exception. Default: `false`
 
 ### Initialization
 
@@ -122,14 +136,16 @@ const redisClient = await createClient({
 }).connect();
 
 const jobs = new JoSk({
-  adapter: RedisAdapter,
-  client: redisClient,
+  adapter: new RedisAdapter({
+    client: redisClient,
+    prefix: 'app-scheduler',
+  })
 });
 ```
 
 #### MongoDB Adapter
 
-JoSk has no dependencies, hence make sure `mongodb` NPM package is installed in order to support MongoDB Storage Adapter. Note: this package will add two new MongoDB collections per each `new JoSk({ prefix })`. One collection for tasks and second for "Read Locking" with `.lock` suffix
+JoSk has no dependencies, hence make sure `mongodb` NPM package is installed in order to support MongoDB Storage Adapter. Note: this package will add two new MongoDB collections per each `new JoSk()`. One collection for tasks and second for "Read Locking" with `.lock` suffix
 
 ```js
 import { JoSk, MongoAdapter } from 'josk';
@@ -139,8 +155,10 @@ const client = new MongoClient('mongodb://127.0.0.1:27017');
 // To avoid "DB locks" — it's a good idea to use separate DB from the "main" DB
 const mongoDb = client.db('joskdb');
 const jobs = new JoSk({
-  adapter: MongoAdapter,
-  db: mongoDb,
+  adapter: new MongoAdapter({
+    db: mongoDb,
+    prefix: 'cluster-scheduler',
+  })
 });
 ```
 
@@ -185,7 +203,7 @@ jobs.setInterval(asyncAwaitTask, 30 * 60 * 1000, 'asyncAwaitTask30m'); // every 
 - `func` {*Function*} - Function to call on schedule
 - `delay` {*Number*} - Delay for the first run and interval between further executions in milliseconds
 - `uid` {*String*} - Unique app-wide task id
-- Returns: {*String*}
+- Returns: {*Promise<string>*}
 
 *Set task into interval execution loop.* `ready()` *callback is passed as the first argument into a task function.*
 
@@ -261,7 +279,7 @@ jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a l
 - `func` {*Function*} - Function to call after `delay`
 - `delay` {*Number*} - Delay in milliseconds
 - `uid` {*String*} - Unique app-wide task id
-- Returns: {*String*}
+- Returns: {*Promise<string>*}
 
 *Run a task after delay in ms.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *callback is passed as the first argument into a task function.*
 
@@ -298,7 +316,7 @@ jobs.setTimeout(asyncAwaitTask, 60 * 1000, 'asyncAwaitTaskIn1m'); // will run on
 
 - `func` {*Function*} - Function to execute
 - `uid`  {*String*}   - Unique app-wide task id
-- Returns: {*String*}
+- Returns: {*Promise<string>*}
 
 *Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the first argument into the task function.*
 
@@ -331,33 +349,35 @@ jobs.setImmediate(asyncTask, 'asyncTask'); // will run immediately and only once
 jobs.setImmediate(asyncAwaitTask, 'asyncTask'); // will run immediately and only once across the cluster
 ```
 
-### `clearInterval(timer [, callback])`
+### `clearInterval(timer)`
 
 - `timer` {*String*} — Timer id returned from `JoSk#setInterval()` method
-- `[callback]` {*Function*} — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
+- Returns: {Promise<boolean>} `true` when task is successfully cleared, or `false` when task was not found
 
-*Cancel current interval timer.* Must be called in a separate event loop from `setInterval`.
+*Cancel current interval timer.*
 
 ```js
-const timer = jobs.setInterval(func, 34789, 'unique-taskid');
-jobs.clearInterval(timer);
+const timer = await jobs.setInterval(func, 34789, 'unique-taskid');
+await jobs.clearInterval(timer);
 ```
 
-### `clearTimeout(timer [, callback])`
+### `clearTimeout(timer)`
 
 - `timer` {*String*} — Timer id returned from `JoSk#setTimeout()` method
-- `[callback]` {*Function*} — [Optional] callback function, called with `error` and `result` arguments. `result` is `true` when task is successfully cleared, or `false` when task is not found
+- Returns: {Promise<boolean>} `true` when task is successfully cleared, or `false` when task was not found
 
-*Cancel current timeout timer.* Must be called in a separate event loop from `setTimeout`.
+*Cancel current timeout timer.*
 
 ```js
-const timer = jobs.setTimeout(func, 34789, 'unique-taskid');
-jobs.clearTimeout(timer);
+const timer = await jobs.setTimeout(func, 34789, 'unique-taskid');
+await jobs.clearTimeout(timer);
 ```
 
 ### `destroy()`
 
-*Destroy JoSk instance*. This method shouldn't be called in normal circumstances. Stop internal interval timer. After JoSk is destroyed — calling public methods would end up logged to `std` or if `onError` hook was passed to JoSk it would receive an error. Only permitted methods are `clearTimeout` and `clearInterval`.
+- Returns: {*boolean*} `true` if instance successfully destroyed, `false` if instance already destroyed
+
+*Destroy JoSk instance*. This method shouldn't be called in normal circumstances. Stop internal interval timer. After JoSk is destroyed — calling public methods would end up logged to `stdout` or if `onError` hook was passed to JoSk it would receive an error. Only permitted methods are `clearTimeout` and `clearInterval`.
 
 ```js
 // EXAMPLE: DESTROY JoSk INSTANCE UPON SERVER PROCESS TERMINATION
@@ -376,6 +396,8 @@ process.on('SIGHUP', cleanUpBeforeTermination);
 ```
 
 ### `ping()`
+
+- Returns: {*Promise<object>*}
 
 *Ping JoSk instance*. Check scheduler readiness and its connection to the "storage adapter"
 
@@ -415,7 +437,12 @@ Use JoSk to invoke synchronized tasks by CRON schedule. Use [`cron-parser` packa
 import parser from 'cron-parser';
 
 const jobsCron = new JoSk({
-  prefix: 'cron'
+  adapter: new RedisAdapter({
+    client: await createClient({ url: 'redis://127.0.0.1:6379' }).connect(),
+    prefix: 'cron-scheduler'
+  }),
+  minRevolvingDelay: 512, // Adjust revolving delays
+  maxRevolvingDelay: 1000, // as CRON schedule defined to seconds
 });
 
 // CRON HELPER FUNCTION
@@ -423,11 +450,10 @@ const createCronTask = (uniqueName, cronTask, task) => {
   const next = +parser.parseExpression(cronTask).next().toDate();
   const timeout = next - Date.now();
 
-  return jobsCron.setTimeout(function (done) {
-    done(() => {
-      task(); // <- Execute task
-      createCronTask(uniqueName, cronTask, task); // <- Create task for the next iteration
-    });
+  return jobsCron.setTimeout(async function (done) {
+    await done();
+    task();
+    createCronTask(uniqueName, cronTask, task);
   }, timeout, uniqueName);
 };
 
@@ -509,8 +535,9 @@ MongoClient.connect('mongodb://url', options, (error, client) => {
   // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
   const db = client.db('dbName');
   const jobs = new JoSk({
-    adapter: MongoAdapter,
-    db: db,
+    adapter: new MongoAdapter({
+      db: db,
+    })
   });
 });
 ```
