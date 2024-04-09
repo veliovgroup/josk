@@ -1,6 +1,6 @@
-const mongoErrorHandler = (error) => {
+const logError = (error, ...args) => {
   if (error) {
-    console.error('[josk] [MongoAdapter] [mongoErrorHandler]:', error);
+    console.error('[josk] [MongoAdapter] [logError]:', error, ...args);
   }
 };
 
@@ -59,13 +59,14 @@ class MongoAdapter {
    * @param {object} opts - configuration object
    * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#db()` method
    * @param {string} [opts.lockCollectionName] - custom "lock" collection name
-   * @param {string} [opts.prefix] - prefix for scope isolation
+   * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
+   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    */
-  constructor(joskInstance, opts = {}) {
+  constructor(opts = {}) {
     this.name = 'mongo';
-    this.joskInstance = joskInstance;
     this.prefix = opts.prefix || '';
     this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
+    this.resetOnInit = opts.resetOnInit || false;
 
     if (!opts.db) {
       throw new Error('{db} option is required for MongoAdapter', {
@@ -84,14 +85,14 @@ class MongoAdapter {
     ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
     ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
 
-    if (this.joskInstance.resetOnInit) {
+    if (this.resetOnInit) {
       this.collection.deleteMany({
         isInterval: false
-      }).then(() => {}).catch(mongoErrorHandler);
+      }).then(() => {}).catch(logError);
 
       this.lockCollection.deleteMany({
         uniqueName: this.uniqueName
-      }).then(() => {}).catch(mongoErrorHandler);
+      }).then(() => {}).catch(logError);
     }
   }
 
@@ -103,6 +104,16 @@ class MongoAdapter {
    * @returns {Promise<object>}
    */
   async ping() {
+    if (!this.joskInstance) {
+      const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
+      return {
+        status: reason,
+        code: 503,
+        statusCode: 503,
+        error: new Error(reason),
+      };
+    }
+
     try {
       const ping = await this.db.command({ ping: 1 });
       if (ping?.ok === 1) {
@@ -129,96 +140,96 @@ class MongoAdapter {
     };
   }
 
-  acquireLock(cb) {
+  async acquireLock() {
     const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
 
-    this.lockCollection.findOne({
-      uniqueName: this.uniqueName
-    }, {
-      projection: {
-        uniqueName: 1
-      }
-    }).then((record) => {
+    try {
+      const record = await this.lockCollection.findOne({
+        uniqueName: this.uniqueName
+      }, {
+        projection: {
+          uniqueName: 1
+        }
+      });
+
       if (record?.uniqueName === this.uniqueName) {
-        cb(void 0, false);
-      } else {
-        this.lockCollection.insertOne({
-          uniqueName: this.uniqueName,
-          expireAt
-        }).then((result) => {
-          if (result.insertedId) {
-            cb(void 0, true);
-          } else {
-            cb(void 0, false);
-          }
-        }).catch((insertError) => {
-          if (insertError?.code === 11000) {
-            cb(void 0, false);
-          } else {
-            cb(insertError);
-          }
-        });
+        return false;
       }
-    }).catch((findError) => {
-      cb(findError);
-    });
+
+      const result = await this.lockCollection.insertOne({
+        uniqueName: this.uniqueName,
+        expireAt
+      });
+
+      if (result.insertedId) {
+        return true;
+      }
+      return false;
+    } catch(opError) {
+      if (opError?.code === 11000) {
+        return false;
+      }
+
+      this.joskInstance.__errorHandler(opError, '[acquireLock] [opError]', 'Exception inside MongoAdapter#acquireLock() method');
+      return false;
+    }
   }
 
-  releaseLock(cb) {
-    this.lockCollection.deleteOne({ uniqueName: this.uniqueName }).then(() => {
-      cb();
-    }).catch((deleteOneError) => {
-      cb(deleteOneError);
-    });
+  async releaseLock() {
+    await this.lockCollection.deleteOne({ uniqueName: this.uniqueName });
   }
 
-  clear(uid, cb) {
-    this.collection.findOneAndUpdate({
-      uid,
-      isDeleted: false
-    }, {
-      $set: {
-        isDeleted: true
-      }
-    }, {
-      returnNewDocument: false,
-      projection: {
-        _id: 1,
-        isDeleted: 1
-      }
-    }).then((result) => {
+  async remove(uid) {
+    try {
+      const result = await this.collection.findOneAndUpdate({
+        uid,
+        isDeleted: false
+      }, {
+        $set: {
+          isDeleted: true
+        }
+      }, {
+        returnNewDocument: false,
+        projection: {
+          _id: 1,
+          isDeleted: 1
+        }
+      });
+
       const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
       if (res?.isDeleted === false) {
-        this.collection.deleteOne({ _id: res._id }).then((deleteResult) => {
-          cb(void 0, deleteResult?.deletedCount >= 1);
-        }).catch((deleteError) => {
-          cb(deleteError, false);
-        });
-      } else {
-        cb(void 0, false);
+        const deleteResult = await this.collection.deleteOne({ _id: res._id });
+        return deleteResult?.deletedCount >= 1;
       }
-    }).catch((findAndUpdateError) => {
-      this.joskInstance.__errorHandler(findAndUpdateError, '[clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .clear()', uid);
-      cb(findAndUpdateError, false);
-    });
+
+      return false;
+    } catch(opError) {
+      this.joskInstance.__errorHandler(opError, '[remove] [opError]', 'Exception inside MongoAdapter#remove() method', uid);
+      return false;
+    }
   }
 
-  addTask(uid, isInterval, delay) {
-    this.collection.findOne({
-      uid: uid
-    }).then((task) => {
-      const next = Date.now() + delay;
+  async add(uid, isInterval, delay) {
+    const next = Date.now() + delay;
+
+    try {
+      const task = await this.collection.findOne({
+        uid: uid
+      });
+
       if (!task) {
-        this.collection.insertOne({
+        await this.collection.insertOne({
           uid: uid,
           delay: delay,
           executeAt: new Date(next),
           isInterval: isInterval,
           isDeleted: false
-        }).then(() => {}).catch((insertError) => {
-          this.joskInstance.__errorHandler(insertError, '[addTask] [insertOne] [insertError]', 'Error in a callback of .insertOne() method of .addTask()', uid);
         });
-      } else if (task.isDeleted === false) {
+
+        return true;
+      }
+
+      if (task.isDeleted === false) {
         let update = null;
         if (task.delay !== delay) {
           update = { delay };
@@ -232,38 +243,50 @@ class MongoAdapter {
         }
 
         if (update) {
-          this.collection.updateOne({
+          await this.collection.updateOne({
             uid: uid
           }, {
             $set: update
-          }).then(() => {}).catch((updateError) => {
-            this.joskInstance.__errorHandler(updateError, '[addTask] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .addTask()', uid);
           });
         }
+
+        return true;
       }
-    }).catch((findError) => {
-      this.joskInstance.__errorHandler(findError, '[addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .addTask()', uid);
-    });
+
+      return false;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[add] [opError]', 'Exception inside MongoAdapter#add()', uid);
+      return false;
+    }
   }
 
-  getDoneCallback(task) {
-    return (nextExecuteAt, readyCallback) => {
-      this.collection.updateOne({
+  async update(task, nextExecuteAt) {
+    if (typeof task !== 'object' || typeof task.uid !== 'string') {
+      this.joskInstance.__errorHandler({ task }, '[MongoAdapter] [update] [task]', 'Task malformed or undefined');
+      return false;
+    }
+
+    if (!nextExecuteAt instanceof Date) {
+      this.joskInstance.__errorHandler({ nextExecuteAt }, '[MongoAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
+      return false;
+    }
+
+    try {
+      const updateResult = await this.collection.updateOne({
         uid: task.uid
       }, {
         $set: {
           executeAt: nextExecuteAt
         }
-      }).then((updateResult) => {
-        typeof readyCallback === 'function' && readyCallback(void 0, updateResult?.modifiedCount >= 1);
-      }).catch((updateError) => {
-        typeof readyCallback === 'function' && readyCallback(updateError);
-        this.joskInstance.__errorHandler(updateError, '[getDoneCallback] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .getDoneCallback()', task.uid);
       });
-    };
+      return updateResult?.modifiedCount >= 1;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [update] [opError]', 'Exception inside RedisAdapter#update() method', task.uid);
+      return false;
+    }
   }
 
-  runTasks(nextExecuteAt, callback) {
+  async iterate(nextExecuteAt) {
     const _ids = [];
     const tasks = [];
 
@@ -281,35 +304,31 @@ class MongoAdapter {
       }
     });
 
-    cursor.forEach((task) => {
-      _ids.push(task._id);
-      tasks.push(task);
-    }).then(() => {
-      if (_ids.length) {
-        this.collection.updateMany({
-          _id: {
-            $in: _ids
-          }
-        }, {
-          $set: {
-            executeAt: nextExecuteAt
-          }
-        }).then(() => {
-          for (const task of tasks) {
-            this.joskInstance.__execute(task);
-          }
-          callback();
-        }).catch((updateError) => {
-          callback(updateError);
-        });
-      } else {
-        callback();
+    try {
+      let task;
+      while (await cursor.hasNext()) {
+        task = await cursor.next();
+        _ids.push(task._id);
+        tasks.push(task);
       }
-    }).catch((forEachError) => {
-      callback(forEachError);
-    }).finally(() => {
-      cursor.close();
-    });
+      await this.collection.updateMany({
+        _id: {
+          $in: _ids
+        }
+      }, {
+        $set: {
+          executeAt: nextExecuteAt
+        }
+      });
+    } catch (mongoError) {
+      logError('[iterate] mongoError:', mongoError);
+    }
+
+    for (const task of tasks) {
+      this.joskInstance.__execute(task);
+    }
+
+    await cursor.close();
   }
 }
 
