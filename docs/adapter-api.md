@@ -10,30 +10,29 @@ Start with copy of Adapter's boilerplate [`blank-adapter.js`](https://github.com
 
 List of required methods and its arguments
 
-- `new Adapter(joskInstance, opts)` constructor
-  - `{JoSk} joskInstance`
+- `new Adapter(opts)` constructor
   - `{object} opts`
-- async `Adapter#ping - {object}`
-- `Adapter#acquireLock(cb) - {void 0}`
-  - `{function} cb`
-- `Adapter#releaseLock(cb) - {void 0}`
-  - `{function} cb`
-- `Adapter#clear(uid, cb) - {void 0}`
+  - `{string} [opts.prefix]` — optional prefix for scope isolation; use when creating multiple JoSK instances within the single application
+  - `{boolean} [opts.resetOnInit]` - optional flag to clear/drop storage records from the previous runs on initialization
+  - `{mix} [opts.other]` - other options required for specific storage type
+- async `Adapter#ping - {Promise<object>}`
+- async `Adapter#acquireLock() - {Promise<boolean>}`
+- async `Adapter#releaseLock() - {Promise<void 0>}`
+- async `Adapter#remove(uid) - {Promise<boolean>}`
   - `{string} uid` - Unique ID of the task
-  - `{function} cb`
-- `Adapter#addTask(uid, isInterval, delay) - {void 0}`
+- async `Adapter#add(uid, isInterval, delay) - {Promise<void 0>}`
   - `{string} uid` - Unique ID of the task
   - `{boolean} isInterval` - true/false defining loop or one-time task
   - `{number} delay` - Delay in milliseconds
-- `Adapter#getDoneCallback(task) - {function}`
+- async `Adapter#update(task, nextExecuteAt) - {Promise<boolean>}`
   - `{object} task` - Task's object (*see its structure below*)
-- `Adapter#runTasks(nextExecuteAt, cb) - {void 0}`
+  - `{Date} nextExecuteAt` - Date defining time of the next execution for "interval" tasks
+- async `Adapter#iterate(nextExecuteAt) - {Promise<void 0>}`
   - `{Date} nextExecuteAt` - Date defining time of the next execution for "zombie" tasks
-  - `{function} cb`
 
 ### Task object
 
-In order to execute the task, "adapter" must call `this.joskInstance.__execute(task)` method inside `Adapter#runTasks` method, passed task's object is expected to have the next structure:
+In order to execute the task, "adapter" must call `this.joskInstance.__execute(task)` method inside `Adapter#iterate` method, passed task's object is expected to have the next structure:
 
 ```js
 ({
