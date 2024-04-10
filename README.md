@@ -139,7 +139,12 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'app-scheduler',
-  })
+  }),
+  onError(reason, details) {
+    // Use onError hook to catch runtime exceptions
+    // thrown inside scheduled tasks
+    console.log(reason, details.error);
+  }
 });
 ```
 
@@ -158,7 +163,12 @@ const jobs = new JoSk({
   adapter: new MongoAdapter({
     db: mongoDb,
     prefix: 'cluster-scheduler',
-  })
+  }),
+  onError(reason, details) {
+    // Use onError hook to catch runtime exceptions
+    // thrown inside scheduled tasks
+    console.log(reason, details.error);
+  }
 });
 ```
 
@@ -182,20 +192,28 @@ const asyncTask = function (ready) {
   });
 };
 
-const asyncAwaitTask = async function (ready) {
+/**
+ * no need to call ready() inside async function
+ */
+const asyncAwaitTask = async function () {
   try {
-    /* ...code here... */
     await asyncMethod();
-    /* ...more code here...*/
-    ready();
   } catch (err) {
-    ready(); // <-- Always run `ready()`, even if error is thrown
+    console.log(err)
   }
 };
 
-jobs.setInterval(task, 60 * 60 * 1000, 'task1h'); // every hour
-jobs.setInterval(asyncTask, 15 * 60 * 1000, 'asyncTask15m'); // every 15 mins
-jobs.setInterval(asyncAwaitTask, 30 * 60 * 1000, 'asyncAwaitTask30m'); // every 30 mins
+/**
+ * no need to call ready() when call returns Promise
+ */
+const promiseTask = function () {
+  return asyncMethod(); // <-- returns Promise
+};
+
+jobs.setInterval(task, 60 * 60000, 'task1h'); // every hour
+jobs.setInterval(asyncTask, 15 * 60000, 'asyncTask15m'); // every 15 mins
+jobs.setInterval(asyncAwaitTask, 30 * 60000, 'asyncAwaitTask30m'); // every 30 mins
+jobs.setInterval(asyncAwaitTask, 2 * 60 * 60000, 'asyncAwaitTask2h'); // every two hours 
 ```
 
 ### `setInterval(func, delay, uid)`
@@ -446,15 +464,13 @@ const jobsCron = new JoSk({
 });
 
 // CRON HELPER FUNCTION
-const createCronTask = (uniqueName, cronTask, task) => {
-  const next = +parser.parseExpression(cronTask).next().toDate();
-  const timeout = next - Date.now();
+const createCronTask = async (uniqueName, cronTask, task) => {
+  const nextTimestamp = +parser.parseExpression(cronTask).next().toDate();
 
-  return jobsCron.setTimeout(async function (done) {
-    await done();
+  return await jobsCron.setInterval(async function (done) {
+    await done(parser.parseExpression(cronTask).next().toDate());
     task();
-    createCronTask(uniqueName, cronTask, task);
-  }, timeout, uniqueName);
+  }, nextTimestamp - Date.now(), uniqueName);
 };
 
 createCronTask('This task runs every 2 seconds', '*/2 * * * * *', function () {
