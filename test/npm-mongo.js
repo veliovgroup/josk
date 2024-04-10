@@ -229,9 +229,9 @@ describe('Mongo - JoSk', function () {
     const timers = {};
     const runs = {};
     const createCronTask = async (uniqueName, cronTask, task, josk = jobCron) => {
-      timers[uniqueName] = await josk.setInterval(function (done) {
+      timers[uniqueName] = await josk.setInterval(function (ready) {
         if (task()) {
-          done(parser.parseExpression(cronTask).next().toDate());
+          ready(parser.parseExpression(cronTask).next().toDate());
         } else {
           josk.clearInterval(timers[uniqueName]);
         }
