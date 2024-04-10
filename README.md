@@ -5,13 +5,13 @@
 
 # JoSk
 
-"JoSk" is a Node.js task manager for horizontally scaled apps, apps planning for horizontal scaling, and apps that would need to scale horizontally in the future with ease.
+"JoSk" is a Node.js task manager for horizontally scaled apps and apps that would need to scale horizontally quickly at some point of growth.
 
-"JoSk" mimics the native API of `setTimeout` and `setInterval`. Tasks also can get scheduled using [CRON expressions](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron). All queued tasks are synced between all running application instances via Redis, MongoDB, or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md).
+"JoSk" mimics the native API of `setTimeout` and `setInterval` and supports [CRON expressions](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron). All queued tasks are synced between all running application instances via Redis, MongoDB, or a [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md).
 
-"JoSk" package made for different variety of horizontally scaled apps as clusters, multi-server, and multi-threaded Node.js instances. That are running either on the same or different machines or even different data-centers. "JoSk" ensures that the only single execution of each *task* occurs across all running instances of the application.
+The "JoSk" package is made for a variety of horizontally scaled apps, such as clusters, multi-servers, and multi-threaded Node.js instances, that are running either on the same or different machines or even different data centers. "JoSk ensures that the only single execution of each task occurs across all running instances of the application.
 
-Although "JoSk" is made with multi-instance apps in mind, — it works on a single-instance applications seamlessly.
+"JoSk" is not just for multi-instance apps. It seamlessly integrates with single-instance applications as well, showcasing its versatility and adaptability.
 
 __Note: JoSk is the server-only package.__
 
@@ -179,41 +179,48 @@ After JoSk initialized simply call `JoSk#setInterval` to create recurring task
 ```js
 const jobs = new JoSk({ /*...*/ });
 
-const task = function (ready) {
+jobs.setInterval((ready) => {
   /* ...code here... */
   ready();
-};
+}, 60 * 60000, 'task1h'); // every hour
 
-const asyncTask = function (ready) {
+jobs.setInterval((ready) => {
   /* ...code here... */
   asyncCall(() => {
     /* ...more code here...*/
     ready();
   });
-};
+}, 15 * 60000, 'asyncTask15m'); // every 15 mins
 
 /**
  * no need to call ready() inside async function
  */
-const asyncAwaitTask = async function () {
+jobs.setInterval(async () => {
   try {
     await asyncMethod();
   } catch (err) {
     console.log(err)
   }
-};
+}, 30 * 60000, 'asyncAwaitTask30m'); // every 30 mins
 
 /**
  * no need to call ready() when call returns Promise
  */
-const promiseTask = function () {
+jobs.setInterval(() => {
   return asyncMethod(); // <-- returns Promise
+}, 2 * 60 * 60000, 'asyncAwaitTask2h'); // every two hours
+```
+
+Note: This library relies on job ID. Always use different `uid`, even for the same task:
+
+```js
+const task = function (ready) {
+  //... code here
+  ready();
 };
 
-jobs.setInterval(task, 60 * 60000, 'task1h'); // every hour
-jobs.setInterval(asyncTask, 15 * 60000, 'asyncTask15m'); // every 15 mins
-jobs.setInterval(asyncAwaitTask, 30 * 60000, 'asyncAwaitTask30m'); // every 30 mins
-jobs.setInterval(asyncAwaitTask, 2 * 60 * 60000, 'asyncAwaitTask2h'); // every two hours 
+jobs.setInterval(task, 60000, 'task-1m'); // every minute
+jobs.setInterval(task, 2 * 60000, 'task-2m'); // every two minutes
 ```
 
 ### `setInterval(func, delay, uid)`
@@ -228,46 +235,40 @@ jobs.setInterval(asyncAwaitTask, 2 * 60 * 60000, 'asyncAwaitTask2h'); // every t
 In the example below, the next task __will not be scheduled__ until the current is ready:
 
 ```js
-const syncTask = function (ready) {
+jobs.setInterval(function (ready) {
   /* ...run sync code... */
   ready();
-};
+}, 60 * 60000, 'syncTask1h'); // will execute every hour + time to execute the task
 
-const asyncAwaitTask = async function () {
+jobs.setInterval(async function () {
   try {
     await asyncMethod();
   } catch (err) {
     console.log(err)
   }
-};
-
-jobs.setInterval(syncTask, 60 * 60 * 1000, 'syncTask1h'); // will execute every hour + time to execute the task
-jobs.setInterval(asyncAwaitTask, 60 * 60 * 1000, 'asyncAwaitTask1h'); // will execute every hour + time to execute the task
+}, 60 * 60000, 'asyncAwaitTask1h'); // will execute every hour + time to execute the task
 ```
 
 In the example below, the next task __will not wait__ for the current task to finish:
 
 ```js
-const syncTask = function (ready) {
+jobs.setInterval(function (ready) {
   ready();
   /* ...run sync code... */
-};
+}, 60 * 60000, 'syncTask1h'); // will execute every hour
 
-const asyncAwaitTask = async function () {
+jobs.setInterval(async function () {
   /* ...task re-scheduled instantly here... */
   process.nextTick(async () => {
     await asyncMethod();
   });
-};
-
-jobs.setInterval(syncTask, 60 * 60 * 1000, 'syncTask1h'); // will execute every hour
-jobs.setInterval(asyncAwaitTask, 60 * 60 * 1000, 'asyncAwaitTask1h'); // will execute every hour
+}, 60 * 60000, 'asyncAwaitTask1h'); // will execute every hour
 ```
 
 In the next example, a long running task is executed in a loop without delay after the full execution:
 
 ```js
-const longRunningAsyncTask = function (ready) {
+jobs.setInterval(function (ready) {
   asyncCall((error, result) => {
     if (error) {
       ready(); // <-- Always run `ready()`, even if call was unsuccessful
@@ -284,15 +285,13 @@ const longRunningAsyncTask = function (ready) {
       });
     }
   });
-};
-
-jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
+}, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
 ```
 
 Same task combining `await`/`async` and callbacks
 
 ```js
-const longRunningAsyncTask = function (ready) {
+jobs.setInterval(function (ready) {
   process.nextTick(async () => {
     try {
       const result = await asyncCall();
@@ -306,9 +305,7 @@ const longRunningAsyncTask = function (ready) {
       ready(); // <-- Always run `ready()`, even if call was unsuccessful
     }
   });
-};
-
-jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
+}, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
 ```
 
 ### `setTimeout(func, delay, uid)`
@@ -321,19 +318,19 @@ jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a l
 *Run a task after delay in ms.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *callback is passed as the first argument into a task function.*
 
 ```js
-const syncTask = function (ready) {
+jobs.setTimeout(function (ready) {
   /* ...run sync code... */
   ready();
-};
+}, 60000, 'syncTaskIn1m'); // will run only once across the cluster in a minute
 
-const asyncTask = function (ready) {
+jobs.setTimeout(function (ready) {
   asyncCall(function () {
     /* ...run async code... */
     ready();
   });
-};
+}, 60000, 'asyncTaskIn1m'); // will run only once across the cluster in a minute
 
-const asyncAwaitTask = async function () {
+jobs.setTimeout(async function () {
   try {
     /* ...code here... */
     await asyncMethod();
@@ -341,11 +338,7 @@ const asyncAwaitTask = async function () {
   } catch (err) {
     console.log(err)
   }
-};
-
-jobs.setTimeout(syncTask, 60 * 1000, 'syncTaskIn1m'); // will run only once across the cluster in a minute
-jobs.setTimeout(asyncTask, 60 * 1000, 'asyncTaskIn1m'); // will run only once across the cluster in a minute
-jobs.setTimeout(asyncAwaitTask, 60 * 1000, 'asyncAwaitTaskIn1m'); // will run only once across the cluster in a minute
+}, 60000, 'asyncAwaitTaskIn1m'); // will run only once across the cluster in a minute
 ```
 
 ### `setImmediate(func, uid)`
@@ -357,35 +350,31 @@ jobs.setTimeout(asyncAwaitTask, 60 * 1000, 'asyncAwaitTaskIn1m'); // will run on
 *Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the first argument into the task function.*
 
 ```js
-const syncTask = function (ready) {
+jobs.setImmediate(function (ready) {
   //...run sync code
   ready();
-};
+}, 'syncTask'); // will run immediately and only once across the cluster
 
-const asyncTask = function (ready) {
+jobs.setImmediate(function (ready) {
   asyncCall(function () {
     //...run more async code
     ready();
   });
-};
+}, 'asyncTask'); // will run immediately and only once across the cluster
 
-const asyncAwaitTask = async function () {
+jobs.setImmediate(async function () {
   try {
     /* ...code here... */
     await asyncMethod();
   } catch (err) {
     console.log(err)
   }
-};
-
-jobs.setImmediate(syncTask, 'syncTask'); // will run immediately and only once across the cluster
-jobs.setImmediate(asyncTask, 'asyncTask'); // will run immediately and only once across the cluster
-jobs.setImmediate(asyncAwaitTask, 'asyncTask'); // will run immediately and only once across the cluster
+}, 'asyncTask'); // will run immediately and only once across the cluster
 ```
 
-### `clearInterval(timer)`
+### `clearInterval(timerId)`
 
-- `timer` {*String*} — Timer id returned from `JoSk#setInterval()` method
+- `timerId` {*String*|*Promise<string>*} — Timer id returned from `JoSk#setInterval()` method
 - Returns: {Promise<boolean>} `true` when task is successfully cleared, or `false` when task was not found
 
 *Cancel current interval timer.*
@@ -395,9 +384,9 @@ const timer = await jobs.setInterval(func, 34789, 'unique-taskid');
 await jobs.clearInterval(timer);
 ```
 
-### `clearTimeout(timer)`
+### `clearTimeout(timerId)`
 
-- `timer` {*String*} — Timer id returned from `JoSk#setTimeout()` method
+- `timerId` {*String*|*Promise<string>*} — Timer id returned from `JoSk#setTimeout()` method
 - Returns: {Promise<boolean>} `true` when task is successfully cleared, or `false` when task was not found
 
 *Cancel current timeout timer.*
@@ -465,7 +454,7 @@ Use cases and usage examples
 
 ### CRON
 
-Use JoSk to invoke synchronized tasks by CRON schedule. Use [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON schedule into timestamp. To simplify CRON scheduling grab and use `setCRON` function below:
+Use JoSk to invoke synchronized tasks by CRON schedule, and [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON expressions. To simplify CRON scheduling — grab and use `setCron` function below:
 
 ```js
 import parser from 'cron-parser';
@@ -480,7 +469,7 @@ const jobsCron = new JoSk({
 });
 
 // CRON HELPER FUNCTION
-const setCRON = async (uniqueName, cronTask, task) => {
+const setCron = async (uniqueName, cronTask, task) => {
   const nextTimestamp = +parser.parseExpression(cronTask).next().toDate();
 
   return await jobsCron.setInterval(function (done) {
@@ -489,7 +478,7 @@ const setCRON = async (uniqueName, cronTask, task) => {
   }, nextTimestamp - Date.now(), uniqueName);
 };
 
-setCRON('This task runs every 2 seconds', '*/2 * * * * *', function () {
+setCron('Run every two seconds cron', '*/2 * * * * *', function () {
   console.log(new Date);
 });
 ```
@@ -508,16 +497,13 @@ const task = function (arg1, arg2, ready) {
   ready();
 };
 
-const taskA = function (ready) {
+jobs.setInterval((ready) => {
   task(myVar, myLet, ready);
-};
+}, 60 * 60000, 'taskA');
 
-const taskB = function (ready) {
+jobs.setInterval((ready) => {
   task({ otherKey: 'Another Value' }, 'Some other string', ready);
-};
-
-jobs.setInterval(taskA, 60 * 60 * 1000, 'taskA');
-jobs.setInterval(taskB, 60 * 60 * 1000, 'taskB');
+}, 60 * 60000, 'taskB');
 ```
 
 ### Async/Await with ready() callback
@@ -525,7 +511,7 @@ jobs.setInterval(taskB, 60 * 60 * 1000, 'taskB');
 For long-running async tasks, or with callback-apis it might be needed to call `ready()` explicitly. Wrap task's body into `process.nextTick` to enjoy `await`/`async` combined with classic callback-apis
 
 ```js
-const longRunningTask = function (ready) {
+jobs.setInterval((ready) => {
   process.nextTick(async () => {
     try {
       const result = await asyncCall();
@@ -543,9 +529,7 @@ const longRunningTask = function (ready) {
       ready(); // <-- Always run `ready()`, even if call was unsuccessful
     }
   });
-};
-
-jobs.setInterval(longRunningTask, 60 * 60000, 'longRunningTask1h'); // once every hour
+}, 60 * 60000, 'longRunningTask1h'); // once every hour
 ```
 
 ### Clean up old tasks
