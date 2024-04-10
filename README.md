@@ -625,6 +625,9 @@ npm install --save-dev
 # to have access to MongoDB and Redis servers
 REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm test
 
+# If previous run has errors — add "debug" to output extra logs
+DEBUG=true REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm test
+
 # Be patient, tests are taking around 6 mins
 ```
 
