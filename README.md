@@ -233,14 +233,11 @@ const syncTask = function (ready) {
   ready();
 };
 
-const asyncAwaitTask = async function (ready) {
+const asyncAwaitTask = async function () {
   try {
-    /* ...code here... */
     await asyncMethod();
-    /* ...more code here...*/
-    ready();
   } catch (err) {
-    ready(); // <-- Always run `ready()`, even if error is thrown
+    console.log(err)
   }
 };
 
@@ -256,11 +253,11 @@ const syncTask = function (ready) {
   /* ...run sync code... */
 };
 
-const asyncAwaitTask = async function (ready) {
-  ready();
-  /* ...code here... */
-  await asyncMethod();
-  /* ...more code here...*/
+const asyncAwaitTask = async function () {
+  /* ...task re-scheduled instantly here... */
+  process.nextTick(async () => {
+    await asyncMethod();
+  });
 };
 
 jobs.setInterval(syncTask, 60 * 60 * 1000, 'syncTask1h'); // will execute every hour
@@ -292,6 +289,28 @@ const longRunningAsyncTask = function (ready) {
 jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
 ```
 
+Same task combining `await`/`async` and callbacks
+
+```js
+const longRunningAsyncTask = function (ready) {
+  process.nextTick(async () => {
+    try {
+      const result = await asyncCall();
+      const response = await anotherCall(result.data, ['param']);
+
+      waitForSomethingElse(response, () => {
+        ready(); // <-- End of the full execution
+      });
+    } catch (err) {
+      console.log(err)
+      ready(); // <-- Always run `ready()`, even if call was unsuccessful
+    }
+  });
+};
+
+jobs.setInterval(longRunningAsyncTask, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
+```
+
 ### `setTimeout(func, delay, uid)`
 
 - `func` {*Function*} - Function to call after `delay`
@@ -314,14 +333,13 @@ const asyncTask = function (ready) {
   });
 };
 
-const asyncAwaitTask = async function (ready) {
+const asyncAwaitTask = async function () {
   try {
     /* ...code here... */
     await asyncMethod();
     /* ...more code here...*/
-    ready();
   } catch (err) {
-    ready(); // <-- Always run `ready()`, even if error is thrown
+    console.log(err)
   }
 };
 
@@ -351,14 +369,12 @@ const asyncTask = function (ready) {
   });
 };
 
-const asyncAwaitTask = async function (ready) {
+const asyncAwaitTask = async function () {
   try {
     /* ...code here... */
     await asyncMethod();
-    /* ...more code here...*/
-    ready();
   } catch (err) {
-    ready(); // <-- Always run `ready()`, even if error is thrown
+    console.log(err)
   }
 };
 
@@ -449,7 +465,7 @@ Use cases and usage examples
 
 ### CRON
 
-Use JoSk to invoke synchronized tasks by CRON schedule. Use [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON schedule into timestamp. To simplify CRON scheduling grab and use `createCronTask` function below:
+Use JoSk to invoke synchronized tasks by CRON schedule. Use [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON schedule into timestamp. To simplify CRON scheduling grab and use `setCRON` function below:
 
 ```js
 import parser from 'cron-parser';
@@ -459,21 +475,21 @@ const jobsCron = new JoSk({
     client: await createClient({ url: 'redis://127.0.0.1:6379' }).connect(),
     prefix: 'cron-scheduler'
   }),
-  minRevolvingDelay: 512, // Adjust revolving delays
+  minRevolvingDelay: 512, // Adjust revolving delays to higher values
   maxRevolvingDelay: 1000, // as CRON schedule defined to seconds
 });
 
 // CRON HELPER FUNCTION
-const createCronTask = async (uniqueName, cronTask, task) => {
+const setCRON = async (uniqueName, cronTask, task) => {
   const nextTimestamp = +parser.parseExpression(cronTask).next().toDate();
 
-  return await jobsCron.setInterval(async function (done) {
-    await done(parser.parseExpression(cronTask).next().toDate());
+  return await jobsCron.setInterval(function (done) {
+    done(parser.parseExpression(cronTask).next().toDate());
     task();
   }, nextTimestamp - Date.now(), uniqueName);
 };
 
-createCronTask('This task runs every 2 seconds', '*/2 * * * * *', function () {
+setCRON('This task runs every 2 seconds', '*/2 * * * * *', function () {
   console.log(new Date);
 });
 ```
@@ -502,6 +518,34 @@ const taskB = function (ready) {
 
 jobs.setInterval(taskA, 60 * 60 * 1000, 'taskA');
 jobs.setInterval(taskB, 60 * 60 * 1000, 'taskB');
+```
+
+### Async/Await with ready() callback
+
+For long-running async tasks, or with callback-apis it might be needed to call `ready()` explicitly. Wrap task's body into `process.nextTick` to enjoy `await`/`async` combined with classic callback-apis
+
+```js
+const longRunningTask = function (ready) {
+  process.nextTick(async () => {
+    try {
+      const result = await asyncCall();
+      waitForSomethingElse(async (error, data) => {
+        if (error) {
+          ready(); // <-- Always run `ready()`, even if call was unsuccessful
+          return;
+        }
+
+        await saveCollectedData(result, [data]);
+        ready(); // <-- End of the full execution
+      });
+    } catch (err) {
+      console.log(err)
+      ready(); // <-- Always run `ready()`, even if call was unsuccessful
+    }
+  });
+};
+
+jobs.setInterval(longRunningTask, 60 * 60000, 'longRunningTask1h'); // once every hour
 ```
 
 ### Clean up old tasks
