@@ -1,8 +1,8 @@
 'use strict';
 
-const mongoErrorHandler = (error) => {
+const logError = (error, ...args) => {
   if (error) {
-    console.error('[josk] [MongoAdapter] [mongoErrorHandler]:', error);
+    console.error('[josk] [MongoAdapter] [logError]:', error, ...args);
   }
 };
 
@@ -61,13 +61,14 @@ class MongoAdapter {
    * @param {object} opts - configuration object
    * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#db()` method
    * @param {string} [opts.lockCollectionName] - custom "lock" collection name
-   * @param {string} [opts.prefix] - prefix for scope isolation
+   * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
+   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    */
-  constructor(joskInstance, opts = {}) {
+  constructor(opts = {}) {
     this.name = 'mongo';
-    this.joskInstance = joskInstance;
     this.prefix = opts.prefix || '';
     this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
+    this.resetOnInit = opts.resetOnInit || false;
 
     if (!opts.db) {
       throw new Error('{db} option is required for MongoAdapter', {
@@ -86,14 +87,14 @@ class MongoAdapter {
     ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
     ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
 
-    if (this.joskInstance.resetOnInit) {
+    if (this.resetOnInit) {
       this.collection.deleteMany({
         isInterval: false
-      }).then(() => {}).catch(mongoErrorHandler);
+      }).then(() => {}).catch(logError);
 
       this.lockCollection.deleteMany({
         uniqueName: this.uniqueName
-      }).then(() => {}).catch(mongoErrorHandler);
+      }).then(() => {}).catch(logError);
     }
   }
 
@@ -105,6 +106,16 @@ class MongoAdapter {
    * @returns {Promise<object>}
    */
   async ping() {
+    if (!this.joskInstance) {
+      const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
+      return {
+        status: reason,
+        code: 503,
+        statusCode: 503,
+        error: new Error(reason),
+      };
+    }
+
     try {
       const ping = await this.db.command({ ping: 1 });
       if (ping?.ok === 1) {
@@ -131,96 +142,96 @@ class MongoAdapter {
     };
   }
 
-  acquireLock(cb) {
+  async acquireLock() {
     const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
 
-    this.lockCollection.findOne({
-      uniqueName: this.uniqueName
-    }, {
-      projection: {
-        uniqueName: 1
-      }
-    }).then((record) => {
+    try {
+      const record = await this.lockCollection.findOne({
+        uniqueName: this.uniqueName
+      }, {
+        projection: {
+          uniqueName: 1
+        }
+      });
+
       if (record?.uniqueName === this.uniqueName) {
-        cb(void 0, false);
-      } else {
-        this.lockCollection.insertOne({
-          uniqueName: this.uniqueName,
-          expireAt
-        }).then((result) => {
-          if (result.insertedId) {
-            cb(void 0, true);
-          } else {
-            cb(void 0, false);
-          }
-        }).catch((insertError) => {
-          if (insertError?.code === 11000) {
-            cb(void 0, false);
-          } else {
-            cb(insertError);
-          }
-        });
+        return false;
       }
-    }).catch((findError) => {
-      cb(findError);
-    });
+
+      const result = await this.lockCollection.insertOne({
+        uniqueName: this.uniqueName,
+        expireAt
+      });
+
+      if (result.insertedId) {
+        return true;
+      }
+      return false;
+    } catch(opError) {
+      if (opError?.code === 11000) {
+        return false;
+      }
+
+      this.joskInstance.__errorHandler(opError, '[acquireLock] [opError]', 'Exception inside MongoAdapter#acquireLock() method');
+      return false;
+    }
   }
 
-  releaseLock(cb) {
-    this.lockCollection.deleteOne({ uniqueName: this.uniqueName }).then(() => {
-      cb();
-    }).catch((deleteOneError) => {
-      cb(deleteOneError);
-    });
+  async releaseLock() {
+    await this.lockCollection.deleteOne({ uniqueName: this.uniqueName });
   }
 
-  clear(uid, cb) {
-    this.collection.findOneAndUpdate({
-      uid,
-      isDeleted: false
-    }, {
-      $set: {
-        isDeleted: true
-      }
-    }, {
-      returnNewDocument: false,
-      projection: {
-        _id: 1,
-        isDeleted: 1
-      }
-    }).then((result) => {
+  async remove(uid) {
+    try {
+      const result = await this.collection.findOneAndUpdate({
+        uid,
+        isDeleted: false
+      }, {
+        $set: {
+          isDeleted: true
+        }
+      }, {
+        returnNewDocument: false,
+        projection: {
+          _id: 1,
+          isDeleted: 1
+        }
+      });
+
       const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
       if (res?.isDeleted === false) {
-        this.collection.deleteOne({ _id: res._id }).then((deleteResult) => {
-          cb(void 0, deleteResult?.deletedCount >= 1);
-        }).catch((deleteError) => {
-          cb(deleteError, false);
-        });
-      } else {
-        cb(void 0, false);
+        const deleteResult = await this.collection.deleteOne({ _id: res._id });
+        return deleteResult?.deletedCount >= 1;
       }
-    }).catch((findAndUpdateError) => {
-      this.joskInstance.__errorHandler(findAndUpdateError, '[clear] [findAndUpdate] [findAndUpdateError]', 'Error in a callback of .findAndUpdate() method of .clear()', uid);
-      cb(findAndUpdateError, false);
-    });
+
+      return false;
+    } catch(opError) {
+      this.joskInstance.__errorHandler(opError, '[remove] [opError]', 'Exception inside MongoAdapter#remove() method', uid);
+      return false;
+    }
   }
 
-  addTask(uid, isInterval, delay) {
-    this.collection.findOne({
-      uid: uid
-    }).then((task) => {
-      const next = Date.now() + delay;
+  async add(uid, isInterval, delay) {
+    const next = Date.now() + delay;
+
+    try {
+      const task = await this.collection.findOne({
+        uid: uid
+      });
+
       if (!task) {
-        this.collection.insertOne({
+        await this.collection.insertOne({
           uid: uid,
           delay: delay,
           executeAt: new Date(next),
           isInterval: isInterval,
           isDeleted: false
-        }).then(() => {}).catch((insertError) => {
-          this.joskInstance.__errorHandler(insertError, '[addTask] [insertOne] [insertError]', 'Error in a callback of .insertOne() method of .addTask()', uid);
         });
-      } else if (task.isDeleted === false) {
+
+        return true;
+      }
+
+      if (task.isDeleted === false) {
         let update = null;
         if (task.delay !== delay) {
           update = { delay };
@@ -234,38 +245,50 @@ class MongoAdapter {
         }
 
         if (update) {
-          this.collection.updateOne({
+          await this.collection.updateOne({
             uid: uid
           }, {
             $set: update
-          }).then(() => {}).catch((updateError) => {
-            this.joskInstance.__errorHandler(updateError, '[addTask] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .addTask()', uid);
           });
         }
+
+        return true;
       }
-    }).catch((findError) => {
-      this.joskInstance.__errorHandler(findError, '[addTask] [findOne] [findError]', 'Error in a callback of .findOne() method of .addTask()', uid);
-    });
+
+      return false;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[add] [opError]', 'Exception inside MongoAdapter#add()', uid);
+      return false;
+    }
   }
 
-  getDoneCallback(task) {
-    return (nextExecuteAt, readyCallback) => {
-      this.collection.updateOne({
+  async update(task, nextExecuteAt) {
+    if (typeof task !== 'object' || typeof task.uid !== 'string') {
+      this.joskInstance.__errorHandler({ task }, '[MongoAdapter] [update] [task]', 'Task malformed or undefined');
+      return false;
+    }
+
+    if (!nextExecuteAt instanceof Date) {
+      this.joskInstance.__errorHandler({ nextExecuteAt }, '[MongoAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
+      return false;
+    }
+
+    try {
+      const updateResult = await this.collection.updateOne({
         uid: task.uid
       }, {
         $set: {
           executeAt: nextExecuteAt
         }
-      }).then((updateResult) => {
-        typeof readyCallback === 'function' && readyCallback(void 0, updateResult?.modifiedCount >= 1);
-      }).catch((updateError) => {
-        typeof readyCallback === 'function' && readyCallback(updateError);
-        this.joskInstance.__errorHandler(updateError, '[getDoneCallback] [done] [updateOne] [updateError]', 'Error in a callback of .updateOne() method of .getDoneCallback()', task.uid);
       });
-    };
+      return updateResult?.modifiedCount >= 1;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [update] [opError]', 'Exception inside RedisAdapter#update() method', task.uid);
+      return false;
+    }
   }
 
-  runTasks(nextExecuteAt, callback) {
+  async iterate(nextExecuteAt) {
     const _ids = [];
     const tasks = [];
 
@@ -283,35 +306,31 @@ class MongoAdapter {
       }
     });
 
-    cursor.forEach((task) => {
-      _ids.push(task._id);
-      tasks.push(task);
-    }).then(() => {
-      if (_ids.length) {
-        this.collection.updateMany({
-          _id: {
-            $in: _ids
-          }
-        }, {
-          $set: {
-            executeAt: nextExecuteAt
-          }
-        }).then(() => {
-          for (const task of tasks) {
-            this.joskInstance.__execute(task);
-          }
-          callback();
-        }).catch((updateError) => {
-          callback(updateError);
-        });
-      } else {
-        callback();
+    try {
+      let task;
+      while (await cursor.hasNext()) {
+        task = await cursor.next();
+        _ids.push(task._id);
+        tasks.push(task);
       }
-    }).catch((forEachError) => {
-      callback(forEachError);
-    }).finally(() => {
-      cursor.close();
-    });
+      await this.collection.updateMany({
+        _id: {
+          $in: _ids
+        }
+      }, {
+        $set: {
+          executeAt: nextExecuteAt
+        }
+      });
+    } catch (mongoError) {
+      logError('[iterate] mongoError:', mongoError);
+    }
+
+    for (const task of tasks) {
+      this.joskInstance.__execute(task);
+    }
+
+    await cursor.close();
   }
 }
 
@@ -319,18 +338,18 @@ class MongoAdapter {
 class RedisAdapter {
   /**
    * Create a RedisAdapter instance
-   * @param {JoSk} joskInstance - JoSk instance
    * @param {object} opts - configuration object
    * @param {RedisClient} opts.client - Required, Redis'es `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
    * @param {string} [opts.lockCollectionName] - custom "lock" collection name
-   * @param {string} [opts.prefix] - prefix for scope isolation
+   * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
+   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    */
-  constructor(joskInstance, opts = {}) {
+  constructor(opts = {}) {
     this.name = 'redis';
-    this.joskInstance = joskInstance;
     this.prefix = opts.prefix || 'default';
     this.uniqueName = `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
+    this.resetOnInit = opts.resetOnInit || false;
 
     if (!opts.client) {
       throw new Error('{client} option is required for RedisAdapter', {
@@ -339,7 +358,7 @@ class RedisAdapter {
     }
 
     this.client = opts.client;
-    if (this.joskInstance.resetOnInit) {
+    if (this.resetOnInit) {
       process.nextTick(async () => {
         const cursor = this.client.scanIterator({
           TYPE: 'hash',
@@ -362,6 +381,16 @@ class RedisAdapter {
    * @returns {Promise<object>}
    */
   async ping() {
+    if (!this.joskInstance) {
+      const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
+      return {
+        status: reason,
+        code: 503,
+        statusCode: 503,
+        error: new Error(reason),
+      };
+    }
+
     try {
       const ping = await this.client.ping();
       if (ping === 'PONG') {
@@ -378,140 +407,140 @@ class RedisAdapter {
         status: 'Internal Server Error',
         code: 500,
         statusCode: 500,
-        error: pingError
+        error: pingError,
       };
     }
   }
 
-  acquireLock(cb) {
-    this.client.exists([this.lockKey]).then((isLocked) => {
-      if (isLocked >= 1) {
-        cb(void 0, false);
-      } else {
-        this.client.set(this.lockKey, `${Date.now() + this.joskInstance.zombieTime}`, {
-          PX: this.joskInstance.zombieTime,
-          NX: true
-        }).then((res) => {
-          cb(void 0, res === 'OK');
-        }).catch(cb);
-      }
-    }).catch(cb);
-  }
-
-  releaseLock(cb) {
-    this.client.del(this.lockKey).then(() => {
-      cb();
-    }).catch(cb);
-  }
-
-  clear(uid, cb) {
-    const taskKey = this.__getTaskKey(uid);
-    this.client.hSet(taskKey, {
-      isDeleted: '1'
-    }).then(() => {
-      this.client.del(taskKey).then(() => {
-        cb(void 0, true);
-      }).catch((deleteError) => {
-        cb(deleteError, false);
-      });
-    }).catch((updateError) => {
-      this.joskInstance.__errorHandler(updateError, '[clear] [hSet] updateError:', 'Error in a .catch() of hSet method of .clear()', uid);
-      cb(updateError, false);
+  async acquireLock() {
+    const isLocked = await this.client.exists(this.lockKey);
+    if (isLocked >= 1) {
+      return false;
+    }
+    const res = await this.client.set(this.lockKey, `${Date.now() + this.joskInstance.zombieTime}`, {
+      PX: this.joskInstance.zombieTime,
+      NX: true
     });
+    return res === 'OK';
   }
 
-  addTask(uid, isInterval, delay) {
+  async releaseLock() {
+    await this.client.del(this.lockKey);
+  }
+
+  async remove(uid) {
+    const taskKey = this.__getTaskKey(uid);
+    try {
+      const exists = await this.client.exists(taskKey);
+      if (!exists) {
+        return false;
+      }
+      await this.client.hSet(taskKey, {
+        isDeleted: '1'
+      });
+      await this.client.del(taskKey);
+      return true;
+    } catch (removeError) {
+      this.joskInstance.__errorHandler(removeError, '[remove] removeError:', 'Exception inside RedisAdapter#remove() method', uid);
+      return false;
+    }
+  }
+
+  async add(uid, isInterval, delay) {
     const taskKey = this.__getTaskKey(uid);
 
-    this.client.exists([taskKey]).then((exists) => {
+    try {
+      const exists = await this.client.exists(taskKey);
       const next = Date.now() + delay;
       if (!exists) {
-        this.client.hSet(taskKey, {
+        await this.client.hSet(taskKey, {
           uid: uid,
           delay: `${delay}`,
           executeAt: `${next}`,
           isInterval: isInterval ? '1' : '0',
           isDeleted: '0'
-        }).then(() => {}).catch((insertError) => {
-          this.joskInstance.__errorHandler(insertError, '[addTask] [hSet] insertError:', 'Error in a .catch() of .hSet() method of .addTask()', uid);
         });
-      } else {
-        this.client.hGetAll(taskKey).then((task) => {
-          if (+task.isDeleted) {
-            return;
-          }
-
-          let update = null;
-          if (+task.delay !== delay) {
-            update = { delay };
-          }
-
-          if (+task.executeAt !== next) {
-            if (!update) {
-              update = {};
-            }
-            update.executeAt = next;
-          }
-
-          if (update) {
-            this.client.hSet(taskKey, update).then(() => {}).catch((updateError) => {
-              this.joskInstance.__errorHandler(updateError, '[addTask] [hSet] updateError', 'Error in a .catch() of .hSet() method of .addTask()', uid);
-            });
-          }
-        }).catch((findError) => {
-          this.joskInstance.__errorHandler(findError, '[addTask] [exist] findError:', 'Error in a .catch() of .hGetAll() method of .addTask()', uid);
-        });
+        return true;
       }
-    }).catch((existError) => {
-      this.joskInstance.__errorHandler(existError, '[addTask] [exist] existError:', 'Error in a .catch() of .exists() method of .addTask()', uid);
-    });
+      const task = await this.client.hGetAll(taskKey);
+      if (+task.isDeleted) {
+        return false;
+      }
+
+      let update = null;
+      if (+task.delay !== delay) {
+        update = { delay };
+      }
+
+      if (+task.executeAt !== next) {
+        if (!update) {
+          update = {};
+        }
+        update.executeAt = next;
+      }
+
+      if (update) {
+        await this.client.hSet(taskKey, update);
+      }
+      return false;
+    } catch(opError) {
+      this.joskInstance.__errorHandler(opError, '[add] [exist] [opError]', 'Exception inside RedisAdapter#add() method', uid);
+      return false;
+    }
   }
 
-  getDoneCallback(task) {
-    return (nextExecuteAt, readyCallback) => {
-      this.client.hSet(this.__getTaskKey(task.uid), {
+  async update(task, nextExecuteAt) {
+    if (typeof task !== 'object' || typeof task.uid !== 'string') {
+      this.joskInstance.__errorHandler({ task }, '[RedisAdapter] [update] [task]', 'Task malformed or undefined');
+      return false;
+    }
+
+    if (!nextExecuteAt instanceof Date) {
+      this.joskInstance.__errorHandler({ nextExecuteAt }, '[RedisAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
+      return false;
+    }
+
+    const taskKey = this.__getTaskKey(task.uid);
+    try {
+      const exists = await this.client.exists(taskKey);
+      if (!exists) {
+        return false;
+      }
+      await this.client.hSet(taskKey, {
         executeAt: `${+nextExecuteAt}`
-      }).then(() => {
-        typeof readyCallback === 'function' && readyCallback(void 0, true);
-      }).catch((updateError) => {
-        typeof readyCallback === 'function' && readyCallback(updateError);
-        this.joskInstance.__errorHandler(updateError, '[getDoneCallback] [done] [hSet] updateError:', 'Error in a .catch() of .hSet() method of .getDoneCallback()', task.uid);
       });
-    };
+      return true;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[RedisAdapter] [update] [opError]', 'Exception inside RedisAdapter#update() method', task.uid);
+      return false;
+    }
   }
 
-  runTasks(nextExecuteAt, cb) {
+  async iterate(nextExecuteAt) {
     const now = Date.now();
     const nextRetry = +nextExecuteAt;
 
-    process.nextTick(async () => {
-      try {
-        const cursor = this.client.scanIterator({
-          TYPE: 'hash',
-          MATCH: this.__getTaskKey('*'),
-          COUNT: 9999,
-        });
-
-        for await (const taskKey of cursor) {
-          const task = await this.client.hGetAll(taskKey);
-          if (+task.executeAt <= now) {
-            await this.client.hSet(taskKey, {
-              executeAt: `${nextRetry}`
-            });
-            this.joskInstance.__execute({
-              uid: task.uid,
-              delay: +task.delay,
-              executeAt: +task.executeAt,
-              isInterval: !!+task.isInterval,
-              isDeleted: !!+task.isDeleted,
-            });
-          }
-        }
-        cb();
-      } catch (scanError) {
-        cb(scanError);
-      }
+    const cursor = this.client.scanIterator({
+      TYPE: 'hash',
+      MATCH: this.__getTaskKey('*'),
+      COUNT: 9999,
     });
+
+    for await (const taskKey of cursor) {
+      const task = await this.client.hGetAll(taskKey);
+      if (+task.executeAt <= now) {
+        await this.client.hSet(taskKey, {
+          executeAt: `${nextRetry}`
+        });
+        this.joskInstance.__execute({
+          uid: task.uid,
+          delay: +task.delay,
+          executeAt: +task.executeAt,
+          isInterval: !!+task.isInterval,
+          isDeleted: !!+task.isDeleted,
+        });
+      }
+    }
   }
 
   __getTaskKey(uid) {
@@ -523,16 +552,19 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
 const errors = {
   setInterval: {
+    func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be positive Number!',
     uid: '[josk] [setInterval] [uid - task id must be specified (3rd argument)]'
   },
   setTimeout: {
+    func: '[josk] [setTimeout] the first argument must be a function!',
     delay: '[josk] [setTimeout] delay must be positive Number!',
     uid: '[josk] [setTimeout] [uid - task id must be specified (3rd argument)]'
   },
   setImmediate: {
+    func: '[josk] [setImmediate] the first argument must be a function!',
     uid: '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]'
-  }
+  },
 };
 
 /** Class representing a JoSk task runner (cron). */
@@ -541,29 +573,25 @@ class JoSk {
    * Create a JoSk instance
    * @param {object} opts - configuration object
    * @param {boolean} [opts.debug] - Enable debug logging
-   * @param {string} [opts.prefix] - prefix, use when creating multiple JoSK instances per single app
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
    * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
    * @param {number} [opts.zombieTime] - Time in milliseconds, after this period of time - task will be interpreted as "zombie". This parameter allows to rescue task from "zombie mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic
    * @param {function} [opts.onExecuted] - Informational hook, called when task is finished, see readme for more details
-   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    * @param {number} [opts.minRevolvingDelay] - Minimum revolving delay — the minimum delay between tasks executions in milliseconds
    * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
    */
   constructor(opts = {}) {
     this.debug = opts.debug || false;
-    this.prefix = opts.prefix || '';
     this.onError = opts.onError || false;
     this.autoClear = opts.autoClear || false;
     this.zombieTime = opts.zombieTime || 900000;
     this.onExecuted = opts.onExecuted || false;
-    this.resetOnInit = opts.resetOnInit || false;
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
     this.nextRevolutionTimeout = null;
 
-    if (!opts.adapter) {
+    if (!opts.adapter || typeof opts.adapter !== 'object') {
       throw new Error('{adapter} option is required for JoSk', {
         description: 'JoSk requires MongoAdapter, RedisAdapter, or CustomAdapter to connect to an intermediate database'
       });
@@ -575,8 +603,9 @@ class JoSk {
       this.debug === true && console.info.call(console, '[DEBUG] [josk]', ...args);
     };
 
-    this.adapter = new opts.adapter(this, opts);
-    const adapterMethods = ['acquireLock', 'releaseLock', 'clear', 'addTask', 'getDoneCallback', 'runTasks', 'ping'];
+    this.adapter = opts.adapter;
+    this.adapter.joskInstance = this;
+    const adapterMethods = ['acquireLock', 'releaseLock', 'remove', 'add', 'update', 'iterate', 'ping'];
 
     for (let i = adapterMethods.length - 1; i >= 0; i--) {
       if (typeof this.adapter[adapterMethods[i]] !== 'function') {
@@ -584,7 +613,7 @@ class JoSk {
       }
     }
 
-    this.__setNext();
+    this.__tick();
   }
 
   /**
@@ -600,115 +629,129 @@ class JoSk {
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Create recurring task (loop)
    * @name setInterval
    * @param {function} func - Function (task) to execute
    * @param {number} delay - Delay between task execution in milliseconds
-   * @param {string} _uid - Unique function (task) identification as a string
-   * @returns {string} - Timer ID
+   * @param {string} uid - Unique function (task) identification as a string
+   * @returns {Promise<string>} - Timer ID
    */
-  setInterval(func, delay, _uid) {
+  async setInterval(func, delay, uid) {
     if (this.__checkState()) {
       return '';
     }
 
-    let uid = _uid;
+    if (typeof func !== 'function') {
+      throw new Error(errors.setInterval.func);
+    }
 
     if (delay < 0) {
       throw new Error(errors.setInterval.delay);
     }
 
-    if (uid) {
-      uid += 'setInterval';
-    } else {
+    if (typeof uid !== 'string') {
       throw new Error(errors.setInterval.uid);
     }
 
-    this.tasks[uid] = func;
-    this.__addTask(uid, true, delay);
-    return uid;
+    const timerId = `${uid}setInterval`;
+    this.tasks[timerId] = func;
+    await this.__add(timerId, true, delay);
+    return timerId;
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Create delayed task
    * @name setTimeout
    * @param {function} func - Function (task) to execute
    * @param {number} delay - Delay before task execution in milliseconds
-   * @param {string} _uid - Unique function (task) identification as a string
-   * @returns {string} - Timer ID
+   * @param {string} uid - Unique function (task) identification as a string
+   * @returns {Promise<string>} - Timer ID
    */
-  setTimeout(func, delay, _uid) {
+  async setTimeout(func, delay, uid) {
     if (this.__checkState()) {
       return '';
     }
 
-    let uid = _uid;
+    if (typeof func !== 'function') {
+      throw new Error(errors.setTimeout.func);
+    }
 
     if (delay < 0) {
       throw new Error(errors.setTimeout.delay);
     }
 
-    if (uid) {
-      uid += 'setTimeout';
-    } else {
+    if (typeof uid !== 'string') {
       throw new Error(errors.setTimeout.uid);
     }
 
-    this.tasks[uid] = func;
-    this.__addTask(uid, false, delay);
-    return uid;
+    const timerId = `${uid}setTimeout`;
+    this.tasks[timerId] = func;
+    await this.__add(timerId, false, delay);
+    return timerId;
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Create task, which would get executed immediately and only once across multi-server setup
    * @name setImmediate
    * @param {function} func - Function (task) to execute
-   * @param {string} _uid - Unique function (task) identification as a string
-   * @returns {string} - Timer ID
+   * @param {string} uid - Unique function (task) identification as a string
+   * @returns {Promise<string>} - Timer ID
    */
-  setImmediate(func, _uid) {
+  async setImmediate(func, uid) {
     if (this.__checkState()) {
       return '';
     }
 
-    let uid = _uid;
+    if (typeof func !== 'function') {
+      throw new Error(errors.setImmediate.func);
+    }
 
-    if (uid) {
-      uid += 'setImmediate';
-    } else {
+    if (typeof uid !== 'string') {
       throw new Error(errors.setImmediate.uid);
     }
 
-    this.tasks[uid] = func;
-    this.__addTask(uid, false, 0);
-    return uid;
+    const timerId = `${uid}setImmediate`;
+    this.tasks[timerId] = func;
+    await this.__add(timerId, false, 0);
+    return timerId;
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Cancel (abort) current interval timer.
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
    * @param {string} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
    * @param {function} [callback] - optional callback
-   * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
+   * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
-  clearInterval() {
-    return this.__clear.apply(this, arguments);
+  async clearInterval(timerId) {
+    return await this.__remove(timerId);
   }
 
   /**
+   * @async
+   * @memberOf JoSk
    * Cancel (abort) current timeout timer.
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
    * @param {string} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
    * @param {function} [callback] - optional callback
-   * @returns {boolean} - `true` if task cleared, `false` if task doesn't exist
+   * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
-  clearTimeout() {
-    return this.__clear.apply(this, arguments);
+  async clearTimeout(timerId) {
+    return await this.__remove(timerId);
   }
 
   /**
+   * @memberOf JoSk
    * Destroy JoSk instance and stop all tasks
    * @name destroy
    * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
@@ -728,9 +771,10 @@ class JoSk {
   __checkState() {
     if (this.isDestroyed) {
       if (this.onError) {
-        this.onError('JoSk instance destroyed', {
+        const reason = 'JoSk instance destroyed';
+        this.onError(reason, {
           description: 'invoking methods of destroyed JoSk instance',
-          error: 'JoSk instance destroyed',
+          error: new Error(reason),
           uid: null
         });
       } else {
@@ -741,52 +785,77 @@ class JoSk {
     return false;
   }
 
-  __clear(uid, callback) {
-    if (!uid) {
-      typeof callback === 'function' && callback(new TypeError('{string} uid is not defined'), false);
+  async __remove(timerId) {
+    if (typeof timerId !== 'string') {
       return false;
     }
 
-    this.adapter.clear(uid, (clearError, isRemoved) => {
-      if (clearError) {
-        this.__errorHandler(clearError, '[__clear] [adapter.clear] clearError:', 'adapter.clear has returned an error', uid);
-      } else if (isRemoved && this.tasks && this.tasks[uid]) {
-        delete this.tasks[uid];
-      }
-
-      typeof callback === 'function' && callback(clearError, isRemoved);
-    });
-    return true;
+    const isRemoved = await this.adapter.remove(timerId);
+    if (isRemoved && this.tasks?.[timerId]) {
+      delete this.tasks[timerId];
+    }
+    return isRemoved;
   }
 
-  __addTask(uid, isInterval, delay) {
+  async __add(uid, isInterval, delay) {
     if (this.isDestroyed) {
       return;
     }
 
-    this.adapter.addTask(uid, isInterval, delay);
+    await this.adapter.add(uid, isInterval, delay);
   }
 
-  __execute(task) {
+  async __execute(task) {
     if (this.isDestroyed || task.isDeleted === true) {
       return;
     }
 
-    const done = this.adapter.getDoneCallback(task);
+    if (!task || typeof task !== 'object' || typeof task.uid !== 'string') {
+      if (this.onError) {
+        this.onError('JoSk#__execute received malformed task', {
+          description: 'Something went wrong with one of your tasks - malformed or undefined',
+          error: null,
+          task: task,
+          uid: task.uid,
+        });
+      } else {
+        this._debug('[__execute] received malformed task', task);
+      }
+      return;
+    }
+
+    let executionsQty = 0;
 
     if (this.tasks && typeof this.tasks[task.uid] === 'function') {
       if (this.tasks[task.uid].isMissing === true) {
         return;
       }
 
-      const ready = (readyCallback) => {
+      const ready = async (readyArg1) => {
+        executionsQty++;
+        if (executionsQty >= 2) {
+          const error = new Error(`[josk] [${task.uid}] Resolution method is overspecified. Specify a callback *or* return a Promise. Task resolution was called more than once!`);
+          if (typeof readyArg1 === 'function') {
+            readyArg1(error, false);
+            return false;
+          }
+          throw error;
+        }
         const date = new Date();
         const timestamp = +date;
 
+        if (typeof readyArg1 === 'function') {
+          readyArg1(void 0, true);
+        }
+
         if (task.isInterval === true) {
-          done(new Date(timestamp + task.delay), readyCallback);
-        } else {
-          typeof readyCallback === 'function' && readyCallback(void 0, true);
+          if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
+            await this.adapter.update(task, readyArg1);
+          } else if (typeof readyArg1 === 'number' && readyArg1 >= timestamp) {
+            await this.adapter.update(task, new Date(readyArg1));
+          } else {
+            await this.adapter.update(task, new Date(timestamp + task.delay));
+          }
         }
 
         if (this.onExecuted) {
@@ -797,26 +866,47 @@ class JoSk {
             timestamp: timestamp
           });
         }
+
+        return true;
       };
 
-      if (task.isInterval === false) {
-        const originalTask = this.tasks[task.uid];
-        this.__clear(task.uid, (error, isSuccess) => {
-          if (!error && isSuccess === true) {
-            originalTask(ready);
+      let returnedPromise;
+      try {
+        if (task.isInterval === false) {
+          const originalTask = this.tasks[task.uid];
+          let isRemoved = false;
+          try {
+            isRemoved = await this.__remove(task.uid);
+          } catch (removeError) {
+            this._debug(`[${task.uid}] [__execute] [__remove] has thrown an exception; Check connection with StorageAdapter; removeError:`, removeError);
           }
-        });
-      } else {
-        this.tasks[task.uid](ready);
+          if (isRemoved === true) {
+            returnedPromise = originalTask(ready);
+          }
+        } else {
+          returnedPromise = this.tasks[task.uid](ready);
+        }
+
+        if (returnedPromise && returnedPromise instanceof Promise) {
+          await returnedPromise;
+        }
+      } catch (taskExecError) {
+        this.__errorHandler(taskExecError, 'Exception during task execution', 'An exception was thrown during task execution', task.uid);
       }
+
+      await ready();
     } else {
-      done(new Date(Date.now() + this.zombieTime));
+      await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
       this.tasks[task.uid] = function () { };
       this.tasks[task.uid].isMissing = true;
 
       if (this.autoClear) {
-        this.__clear(task.uid);
-        this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
+        try {
+          await this.__remove(task.uid);
+          this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
+        } catch (removeError) {
+          this._debug(`[${task.uid}] [__execute] [this.autoClear] [__remove] has thrown an exception; removeError:`, removeError);
+        }
       } else if (this.onError) {
         this.onError('One of your tasks is missing', {
           description: `Something went wrong with one of your tasks - is missing.
@@ -837,42 +927,31 @@ class JoSk {
     }
   }
 
-  __runTasks() {
+  async __iterate() {
     if (this.isDestroyed) {
       return;
     }
 
     const nextExecuteAt = new Date(Date.now() + this.zombieTime);
 
-    this.adapter.acquireLock((lockError, success) => {
-      if (lockError) {
-        this._debug('[__runTasks] [adapter.acquireLock] Error:', lockError);
-        this.__setNext();
-      } else if (!success) {
-        this.__setNext();
-      } else {
-        this.adapter.runTasks(nextExecuteAt, (runError) => {
-          if (runError) {
-            this.__errorHandler(runError, '[__runTasks] runError:', 'adapter.runTasks has returned an error', null);
-          }
-
-          this.adapter.releaseLock((releaseError) => {
-            this.__setNext();
-            if (releaseError) {
-              this._debug('[__runTasks] [adapter.releaseLock] releaseError:', releaseError);
-            }
-          });
-        });
+    try {
+      const isAcquired = await this.adapter.acquireLock();
+      if (isAcquired) {
+        await this.adapter.iterate(nextExecuteAt);
+        await this.adapter.releaseLock();
       }
-    });
+      this.__tick();
+    } catch (runError) {
+      this.__errorHandler(runError, '[__iterate] runError:', 'adapter.iterate has returned an error', null);
+    }
   }
 
-  __setNext() {
+  __tick() {
     if (this.isDestroyed) {
       return;
     }
 
-    this.nextRevolutionTimeout = setTimeout(this.__runTasks.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
+    this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
   }
 
   __errorHandler(error, title, description, uid) {

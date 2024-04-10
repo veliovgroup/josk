@@ -141,7 +141,7 @@ class JoSk {
       throw new Error(errors.setTimeout.uid);
     }
 
-    const timerId = `${uid}setInterval`;
+    const timerId = `${uid}setTimeout`;
     this.tasks[timerId] = func;
     await this.__add(timerId, false, delay);
     return timerId;
@@ -169,7 +169,7 @@ class JoSk {
       throw new Error(errors.setImmediate.uid);
     }
 
-    const timerId = `${uid}setInterval`;
+    const timerId = `${uid}setImmediate`;
     this.tasks[timerId] = func;
     await this.__add(timerId, false, 0);
     return timerId;
@@ -284,12 +284,12 @@ class JoSk {
         return;
       }
 
-      const ready = async (readyCallback) => {
+      const ready = async (readyArg1) => {
         executionsQty++;
         if (executionsQty >= 2) {
-          const error = new Error(`[josk] [${task.uid}] "ready" callback of this task was called more than once!`);
-          if (typeof readyCallback === 'function') {
-            readyCallback(error, false);
+          const error = new Error(`[josk] [${task.uid}] Resolution method is overspecified. Specify a callback *or* return a Promise. Task resolution was called more than once!`);
+          if (typeof readyArg1 === 'function') {
+            readyArg1(error, false);
             return false;
           }
           throw error;
@@ -297,10 +297,18 @@ class JoSk {
         const date = new Date();
         const timestamp = +date;
 
+        if (typeof readyArg1 === 'function') {
+          readyArg1(void 0, true);
+        }
+
         if (task.isInterval === true) {
-          await this.adapter.update(task, new Date(timestamp + task.delay));
-        } else {
-          typeof readyCallback === 'function' && readyCallback(void 0, true);
+          if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
+            await this.adapter.update(task, readyArg1);
+          } else if (typeof readyArg1 === 'number' && readyArg1 >= timestamp) {
+            await this.adapter.update(task, new Date(readyArg1));
+          } else {
+            await this.adapter.update(task, new Date(timestamp + task.delay));
+          }
         }
 
         if (this.onExecuted) {
@@ -316,24 +324,30 @@ class JoSk {
       };
 
       let returnedPromise;
-      if (task.isInterval === false) {
-        const originalTask = this.tasks[task.uid];
-        try {
-          const isSuccess = await this.__remove(task.uid);
-          if (isSuccess === true) {
+      try {
+        if (task.isInterval === false) {
+          const originalTask = this.tasks[task.uid];
+          let isRemoved = false;
+          try {
+            isRemoved = await this.__remove(task.uid);
+          } catch (removeError) {
+            this._debug(`[${task.uid}] [__execute] [__remove] has thrown an exception; Check connection with StorageAdapter; removeError:`, removeError);
+          }
+          if (isRemoved === true) {
             returnedPromise = originalTask(ready);
           }
-        } catch (removeError) {
-          this._debug(`[${task.uid}] [__execute] [__remove] has thrown an exception; removeError:`, removeError);
+        } else {
+          returnedPromise = this.tasks[task.uid](ready);
         }
-      } else {
-        returnedPromise = this.tasks[task.uid](ready);
+
+        if (returnedPromise && returnedPromise instanceof Promise) {
+          await returnedPromise;
+        }
+      } catch (taskExecError) {
+        this.__errorHandler(taskExecError, 'Exception during task execution', 'An exception was thrown during task execution', task.uid);
       }
 
-      if (returnedPromise instanceof Promise) {
-        await returnedPromise;
-        await ready();
-      }
+      await ready();
     } else {
       await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
       this.tasks[task.uid] = function () { };
