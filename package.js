@@ -1,6 +1,6 @@
 Package.describe({
   name: 'ostrio:cron-jobs',
-  version: '4.1.0',
+  version: '5.0.0',
   summary: 'Tasks/CRON scheduler and manager for horizontally scaled multi-server apps',
   git: 'https://github.com/veliovgroup/josk',
   documentation: 'README.md'

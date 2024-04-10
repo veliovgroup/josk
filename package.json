@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications",
   "main": "index.js",
   "type": "module",
