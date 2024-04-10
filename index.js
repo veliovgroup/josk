@@ -181,11 +181,14 @@ class JoSk {
    * Cancel (abort) current interval timer.
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
-   * @param {string} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
+   * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
    * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearInterval(timerId) {
+    if (typeof timerId === 'object' && timerId instanceof Promise) {
+      return await this.__remove(await timerId);
+    }
     return await this.__remove(timerId);
   }
 
@@ -195,11 +198,14 @@ class JoSk {
    * Cancel (abort) current timeout timer.
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
-   * @param {string} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
+   * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
    * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearTimeout(timerId) {
+    if (typeof timerId === 'object' && timerId instanceof Promise) {
+      return await this.__remove(await timerId);
+    }
     return await this.__remove(timerId);
   }
 
