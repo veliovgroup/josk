@@ -17,13 +17,15 @@ const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 const noop = (ready) => ((typeof ready === 'function') && ready());
 const ZOMBIE_TIME = 8000;
 
-const timestamps  = {};
-const callbacks   = {};
+const callbacks = {};
+const exceptions = {};
+const timestamps = {};
 const revolutions = {};
 
 let client;
 let job;
 let jobCron;
+let jobException;
 
 const testInterval = function (interval) {
   it(`setInterval ${interval}`, function (endit) {
@@ -120,6 +122,20 @@ before(async function () {
     maxRevolvingDelay: 256, // <- Speed up timer speed by lowering its max revolving delay
     zombieTime: 1024, // <- will need to call `endit()` right away
     autoClear: true,
+  });
+
+  jobException = new JoSk({
+    adapter: new RedisAdapter({
+      client: client,
+      prefix: 'testCaseNPM-exceptions',
+      resetOnInit: true
+    }),
+    autoClear: false,
+    onError(error, details) {
+      if (details?.uid) {
+        exceptions[details.uid] = details.error;
+      }
+    }
   });
 });
 
@@ -397,8 +413,8 @@ describe('Redis - JoSk', function () {
   });
 
   describe('Redis - Return Promise', function () {
-    this.slow(3072);
-    this.timeout(4096);
+    this.slow(1536);
+    this.timeout(2048);
 
     it('setTimeout - async function', function (endit) {
       let check = false;
@@ -410,14 +426,14 @@ describe('Redis - JoSk', function () {
 
         setTimeout(async () => {
           try {
+            assert.equal(check, true, 'setTimeout - was executed');
             const isRemoved = await job.clearTimeout(taskId);
             assert.isFalse(isRemoved, 'setTimeout-async task was properly removed');
-            assert.equal(check, true, 'setTimeout - was executed');
             endit();
           } catch (err) {
             endit(err);
           }
-        }, 512);
+        }, 768);
       });
     });
 
@@ -431,14 +447,14 @@ describe('Redis - JoSk', function () {
 
         setTimeout(async () => {
           try {
+            assert.equal(check, true, 'setTimeout - was executed');
             const isRemoved = await job.clearTimeout(taskId);
             assert.isFalse(isRemoved, 'setTimeout-async-promise task was properly removed');
-            assert.equal(check, true, 'setTimeout - was executed');
             endit();
           } catch (err) {
             endit(err);
           }
-        }, 512);
+        }, 768);
       });
     });
 
@@ -452,14 +468,14 @@ describe('Redis - JoSk', function () {
 
         setTimeout(async () => {
           try {
+            assert.equal(check, true, 'setTimeout - was executed');
             const isRemoved = await job.clearTimeout(taskId);
             assert.isFalse(isRemoved, 'setTimeout-promise task was properly removed');
-            assert.equal(check, true, 'setTimeout - was executed');
             endit();
           } catch (err) {
             endit(err);
           }
-        }, 512);
+        }, 768);
       });
     });
 
@@ -478,14 +494,14 @@ describe('Redis - JoSk', function () {
 
         setTimeout(async () => {
           try {
+            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
             const isRemoved = await job.clearInterval(taskId);
             assert.isFalse(isRemoved, 'setInterval-async task was properly removed');
-            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
             endit();
           } catch (err) {
             endit(err);
           }
-        }, 1280);
+        }, 1408);
       });
     });
 
@@ -503,14 +519,14 @@ describe('Redis - JoSk', function () {
 
         setTimeout(async () => {
           try {
+            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
             const isRemoved = await job.clearInterval(taskId);
             assert.isFalse(isRemoved, 'setInterval-async-promise task was properly removed');
-            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
             endit();
           } catch (err) {
             endit(err);
           }
-        }, 1280);
+        }, 1408);
       });
     });
 
@@ -528,15 +544,124 @@ describe('Redis - JoSk', function () {
 
         setTimeout(async () => {
           try {
+            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
             const isRemoved = await job.clearInterval(taskId);
             assert.isFalse(isRemoved, 'setInterval-promise task was properly removed');
-            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
             endit();
           } catch (err) {
             endit(err);
           }
-        }, 1280);
+        }, 1408);
       });
+    });
+  });
+
+  describe('Redis - async/await exceptions', function () {
+    this.slow(2816);
+    this.timeout(3072);
+
+    it('setTimeout - sync throw', function (endit) {
+      const errorMessage = 'Error thrown inside sync callback';
+      const taskName = 'throw-inside-sync-64';
+      const taskId = `${taskName}setTimeout`;
+      let check = false;
+
+      jobException.setTimeout(function () {
+        check = true;
+        throw new Error(errorMessage);
+      }, 64, taskName);
+
+      setTimeout(async () => {
+        try {
+          const isRemoved = await jobException.clearTimeout(taskId);
+          assert.isFalse(isRemoved, 'setTimeout-throw-inside-sync task was properly removed');
+          assert.isTrue(check, 'throw inside sync handled');
+          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+          endit();
+        } catch (err) {
+          endit(err);
+        }
+      }, 1024);
+    });
+
+    it('setTimeout - async throw', function (endit) {
+      const errorMessage = 'Error thrown inside async callback';
+      const taskName = 'throw-inside-async-64';
+      const taskId = `${taskName}setTimeout`;
+      let check = false;
+
+      jobException.setTimeout(async function () {
+        check = true;
+        throw new Error(errorMessage);
+      }, 64, taskName);
+
+      setTimeout(async () => {
+        try {
+          const isRemoved = await jobException.clearTimeout(taskId);
+          assert.isFalse(isRemoved, 'setTimeout-throw-inside-async task was properly removed');
+          assert.isTrue(check, 'throw inside async handled');
+          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+          endit();
+        } catch (err) {
+          endit(err);
+        }
+      }, 1024);
+    });
+
+    it('setInterval - sync throw', function (endit) {
+      const errorMessage = 'Error thrown inside sync callback';
+      const taskName = 'throw-inside-sync-256';
+      const taskId = `${taskName}setInterval`;
+      const maxRuns = 3;
+      let runs = 0;
+
+      jobException.setInterval(function () {
+        runs++;
+        if (runs >= maxRuns) {
+          jobException.clearInterval(taskId);
+        }
+        throw new Error(errorMessage);
+      }, 256, taskName);
+
+      setTimeout(async () => {
+        try {
+          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${runs} times`);
+          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+          const isRemoved = await jobException.clearInterval(taskId);
+          assert.isFalse(isRemoved, 'setInterval-throw-inside-sync task was properly removed');
+          endit();
+        } catch (err) {
+          endit(err);
+        }
+      }, 2560);
+    });
+
+    it('setInterval - async throw', function (endit) {
+      const errorMessage = 'Error thrown inside async callback';
+      const taskName = 'throw-inside-async-256';
+      const taskId = `${taskName}setInterval`;
+      const maxRuns = 3;
+      let runs = 0;
+
+      jobException.setInterval(async function () {
+        runs++;
+        if (runs >= maxRuns) {
+          await jobException.clearInterval(taskId);
+        }
+        throw new Error(errorMessage);
+      }, 256, taskName);
+
+      setTimeout(async () => {
+        try {
+          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${runs} times`);
+          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+          const isRemoved = await jobException.clearInterval(taskId);
+          assert.isFalse(isRemoved, 'setInterval-throw-inside-async task was properly removed');
+          endit();
+        } catch (err) {
+          endit(err);
+        }
+      }, 2560);
     });
   });
 
