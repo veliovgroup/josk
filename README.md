@@ -228,7 +228,7 @@ jobs.setInterval(task, 2 * 60000, 'task-2m'); // every two minutes
 - `func` {*Function*} - Function to call on schedule
 - `delay` {*Number*} - Delay for the first run and interval between further executions in milliseconds
 - `uid` {*String*} - Unique app-wide task id
-- Returns: {*Promise<string>*}
+- Returns: {*`Promise<string>`*}
 
 *Set task into interval execution loop.* `ready()` *callback is passed as the first argument into a task function.*
 
@@ -313,7 +313,7 @@ jobs.setInterval(function (ready) {
 - `func` {*Function*} - Function to call after `delay`
 - `delay` {*Number*} - Delay in milliseconds
 - `uid` {*String*} - Unique app-wide task id
-- Returns: {*Promise<string>*}
+- Returns: {*`Promise<string>`*}
 
 *Run a task after delay in ms.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *callback is passed as the first argument into a task function.*
 
@@ -345,7 +345,7 @@ jobs.setTimeout(async function () {
 
 - `func` {*Function*} - Function to execute
 - `uid`  {*String*}   - Unique app-wide task id
-- Returns: {*Promise<string>*}
+- Returns: {*`Promise<string>`*}
 
 *Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the first argument into the task function.*
 
@@ -374,8 +374,8 @@ jobs.setImmediate(async function () {
 
 ### `clearInterval(timerId)`
 
-- `timerId` {*String*|*Promise<string>*} — Timer id returned from `JoSk#setInterval()` method
-- Returns: {Promise<boolean>} `true` when task is successfully cleared, or `false` when task was not found
+- `timerId` {*String*|*`Promise<string>`*} — Timer id returned from `JoSk#setInterval()` method
+- Returns: {`Promise<boolean>`} `true` when task is successfully cleared, or `false` when task was not found
 
 *Cancel current interval timer.*
 
@@ -386,8 +386,8 @@ await jobs.clearInterval(timer);
 
 ### `clearTimeout(timerId)`
 
-- `timerId` {*String*|*Promise<string>*} — Timer id returned from `JoSk#setTimeout()` method
-- Returns: {Promise<boolean>} `true` when task is successfully cleared, or `false` when task was not found
+- `timerId` {*String*|*`Promise<string>`*} — Timer id returned from `JoSk#setTimeout()` method
+- Returns: {`Promise<boolean>`} `true` when task is successfully cleared, or `false` when task was not found
 
 *Cancel current timeout timer.*
 
@@ -420,7 +420,7 @@ process.on('SIGHUP', cleanUpBeforeTermination);
 
 ### `ping()`
 
-- Returns: {*Promise<object>*}
+- Returns: {*`Promise<object>`*}
 
 *Ping JoSk instance*. Check scheduler readiness and its connection to the "storage adapter"
 
