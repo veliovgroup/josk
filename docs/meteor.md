@@ -23,13 +23,35 @@ JoSk is storage-agnostic (since `v4.0.0`). It's shipped with Redis and MongoDb "
 ```js
 import { MongoInternals } from 'meteor/mongo';
 import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
+
 const jobs = new JoSk({
-  adapter: MongoAdapter,
-  db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
+  adapter: new MongoAdapter({
+    db: db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
+    prefix: 'cluster-scheduler',
+  }),
+  onError(reason, details) {
+    // Use onError hook to catch runtime exceptions
+    // thrown inside scheduled tasks
+    console.log(reason, details.error);
+  }
 });
+
+jobs.setInterval(async () => {
+  /* ...code here... */
+}, 60000, 'task-1m');
+
+// TO SUPPORT CALLBACK APIs
+// CALL ready() ONCE RUN IS COMPLETE
+jobs.setInterval((ready) => {
+  /* ...code here... */
+  asyncCall(() => {
+    /* ...more code here...*/
+    ready();
+  });
+}, 60000, 'task-1m');
 ```
 
-Note: This library relies on job ID, so you can not pass same job (with the same ID). Always use different `uid`, even for the same task:
+Note: This library relies on job ID. Always use different `uid`, even for the same task:
 
 ```js
 const task = function (ready) {
@@ -37,11 +59,13 @@ const task = function (ready) {
   ready();
 };
 
-jobs.setInterval(task, 60 * 60 * 1000, 'task-1000'); // every minute
-jobs.setInterval(task, 60 * 60 * 2000, 'task-2000'); // every two minutes
+jobs.setInterval(task, 60000, 'task-1m'); // every minute
+jobs.setInterval(task, 2 * 60000, 'task-2m'); // every two minutes
 ```
 
 ### CRON scheduler
+
+Use JoSk to invoke synchronized tasks by CRON schedule, and [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON expressions. To simplify CRON scheduling — grab and use `setCron` function below:
 
 ```js
 import { MongoInternals } from 'meteor/mongo';
@@ -49,23 +73,25 @@ import JoSk from 'meteor/ostrio:cron-jobs';
 import parser from 'cron-parser';
 
 const jobsCron = new JoSk({
-  db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
-  prefix: 'cron'
+  adapter: new MongoAdapter({
+    db: db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
+    prefix: 'cron-scheduler',
+  }),
+  minRevolvingDelay: 512, // Adjust revolving delays to higher values
+  maxRevolvingDelay: 1000, // as CRON schedule defined to seconds
 });
 
 // CREATE HELPER FUNCTION
-const setCron = (uniqueName, cronTask, task) => {
-  const next = +parser.parseExpression(cronTask).next().toDate();
-  const timeout = next - Date.now();
+const setCron = async (uniqueName, cronTask, task) => {
+  const nextTimestamp = +parser.parseExpression(cronTask).next().toDate();
 
-  return jobsCron.setTimeout(function (done) {
-    done(() => {
-      task(); // <- Execute task
-      setCron(uniqueName, cronTask, task); // <- Create task for the next iteration
-    });
-  }, timeout, uniqueName);
+  return await jobsCron.setInterval(function (done) {
+    done(parser.parseExpression(cronTask).next().toDate());
+    task();
+  }, nextTimestamp - Date.now(), uniqueName);
 };
 
+// SCHEDULE A TASK
 setCron('Run every two seconds cron', '*/2 * * * * *', function () {
   console.log(new Date);
 });
@@ -85,8 +111,8 @@ REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=mete
 # With custom port
 REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
-# With local MongoDB and custom port
-MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+# With local MongoDB, debug and custom port
+DEBUG=true MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
 # Be patient, tests are taking around 4 mins
 ```
