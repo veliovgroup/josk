@@ -8,12 +8,15 @@ if (!process.env.REDIS_URL) {
   throw new Error('REDIS_URL env.var is not defined! Please run test with REDIS_URL, like `REDIS_URL=redis://127.0.0.1:6379 meteor test-packages ./`');
 }
 
-const ZOMBIE_TIME       = 8000;
+const DEBUG = process.env.DEBUG === 'true' ? true : false;
+const ZOMBIE_TIME = 8000;
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
-const RANDOM_GAP        = (maxRevolvingDelay - minRevolvingDelay) + 1024;
+const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
-const noop        = (ready) => ((typeof ready === 'function') && ready());
+const noop = (ready) => {
+  typeof ready === 'function' && ready();
+};
 const timestamps  = {};
 const callbacks   = {};
 const revolutions = {};
@@ -33,9 +36,12 @@ before(async function () {
   }).connect();
 
   cron = new JoSk({
-    adapter: RedisAdapter,
-    client: client,
-    prefix: 'testCaseMeteor',
+    adapter: new RedisAdapter({
+      client: client,
+      prefix: 'testCaseMeteor',
+      resetOnInit: true
+    }),
+    debug: DEBUG,
     zombieTime: ZOMBIE_TIME,
     minRevolvingDelay,
     maxRevolvingDelay,
@@ -87,11 +93,11 @@ before(async function () {
     }
   });
 
-  createCronTask = (uniqueName, cronTask, task) => {
+  createCronTask = async (uniqueName, cronTask, task) => {
     const next = +parser.parseExpression(cronTask).next().toDate();
     const timeout = next - Date.now();
 
-    return cron.setTimeout(function (done) {
+    return await cron.setTimeout(function (done) {
       done(() => { // <- call `done()` right away
         // MAKE SURE FURTHER LOGIC EXECUTED
         // INSIDE done() CALLBACK
@@ -105,31 +111,35 @@ before(async function () {
 
 const testInterval = (interval) => {
   it(`setInterval ${interval}`, function (done) {
-    const taskId = cron.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + interval];
-    revolutions[taskId] = 0;
+    process.nextTick(async () => {
+      const taskId = await cron.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
+      callbacks[taskId] = done;
+      timestamps[taskId] = [Date.now() + interval];
+      revolutions[taskId] = 0;
+    });
   });
 };
 
 const testTimeout = (delay) => {
   it(`setTimeout ${delay}`, function (done) {
-    const taskId = cron.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + delay];
-    revolutions[taskId] = 0;
+    process.nextTick(async () => {
+      const taskId = await cron.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
+      callbacks[taskId] = done;
+      timestamps[taskId] = [Date.now() + delay];
+      revolutions[taskId] = 0;
+    });
   });
 };
 
 describe('redis - JoSk Instance', function () {
   it('Check JoSk instance properties', function () {
     assert.instanceOf(cron, JoSk, 'cron is instance of JoSk');
-    assert.equal(cron.prefix, 'testCaseMeteor', 'cron has prefix');
+    assert.equal(cron.adapter.prefix, 'testCaseMeteor', 'cron has prefix');
+    assert.equal(cron.adapter.resetOnInit, true, 'cron has resetOnInit');
     assert.instanceOf(cron.onError, Function, 'cron has onError');
     assert.equal(cron.autoClear, false, 'cron has autoClear');
     assert.equal(cron.zombieTime, ZOMBIE_TIME, 'cron has zombieTime');
     assert.instanceOf(cron.onExecuted, Function, 'cron has onExecuted');
-    assert.equal(cron.resetOnInit, false, 'cron has resetOnInit');
     assert.equal(cron.minRevolvingDelay, minRevolvingDelay, 'cron has minRevolvingDelay');
     assert.equal(cron.maxRevolvingDelay, maxRevolvingDelay, 'cron has maxRevolvingDelay');
     assert.instanceOf(cron.tasks, Object, 'cron has tasks');
@@ -184,55 +194,59 @@ describe('redis - override settings', function () {
   this.timeout(4096);
 
   it('setTimeout', function (done) {
-    const uid = cron.setTimeout(noop, 2048, 'timeoutOverride');
-
-    setTimeout(async () => {
-      const task = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
-
-      assert.ok(typeof task === 'object', 'setTimeout override — record exists');
-      assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
-      cron.setTimeout(noop, 3072, 'timeoutOverride');
+    process.nextTick(async () => {
+      const uid = await cron.setTimeout(noop, 2048, 'timeoutOverride');
 
       setTimeout(async () => {
-        const updatedTask = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+        const task = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
 
-        assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
+        assert.ok(typeof task === 'object', 'setTimeout override — record exists');
+        assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
+        cron.setTimeout(noop, 3072, 'timeoutOverride');
 
-        process.nextTick(() => {
-          cron.clearTimeout(uid);
-          setTimeout(async () => {
-            assert.equal(await cron.adapter.client.exists([`${cron.adapter.uniqueName}:task:${uid}`]), false, 'setTimeout override — Task cleared');
-            done();
-          }, 384);
-        });
+        setTimeout(async () => {
+          const updatedTask = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+
+          assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
+
+          process.nextTick(() => {
+            cron.clearTimeout(uid);
+            setTimeout(async () => {
+              assert.equal(await cron.adapter.client.exists([`${cron.adapter.uniqueName}:task:${uid}`]), false, 'setTimeout override — Task cleared');
+              done();
+            }, 384);
+          });
+        }, 384);
       }, 384);
-    }, 384);
+    });
   });
 
   it('setInterval', function (done) {
-    const uid = cron.setInterval(noop, 1024, 'intervalOverride');
-
-    setTimeout(async () => {
-      const task = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
-
-      assert.ok(typeof task === 'object', 'setInterval override — record exists');
-      assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
-      cron.setInterval(noop, 2048, 'intervalOverride');
+    process.nextTick(async () => {
+      const uid = await cron.setInterval(noop, 1024, 'intervalOverride');
 
       setTimeout(async () => {
-        const updatedTask = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+        const task = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
 
-        assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
+        assert.ok(typeof task === 'object', 'setInterval override — record exists');
+        assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
+        cron.setInterval(noop, 2048, 'intervalOverride');
 
-        process.nextTick(() => {
-          cron.clearInterval(uid);
-          setTimeout(async () => {
-            assert.equal(await cron.adapter.client.exists([`${cron.adapter.uniqueName}:task:${uid}`]), false, 'setInterval override — Task cleared');
-            done();
-          }, 384);
-        });
+        setTimeout(async () => {
+          const updatedTask = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+
+          assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
+
+          process.nextTick(() => {
+            cron.clearInterval(uid);
+            setTimeout(async () => {
+              assert.equal(await cron.adapter.client.exists([`${cron.adapter.uniqueName}:task:${uid}`]), false, 'setInterval override — Task cleared');
+              done();
+            }, 384);
+          });
+        }, 384);
       }, 384);
-    }, 384);
+    });
   });
 });
 
@@ -385,10 +399,12 @@ describe('redis - Destroy (abort) current timers', function () {
     let check2 = false;
     let gotError = false;
     const cron2 = new JoSk({
-      adapter: RedisAdapter,
-      client: client,
-      autoClear: false,
-      prefix: 'testCaseMeteor2',
+      adapter: new RedisAdapter({
+        client: client,
+        prefix: 'testCaseMeteor2',
+        resetOnInit: true
+      }),
+      debug: DEBUG,
       zombieTime: ZOMBIE_TIME,
       minRevolvingDelay,
       maxRevolvingDelay,
