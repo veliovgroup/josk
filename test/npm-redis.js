@@ -29,6 +29,7 @@ let client;
 let job;
 let jobCron;
 let jobException;
+const jobRacing = {};
 
 const testInterval = function (interval) {
   it(`setInterval ${interval}`, function (endit) {
@@ -142,6 +143,21 @@ before(async function () {
       }
     }
   });
+
+  let n = 0;
+  while (n++ < 6) {
+    jobRacing[n] = new JoSk({
+      adapter: new RedisAdapter({
+        client: await createClient({ url: process.env.REDIS_URL }).connect(),
+        prefix: 'testCaseNPM-racing-conditions',
+        resetOnInit: n === 1,
+      }),
+      debug: DEBUG,
+      autoClear: false,
+      minRevolvingDelay: 32,
+      maxRevolvingDelay: 512,
+    });
+  }
 });
 
 describe('Redis - Has JoSk Object', function () {
@@ -699,6 +715,95 @@ describe('Redis - JoSk', function () {
           endit(err);
         }
       }, 1024);
+    });
+  });
+
+  describe('Redis - racing conditions', function () {
+    this.slow(3840);
+    this.timeout(4352);
+
+    it('setTimeout', function (endit) {
+      const taskIds = {};
+      const maxRuns = 1;
+      const key = 'countRacingConditionsTimeout';
+      let runs = 0;
+
+      process.nextTick(async () => {
+        try {
+          await client.set(key, 0);
+          const task = async () => {
+            runs++;
+            await client.incr(key);
+          };
+
+          let n = 0;
+          while (n++ < 6) {
+            taskIds[n] = await jobRacing[n].setTimeout(task, 256, 'countRacingConditions');
+          }
+        } catch (err) {
+          endit(err);
+        }
+
+        setTimeout(async () => {
+          try {
+            assert.equal(runs, maxRuns, 'task was executed only once');
+            const rec = await client.get(key);
+            assert.equal(rec, maxRuns, 'database was updated only once');
+
+            let n = 0;
+            while (n++ < 6) {
+              const isRemoved = await jobRacing[n].clearTimeout(taskIds[n]);
+              assert.isFalse(isRemoved, `task was properly removed taskIds[${n}]`);
+            }
+            await client.del(key);
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 768);
+      });
+    });
+
+    it('setInterval', function (endit) {
+      const taskIds = {};
+      const maxRuns = 4;
+      const key = 'countRacingConditionsInterval';
+      let runs = 0;
+
+      process.nextTick(async () => {
+        try {
+          await client.set(key, 0);
+          const task = async () => {
+            runs++;
+            await client.incr(key);
+          };
+
+          let n = 0;
+          while (n++ < 6) {
+            taskIds[n] = await jobRacing[n].setInterval(task, 768, 'countRacingConditions');
+          }
+        } catch (err) {
+          endit(err);
+        }
+
+        setTimeout(async () => {
+          try {
+            assert.equal(runs, maxRuns, 'task was executed only once');
+            const rec = await client.get(key);
+            assert.equal(rec, maxRuns, 'database was updated only once');
+
+            let n = 0;
+            while (n++ < 6) {
+              const isRemoved = await jobRacing[n].clearInterval(taskIds[n]);
+              assert.isTrue((n === 1 ? isRemoved : !isRemoved), `task was properly removed taskIds[${n}]`);
+            }
+            await client.del(key);
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 3712);
+      });
     });
   });
 

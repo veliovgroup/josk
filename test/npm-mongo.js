@@ -32,6 +32,7 @@ let client;
 let job;
 let jobCron;
 let jobException;
+const jobRacing = {};
 let db;
 
 const testInterval = function (interval) {
@@ -162,6 +163,23 @@ before(async function () {
       }
     },
   });
+
+  let n = 0;
+  while (n++ < 6) {
+    jobRacing[n] = new JoSk({
+      adapter: new MongoAdapter({
+        db: (await MongoClient.connect(mongoAddr, {
+          appname: `josk-test-suite-racing-${n}`
+        })).db(dbName),
+        prefix: 'testCaseNPM-racing-conditions',
+        resetOnInit: n === 1,
+      }),
+      debug: DEBUG,
+      autoClear: false,
+      minRevolvingDelay: 32,
+      maxRevolvingDelay: 512,
+    });
+  }
 });
 
 describe('Mongo - Has JoSk Object', function () {
@@ -715,6 +733,113 @@ describe('Mongo - JoSk', function () {
           endit(err);
         }
       }, 1024);
+    });
+  });
+
+  describe('Mongo - racing conditions', function () {
+    this.slow(3840);
+    this.timeout(4352);
+
+    it('setTimeout', function (endit) {
+      const collection = db.collection('countRacingConditions');
+      const taskIds = {};
+      const maxRuns = 1;
+      let runs = 0;
+      let testRecord;
+
+      process.nextTick(async () => {
+        try {
+          testRecord = await collection.insertOne({
+            countRuns: 0
+          });
+          const task = async () => {
+            runs++;
+            await collection.updateOne({
+              _id: testRecord.insertedId
+            }, {
+              $inc: {
+                countRuns: 1
+              }
+            });
+          };
+
+          let n = 0;
+          while (n++ < 6) {
+            taskIds[n] = await jobRacing[n].setTimeout(task, 256, 'countRacingConditions');
+          }
+        } catch (err) {
+          endit(err);
+        }
+
+        setTimeout(async () => {
+          try {
+            assert.equal(runs, maxRuns, 'task was executed only once');
+            const rec = await collection.findOne({ _id: testRecord.insertedId });
+            assert.equal(rec.countRuns, maxRuns, 'database was updated only once');
+
+            let n = 0;
+            while (n++ < 6) {
+              const isRemoved = await jobRacing[n].clearTimeout(taskIds[n]);
+              assert.isFalse(isRemoved, `task was properly removed taskIds[${n}]`);
+            }
+            await collection.deleteMany({});
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 768);
+      });
+    });
+
+    it('setInterval', function (endit) {
+      const collection = db.collection('countRacingConditions');
+      const taskIds = {};
+      const maxRuns = 4;
+      let runs = 0;
+      let testRecord;
+
+      process.nextTick(async () => {
+        try {
+          testRecord = await collection.insertOne({
+            countRuns: 0
+          });
+          const task = async () => {
+            runs++;
+            await collection.updateOne({
+              _id: testRecord.insertedId
+            }, {
+              $inc: {
+                countRuns: 1
+              }
+            });
+          };
+
+          let n = 0;
+          while (n++ < 6) {
+            taskIds[n] = await jobRacing[n].setInterval(task, 768, 'countRacingConditions');
+          }
+        } catch (err) {
+          endit(err);
+        }
+
+        setTimeout(async () => {
+          try {
+            assert.equal(runs, maxRuns, 'task was executed only once');
+            const rec = await collection.findOne({ _id: testRecord.insertedId });
+            assert.equal(rec.countRuns, maxRuns, 'database was updated only once');
+
+            let n = 0;
+            while (n++ < 6) {
+              const isRemoved = await jobRacing[n].clearInterval(taskIds[n]);
+              assert.isTrue((n === 1 ? isRemoved : !isRemoved), `task was properly removed taskIds[${n}]`);
+            }
+            await collection.deleteMany({});
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 3712);
+      });
     });
   });
 
