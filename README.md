@@ -472,8 +472,8 @@ const jobsCron = new JoSk({
 const setCron = async (uniqueName, cronTask, task) => {
   const nextTimestamp = +parser.parseExpression(cronTask).next().toDate();
 
-  return await jobsCron.setInterval(function (done) {
-    done(parser.parseExpression(cronTask).next().toDate());
+  return await jobsCron.setInterval(function (ready) {
+    ready(parser.parseExpression(cronTask).next().toDate());
     task();
   }, nextTimestamp - Date.now(), uniqueName);
 };
