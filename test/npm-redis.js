@@ -9,6 +9,7 @@ if (!process.env.REDIS_URL) {
   throw new Error('REDIS_URL env.var is not defined! Please run test with REDIS_URL, like `REDIS_URL=redis://127.0.0.1:6379 npm test`');
 }
 
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
@@ -355,18 +356,22 @@ describe('Redis - JoSk', function () {
       let i = 0;
       process.nextTick(async () => {
         const taskId = await job.setInterval(async () => {
-          i++;
-          if (i === 1) {
-            const _time = Date.now() - time;
-            assert.equal(_time < 768 + RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
-            time = Date.now();
-          } else if (i === 2) {
-            const _time = Date.now() - time;
+          try {
+            i++;
+            if (i === 1) {
+              const _time = Date.now() - time;
+              assert.equal(_time < 768 + RANDOM_GAP, true, 'setInterval - first run within appropriate interval');
+              time = Date.now();
+            } else if (i === 2) {
+              const _time = Date.now() - time;
 
-            assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
-            const isRemoved = await job.clearInterval(taskId);
-            assert.isTrue(isRemoved, 'taskInterval-zombie task is properly removed');
-            endit();
+              assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setInterval - recovered within appropriate zombieTime time-frame');
+              const isRemoved = await job.clearInterval(taskId);
+              assert.isTrue(isRemoved, 'taskInterval-zombie task is properly removed');
+              endit();
+            }
+          } catch(err) {
+            endit(err);
           }
         }, 768, 'taskInterval-zombie-768');
       });
@@ -376,13 +381,161 @@ describe('Redis - JoSk', function () {
       const time = Date.now();
       process.nextTick(async () => {
         const taskId = await job.setTimeout(async () => {
-          const _time = Date.now() - time;
+          try {
+            const _time = Date.now() - time;
 
-          assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setTimeout - recovered within appropriate zombieTime time-frame (which is actually the first run as it\'s Timeout)');
-          const isRemoved = await job.clearTimeout(taskId);
-          assert.isTrue(isRemoved, 'taskTimeout-zombie task is properly removed');
-          endit();
+            assert.equal(_time < (ZOMBIE_TIME + RANDOM_GAP), true, 'setTimeout - recovered within appropriate zombieTime time-frame (which is actually the first run as it\'s Timeout)');
+            const isRemoved = await job.clearTimeout(taskId);
+            assert.isFalse(isRemoved, 'taskTimeout-zombie task is properly removed');
+            endit();
+          } catch (err) {
+            endit(err);
+          }
         }, 768, 'taskTimeout-zombie-768');
+      });
+    });
+  });
+
+  describe('Redis - Return Promise', function () {
+    this.slow(3072);
+    this.timeout(4096);
+
+    it('setTimeout - async function', function (endit) {
+      let check = false;
+      process.nextTick(async () => {
+        const taskId = await job.setTimeout(async () => {
+          check = true;
+          return true;
+        }, 128, 'taskTimeout-async-func-128');
+
+        setTimeout(async () => {
+          try {
+            const isRemoved = await job.clearTimeout(taskId);
+            assert.isFalse(isRemoved, 'setTimeout-async task was properly removed');
+            assert.equal(check, true, 'setTimeout - was executed');
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 512);
+      });
+    });
+
+    it('setTimeout - async function returns promise', function (endit) {
+      let check = false;
+      process.nextTick(async () => {
+        const taskId = await job.setTimeout(async () => {
+          check = true;
+          return wait(64);
+        }, 128, 'taskTimeout-async-promise-128');
+
+        setTimeout(async () => {
+          try {
+            const isRemoved = await job.clearTimeout(taskId);
+            assert.isFalse(isRemoved, 'setTimeout-async-promise task was properly removed');
+            assert.equal(check, true, 'setTimeout - was executed');
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 512);
+      });
+    });
+
+    it('setTimeout - function returns promise', function (endit) {
+      let check = false;
+      process.nextTick(async () => {
+        const taskId = await job.setTimeout(() => {
+          check = true;
+          return wait(64);
+        }, 128, 'taskTimeout-promise-128');
+
+        setTimeout(async () => {
+          try {
+            const isRemoved = await job.clearTimeout(taskId);
+            assert.isFalse(isRemoved, 'setTimeout-promise task was properly removed');
+            assert.equal(check, true, 'setTimeout - was executed');
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 512);
+      });
+    });
+
+
+    it('setInterval - async function', function (endit) {
+      const maxRuns = 3;
+      let runs = 0;
+      process.nextTick(async () => {
+        const taskId = await job.setInterval(async () => {
+          runs++;
+          if (runs === maxRuns) {
+            await job.clearInterval(taskId);
+          }
+          return true;
+        }, 256, 'taskInterval-async-func-256');
+
+        setTimeout(async () => {
+          try {
+            const isRemoved = await job.clearInterval(taskId);
+            assert.isFalse(isRemoved, 'setInterval-async task was properly removed');
+            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 1280);
+      });
+    });
+
+    it('setInterval - async function returns promise', function (endit) {
+      const maxRuns = 3;
+      let runs = 0;
+      process.nextTick(async () => {
+        const taskId = await job.setInterval(async () => {
+          runs++;
+          if (runs === maxRuns) {
+            await job.clearInterval(taskId);
+          }
+          return wait(1);
+        }, 256, 'taskInterval-async-promise-256');
+
+        setTimeout(async () => {
+          try {
+            const isRemoved = await job.clearInterval(taskId);
+            assert.isFalse(isRemoved, 'setInterval-async-promise task was properly removed');
+            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 1280);
+      });
+    });
+
+    it('setInterval - function returns promise', function (endit) {
+      const maxRuns = 3;
+      let runs = 0;
+      process.nextTick(async () => {
+        const taskId = await job.setInterval(() => {
+          runs++;
+          if (runs === maxRuns) {
+            job.clearInterval(taskId);
+          }
+          return wait(1);
+        }, 256, 'taskInterval-promise-256');
+
+        setTimeout(async () => {
+          try {
+            const isRemoved = await job.clearInterval(taskId);
+            assert.isFalse(isRemoved, 'setInterval-promise task was properly removed');
+            assert.equal(runs, maxRuns, `setInterval - was executed ${maxRuns} times`);
+            endit();
+          } catch (err) {
+            endit(err);
+          }
+        }, 1280);
       });
     });
   });
@@ -492,15 +645,19 @@ describe('Redis - JoSk', function () {
           }, 384, 'taskInterval-destroy2-384');
 
           setTimeout(async () => {
-            const isRemoved1 = await job2.clearInterval(interval1);
-            assert.isTrue(isRemoved1, 'taskInterval-destroy1 task is properly removed');
-            const isRemoved2 = await job2.clearInterval(interval2);
-            assert.isTrue(isRemoved2, 'taskInterval-destroy2 task is properly removed');
+            try {
+              const isRemoved1 = await job2.clearInterval(interval1);
+              assert.isTrue(isRemoved1, 'taskInterval-destroy1 task is properly removed');
+              const isRemoved2 = await job2.clearInterval(interval2);
+              assert.isFalse(isRemoved2, 'taskInterval-destroy2 task was never created');
 
-            assert.equal(check1, false, 'setInterval (before .destroy()) - is destroyed/cleared and never executed');
-            assert.equal(check2, false, 'setInterval (after .destroy()) - is destroyed/cleared and never executed');
-            assert.equal(gotError, 'JoSk instance destroyed', 'setInterval not possible to use after JoSk#destroy');
-            endit();
+              assert.equal(check1, false, 'setInterval (before .destroy()) - is destroyed/cleared and never executed');
+              assert.equal(check2, false, 'setInterval (after .destroy()) - is destroyed/cleared and never executed');
+              assert.equal(gotError, 'JoSk instance destroyed', 'setInterval not possible to use after JoSk#destroy');
+              endit();
+            } catch(err) {
+              endit(err);
+            }
           }, 768);
         }, 384);
       });
