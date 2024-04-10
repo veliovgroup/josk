@@ -3,15 +3,18 @@ import { JoSk, MongoAdapter } from '../index.js';
 import parser from 'cron-parser';
 import { assert } from 'chai';
 
-const ZOMBIE_TIME       = 8000;
+const ZOMBIE_TIME = 8000;
+const DEBUG = process.env.DEBUG === 'true' ? true : false;
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
-const RANDOM_GAP        = (maxRevolvingDelay - minRevolvingDelay) + 1024;
+const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
-const noop        = (ready) => ((typeof ready === 'function') && ready());
-const db          = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
-const timestamps  = {};
-const callbacks   = {};
+const noop = (ready) => {
+  typeof ready === 'function' && ready();
+};
+const db = MongoInternals.defaultRemoteCollectionDriver().mongo.db;
+const callbacks = {};
+const timestamps = {};
 const revolutions = {};
 let cron;
 let createCronTask;
@@ -24,9 +27,12 @@ describe('Mongo - Has JoSk Object', () => {
 
 before(function () {
   cron = new JoSk({
-    adapter: MongoAdapter,
-    db: db,
-    prefix: 'testCaseMeteor',
+    adapter: new MongoAdapter({
+      db,
+      prefix: 'testCaseMeteor',
+      resetOnInit: true
+    }),
+    debug: DEBUG,
     zombieTime: ZOMBIE_TIME,
     minRevolvingDelay,
     maxRevolvingDelay,
@@ -78,49 +84,50 @@ before(function () {
     }
   });
 
-  createCronTask = (uniqueName, cronTask, task) => {
-    const next = +parser.parseExpression(cronTask).next().toDate();
-    const timeout = next - Date.now();
+  createCronTask = async (uniqueName, cronTask, task) => {
+    const taskId = await cron.setInterval(function (ready) {
+      if (task()) {
+        ready(parser.parseExpression(cronTask).next().toDate());
+      } else {
+        cron.clearInterval(taskId);
+      }
+    }, +parser.parseExpression(cronTask).next().toDate() - Date.now(), uniqueName);
 
-    return cron.setTimeout(function (done) {
-      done(() => { // <- call `done()` right away
-        // MAKE SURE FURTHER LOGIC EXECUTED
-        // INSIDE done() CALLBACK
-        if (task()) { // <-- return false to stop CRON
-          createCronTask(uniqueName, cronTask, task);
-        }
-      });
-    }, timeout, uniqueName);
+    return taskId;
   };
 });
 
 const testInterval = (interval) => {
   it(`setInterval ${interval}`, function (done) {
-    const taskId = cron.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + interval];
-    revolutions[taskId] = 0;
+    process.nextTick(async () => {
+      const taskId = await cron.setInterval(noop, interval, `taskInterval-${interval}-${Math.random().toString(36).substring(2, 15)}`);
+      callbacks[taskId] = done;
+      timestamps[taskId] = [Date.now() + interval];
+      revolutions[taskId] = 0;
+    });
   });
 };
 
 const testTimeout = (delay) => {
   it(`setTimeout ${delay}`, function (done) {
-    const taskId = cron.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
-    callbacks[taskId] = done;
-    timestamps[taskId] = [Date.now() + delay];
-    revolutions[taskId] = 0;
+    process.nextTick(async () => {
+      const taskId = await cron.setTimeout(noop, delay, `taskTimeout-${delay}-${Math.random().toString(36).substring(2, 15)}`);
+      callbacks[taskId] = done;
+      timestamps[taskId] = [Date.now() + delay];
+      revolutions[taskId] = 0;
+    });
   });
 };
 
 describe('Mongo - JoSk Instance', function () {
   it('Check JoSk instance properties', function () {
     assert.instanceOf(cron, JoSk, 'cron is instance of JoSk');
-    assert.equal(cron.prefix, 'testCaseMeteor', 'cron has prefix');
+    assert.equal(cron.adapter.prefix, 'testCaseMeteor', 'cron has prefix');
+    assert.equal(cron.adapter.resetOnInit, true, 'cron has resetOnInit');
     assert.instanceOf(cron.onError, Function, 'cron has onError');
     assert.equal(cron.autoClear, false, 'cron has autoClear');
     assert.equal(cron.zombieTime, ZOMBIE_TIME, 'cron has zombieTime');
     assert.instanceOf(cron.onExecuted, Function, 'cron has onExecuted');
-    assert.equal(cron.resetOnInit, false, 'cron has resetOnInit');
     assert.equal(cron.minRevolvingDelay, minRevolvingDelay, 'cron has minRevolvingDelay');
     assert.equal(cron.maxRevolvingDelay, maxRevolvingDelay, 'cron has maxRevolvingDelay');
     assert.instanceOf(cron.tasks, Object, 'cron has tasks');
@@ -175,55 +182,59 @@ describe('Mongo - override settings', function () {
   this.timeout(4096);
 
   it('setTimeout', function (done) {
-    const uid = cron.setTimeout(noop, 2048, 'timeoutOverride');
-
-    setTimeout(async () => {
-      const task = await cron.adapter.collection.findOne({ uid });
-
-      assert.ok(typeof task === 'object', 'setTimeout override — record exists');
-      assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
-      cron.setTimeout(noop, 3072, 'timeoutOverride');
+    process.nextTick(async () => {
+      const uid = await cron.setTimeout(noop, 2048, 'timeoutOverride');
 
       setTimeout(async () => {
-        const updatedTask = await cron.adapter.collection.findOne({ uid });
+        const task = await cron.adapter.collection.findOne({ uid });
 
-        assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
+        assert.ok(typeof task === 'object', 'setTimeout override — record exists');
+        assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
+        cron.setTimeout(noop, 3072, 'timeoutOverride');
 
-        process.nextTick(() => {
-          cron.clearTimeout(uid);
-          setTimeout(async () => {
-            assert.equal(await cron.adapter.collection.findOne({ uid }), null, 'setTimeout override — Task cleared');
-            done();
-          }, 384);
-        });
+        setTimeout(async () => {
+          const updatedTask = await cron.adapter.collection.findOne({ uid });
+
+          assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
+
+          process.nextTick(() => {
+            cron.clearTimeout(uid);
+            setTimeout(async () => {
+              assert.equal(await cron.adapter.collection.findOne({ uid }), null, 'setTimeout override — Task cleared');
+              done();
+            }, 384);
+          });
+        }, 384);
       }, 384);
-    }, 384);
+    });
   });
 
   it('setInterval', function (done) {
-    const uid = cron.setInterval(noop, 1024, 'intervalOverride');
-
-    setTimeout(async () => {
-      const task = await cron.adapter.collection.findOne({ uid });
-
-      assert.ok(typeof task === 'object', 'setInterval override — record exists');
-      assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
-      cron.setInterval(noop, 2048, 'intervalOverride');
+    process.nextTick(async () => {
+      const uid = await cron.setInterval(noop, 1024, 'intervalOverride');
 
       setTimeout(async () => {
-        const updatedTask = await cron.adapter.collection.findOne({ uid });
+        const task = await cron.adapter.collection.findOne({ uid });
 
-        assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
+        assert.ok(typeof task === 'object', 'setInterval override — record exists');
+        assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
+        cron.setInterval(noop, 2048, 'intervalOverride');
 
-        process.nextTick(() => {
-          cron.clearInterval(uid);
-          setTimeout(async () => {
-            assert.equal(await cron.adapter.collection.findOne({ uid }), null, 'setInterval override — Task cleared');
-            done();
-          }, 384);
-        });
+        setTimeout(async () => {
+          const updatedTask = await cron.adapter.collection.findOne({ uid });
+
+          assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
+
+          process.nextTick(() => {
+            cron.clearInterval(uid);
+            setTimeout(async () => {
+              assert.equal(await cron.adapter.collection.findOne({ uid }), null, 'setInterval override — Task cleared');
+              done();
+            }, 384);
+          });
+        }, 384);
       }, 384);
-    }, 384);
+    });
   });
 });
 
@@ -376,10 +387,11 @@ describe('Mongo - Destroy (abort) current timers', function () {
     let check2 = false;
     let gotError = false;
     const cron2 = new JoSk({
-      adapter: MongoAdapter,
-      db: db,
-      autoClear: false,
-      prefix: 'testCaseMeteor2',
+      adapter: new MongoAdapter({
+        db,
+        prefix: 'testCaseMeteor2',
+        resetOnInit: true
+      }),
       zombieTime: ZOMBIE_TIME,
       minRevolvingDelay,
       maxRevolvingDelay,
