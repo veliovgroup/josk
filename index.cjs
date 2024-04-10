@@ -728,11 +728,14 @@ class JoSk {
    * Cancel (abort) current interval timer.
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
-   * @param {string} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
+   * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
    * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearInterval(timerId) {
+    if (typeof timerId === 'object' && timerId instanceof Promise) {
+      return await this.__remove(await timerId);
+    }
     return await this.__remove(timerId);
   }
 
@@ -742,11 +745,14 @@ class JoSk {
    * Cancel (abort) current timeout timer.
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
-   * @param {string} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
+   * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
    * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearTimeout(timerId) {
+    if (typeof timerId === 'object' && timerId instanceof Promise) {
+      return await this.__remove(await timerId);
+    }
     return await this.__remove(timerId);
   }
 
@@ -841,6 +847,7 @@ class JoSk {
           }
           throw error;
         }
+
         const date = new Date();
         const timestamp = +date;
 
@@ -870,6 +877,7 @@ class JoSk {
         return true;
       };
 
+      let hasError;
       let returnedPromise;
       try {
         if (task.isInterval === false) {
@@ -880,6 +888,7 @@ class JoSk {
           } catch (removeError) {
             this._debug(`[${task.uid}] [__execute] [__remove] has thrown an exception; Check connection with StorageAdapter; removeError:`, removeError);
           }
+
           if (isRemoved === true) {
             returnedPromise = originalTask(ready);
           }
@@ -889,41 +898,51 @@ class JoSk {
 
         if (returnedPromise && returnedPromise instanceof Promise) {
           await returnedPromise;
+        } else {
+          return;
         }
       } catch (taskExecError) {
+        hasError = true;
         this.__errorHandler(taskExecError, 'Exception during task execution', 'An exception was thrown during task execution', task.uid);
       }
 
-      await ready();
-    } else {
-      await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
-      this.tasks[task.uid] = function () { };
-      this.tasks[task.uid].isMissing = true;
-
-      if (this.autoClear) {
+      if ((returnedPromise && returnedPromise instanceof Promise) || (executionsQty === 0 && hasError)) {
         try {
-          await this.__remove(task.uid);
-          this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
-        } catch (removeError) {
-          this._debug(`[${task.uid}] [__execute] [this.autoClear] [__remove] has thrown an exception; removeError:`, removeError);
+          await ready();
+        } catch (readyErr) {
+          this._debug(`[${task.uid}] [__execute] [ready] has thrown an exception; readyErr:`, readyErr);
         }
-      } else if (this.onError) {
-        this.onError('One of your tasks is missing', {
-          description: `Something went wrong with one of your tasks - is missing.
-            Try to use different instances.
-            It's safe to ignore this message.
-            If this task is obsolete - simply remove it with \`JoSk#clearTimeout('${task.uid}')\`,
-            or enable autoClear with \`new JoSk({autoClear: true})\``,
-          error: null,
-          uid: task.uid
-        });
-      } else {
-        this._debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
+      }
+      return;
+    }
+
+    await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
+    this.tasks[task.uid] = function () { };
+    this.tasks[task.uid].isMissing = true;
+
+    if (this.autoClear) {
+      try {
+        await this.__remove(task.uid);
+        this._debug(`[FYI] [${task.uid}] task was auto-cleared`);
+      } catch (removeError) {
+        this._debug(`[${task.uid}] [__execute] [this.autoClear] [__remove] has thrown an exception; removeError:`, removeError);
+      }
+    } else if (this.onError) {
+      this.onError('One of your tasks is missing', {
+        description: `Something went wrong with one of your tasks - is missing.
           Try to use different instances.
           It's safe to ignore this message.
-          If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
-          or enable autoClear with \`new JoSk({autoClear: true})\``);
-      }
+          If this task is obsolete - simply remove it with \`JoSk#clearTimeout('${task.uid}')\`,
+          or enable autoClear with \`new JoSk({autoClear: true})\``,
+        error: null,
+        uid: task.uid
+      });
+    } else {
+      this._debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
+        Try to use different instances.
+        It's safe to ignore this message.
+        If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
+        or enable autoClear with \`new JoSk({autoClear: true})\``);
     }
   }
 
