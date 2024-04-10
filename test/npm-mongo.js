@@ -9,12 +9,15 @@ if (!process.env.MONGO_URL) {
   throw new Error('MONGO_URL env.var is not defined! Please run test with MONGO_URL, like `MONGO_URL=mongodb://127.0.0.1:27017/dbname npm test`');
 }
 
+const DEBUG = process.env.DEBUG === 'true' ? true : false;
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 
-const noop = (ready) => ((typeof ready === 'function') && ready());
+const noop = (ready) => {
+  typeof ready === 'function' && ready();
+};
 const ZOMBIE_TIME = 8000;
 
 const mongoAddr = (process.env.MONGO_URL || '');
@@ -80,6 +83,7 @@ before(async function () {
       prefix: 'testCaseNPM',
       resetOnInit: true
     }),
+    debug: DEBUG,
     autoClear: false,
     zombieTime: ZOMBIE_TIME,
     minRevolvingDelay,
@@ -138,7 +142,7 @@ before(async function () {
       prefix: 'cron',
       resetOnInit: true
     }),
-    debug: true,
+    debug: DEBUG,
     maxRevolvingDelay: 256, // <- Speed up timer speed by lowering its max revolving delay
     zombieTime: 1024, // <- will need to call `ready()` right away
     autoClear: true,
@@ -150,12 +154,13 @@ before(async function () {
       prefix: 'testCaseNPM-exceptions',
       resetOnInit: true
     }),
+    debug: DEBUG,
     autoClear: false,
     onError(error, details) {
       if (details?.uid) {
         exceptions[details.uid] = details.error;
       }
-    }
+    },
   });
 });
 
@@ -206,11 +211,11 @@ describe('Mongo - JoSk', function () {
     const timers = {};
     const runs = {};
     const createCronTask = async (uniqueName, cronTask, task, josk = jobCron) => {
-      timers[uniqueName] = await josk.setInterval(async function (done) {
+      timers[uniqueName] = await josk.setInterval(function (done) {
         if (task()) {
-          await done(parser.parseExpression(cronTask).next().toDate());
+          done(parser.parseExpression(cronTask).next().toDate());
         } else {
-          await josk.clearInterval(timers[uniqueName]);
+          josk.clearInterval(timers[uniqueName]);
         }
       }, +parser.parseExpression(cronTask).next().toDate() - Date.now(), uniqueName);
 
@@ -429,8 +434,8 @@ describe('Mongo - JoSk', function () {
   });
 
   describe('Mongo - Return Promise', function () {
-    this.slow(1536);
-    this.timeout(2048);
+    this.slow(2816);
+    this.timeout(3072);
 
     it('setTimeout - async function', function (endit) {
       let check = false;
@@ -517,7 +522,7 @@ describe('Mongo - JoSk', function () {
           } catch (err) {
             endit(err);
           }
-        }, 1408);
+        }, 2560);
       });
     });
 
@@ -542,7 +547,7 @@ describe('Mongo - JoSk', function () {
           } catch (err) {
             endit(err);
           }
-        }, 1408);
+        }, 2560);
       });
     });
 
@@ -553,7 +558,7 @@ describe('Mongo - JoSk', function () {
         const taskId = await job.setInterval(() => {
           runs++;
           if (runs === maxRuns) {
-            job.clearInterval(taskId);
+            return job.clearInterval(taskId);
           }
           return wait(1);
         }, 256, 'taskInterval-promise-256');
@@ -567,7 +572,7 @@ describe('Mongo - JoSk', function () {
           } catch (err) {
             endit(err);
           }
-        }, 1408);
+        }, 2560);
       });
     });
   });
@@ -590,7 +595,7 @@ describe('Mongo - JoSk', function () {
       setTimeout(async () => {
         try {
           const isRemoved = await jobException.clearTimeout(taskId);
-          assert.isFalse(isRemoved, 'setTimeout-throw-inside-sync task was properly removed');
+          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
           assert.isTrue(check, 'throw inside sync handled');
           assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
           endit();
@@ -614,7 +619,7 @@ describe('Mongo - JoSk', function () {
       setTimeout(async () => {
         try {
           const isRemoved = await jobException.clearTimeout(taskId);
-          assert.isFalse(isRemoved, 'setTimeout-throw-inside-async task was properly removed');
+          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
           assert.isTrue(check, 'throw inside async handled');
           assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
           endit();
@@ -641,10 +646,10 @@ describe('Mongo - JoSk', function () {
 
       setTimeout(async () => {
         try {
-          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${runs} times`);
+          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
           assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
           const isRemoved = await jobException.clearInterval(taskId);
-          assert.isFalse(isRemoved, 'setInterval-throw-inside-sync task was properly removed');
+          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
           endit();
         } catch (err) {
           endit(err);
@@ -669,15 +674,47 @@ describe('Mongo - JoSk', function () {
 
       setTimeout(async () => {
         try {
-          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${runs} times`);
+          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
           assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
           const isRemoved = await jobException.clearInterval(taskId);
-          assert.isFalse(isRemoved, 'setInterval-throw-inside-async task was properly removed');
+          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
           endit();
         } catch (err) {
           endit(err);
         }
       }, 2560);
+    });
+  });
+
+  describe('Mongo - overspecified resolution', function () {
+    this.slow(1152);
+    this.timeout(1536);
+
+    it('setTimeout - overspecified resolution', function (endit) {
+      const taskName = 'overspecified-resolution-64';
+      const taskId = `${taskName}setTimeout`;
+      let error;
+      let result;
+
+      jobException.setTimeout(async function (ready) {
+        await ready();
+        return await ready((err, res) => {
+          error = err;
+          result = res;
+        });
+      }, 64, taskName);
+
+      setTimeout(async () => {
+        try {
+          const isRemoved = await jobException.clearTimeout(taskId);
+          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
+          assert.isFalse(result, `${taskName} ready {result} is false`);
+          assert.instanceOf(error, Error, `${taskName} ready {error} is Error`);
+          endit();
+        } catch (err) {
+          endit(err);
+        }
+      }, 1024);
     });
   });
 
@@ -761,6 +798,7 @@ describe('Mongo - JoSk', function () {
           prefix: 'testCaseNPM2',
           resetOnInit: true
         }),
+        debug: DEBUG,
         autoClear: false,
         zombieTime: ZOMBIE_TIME,
         minRevolvingDelay,
