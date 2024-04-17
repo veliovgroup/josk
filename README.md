@@ -425,7 +425,6 @@ process.on('SIGHUP', cleanUpBeforeTermination);
 *Ping JoSk instance*. Check scheduler readiness and its connection to the "storage adapter"
 
 ```js
-// EXAMPLE: DESTROY JoSk INSTANCE UPON SERVER PROCESS TERMINATION
 const jobs = new JoSk({ /* ... */ });
 
 const pingResult = await jobs.ping();
