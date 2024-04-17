@@ -46,7 +46,7 @@ const ensureIndex = async (collection, keys, opts) => {
         await collection.createIndex(keys, opts);
       }
     } else {
-      console.info(`[INFO] [josk] [MongoAdapter] [ensureIndex] Can not set ${Object.keys(keys).join(' + ')} index on "${collection._name}" collection`, { keys, opts, details: e });
+      console.info(`[INFO] [josk] [MongoAdapter] [ensureIndex] Can not set ${Object.keys(keys).join(' + ')} index on "${collection._name || 'MongoDB'}" collection`, { keys, opts, details: e });
     }
   }
 };
@@ -55,7 +55,6 @@ const ensureIndex = async (collection, keys, opts) => {
 class MongoAdapter {
   /**
    * Create a MongoAdapter instance
-   * @param {JoSk} joskInstance - JoSk instance
    * @param {object} opts - configuration object
    * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#db()` method
    * @param {string} [opts.lockCollectionName] - custom "lock" collection name
@@ -64,7 +63,7 @@ class MongoAdapter {
    */
   constructor(opts = {}) {
     this.name = 'mongo';
-    this.prefix = opts.prefix || '';
+    this.prefix = (typeof opts.prefix === 'string') ? opts.prefix : '';
     this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
     this.resetOnInit = opts.resetOnInit || false;
 
