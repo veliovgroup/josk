@@ -62,7 +62,7 @@ class JoSk {
 
     for (let i = adapterMethods.length - 1; i >= 0; i--) {
       if (typeof this.adapter[adapterMethods[i]] !== 'function') {
-        throw new Error(`{adapter} is missing {${adapterMethods[i]}} method that is required!`);
+        throw new Error(`{adapter} instance is missing {${adapterMethods[i]}} method that is required!`);
       }
     }
 
