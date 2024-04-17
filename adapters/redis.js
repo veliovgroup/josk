@@ -4,13 +4,12 @@ class RedisAdapter {
    * Create a RedisAdapter instance
    * @param {object} opts - configuration object
    * @param {RedisClient} opts.client - Required, Redis'es `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
-   * @param {string} [opts.lockCollectionName] - custom "lock" collection name
    * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
    * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
    */
   constructor(opts = {}) {
     this.name = 'redis';
-    this.prefix = opts.prefix || 'default';
+    this.prefix = (typeof opts.prefix === 'string') ? opts.prefix : 'default';
     this.uniqueName = `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.resetOnInit = opts.resetOnInit || false;
