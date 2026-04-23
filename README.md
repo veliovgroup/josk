@@ -24,6 +24,7 @@ __Note: JoSk is the server-only package.__
   - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#initialization)
     - [`RedisAdapter`](https://github.com/veliovgroup/josk?tab=readme-ov-file#redis-adapter)
     - [`MongoAdapter`](https://github.com/veliovgroup/josk?tab=readme-ov-file#mongodb-adapter)
+    - [`PostgresAdapter`](#postgresql-adapter)
   - [`JoSk#setInterval()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#setintervalfunc-delay-uid)
   - [`JoSk#setTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#settimeoutfunc-delay-uid)
   - [`JoSk#setImmediate()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#setimmediatefunc-uid)
@@ -52,8 +53,9 @@ __Note: JoSk is the server-only package.__
 
 ## Prerequisites
 
-- `redis-server@>=5.0.0` — Redis Server Version (*if used with RedisAdapter*)
-- `mongod@>=4.0.0` — MongoDB Server Version (*if used with MongoAdapter*)
+- `redis-server@>=5.0.0` — for RedisAdapter
+- `mongod@>=4.0.0` — for MongoAdapter
+- `postgres@>=12` — for PostgresAdapter (uses `pg` NPM package)
 - `node@>=14.20.0` — Node.js version
 
 ### Older releases compatibility
@@ -70,19 +72,19 @@ npm install josk --save
 
 ```js
 // ES Module Style
-import { JoSk, RedisAdapter, MongoAdapter } from 'josk';
+import { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } from 'josk';
 
 // CommonJS
-const { JoSk, RedisAdapter, MongoAdapter } = require('josk');
+const { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } = require('josk');
 ```
 
 ## API:
 
-Constructor options for *JoSK*, *MongoAdapter*, and *RedisAdapter*
+Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter*
 
 ### `new JoSk(opts)`
 
-- `opts.adapter` {*RedisAdapter*|*MongoAdapter*} - [Required] Instance of `RedisAdapter` or `MongoAdapter` or [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
+- `opts.adapter` {*RedisAdapter*|*MongoAdapter*|*PostgresAdapter*} - [Required] Instance of adapter or [custom](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
 - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to below `60000` (*one minute*)
@@ -121,7 +123,7 @@ Constructor options for *JoSK*, *MongoAdapter*, and *RedisAdapter*
 
 ### Initialization
 
-JoSk is storage-agnostic (since `v4.0.0`). It's shipped with Redis and MongoDB "adapters" out of the box, with option to extend its capabilities by creating and passing a [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
+JoSk is storage-agnostic (since `v4.0.0`). Shipped with Redis, MongoDB, and PostgreSQL adapters. Extend via [custom adapter](docs/adapter-api.md)
 
 #### Redis Adapter
 
@@ -162,6 +164,33 @@ const mongoDb = client.db('joskdb');
 const jobs = new JoSk({
   adapter: new MongoAdapter({
     db: mongoDb,
+    prefix: 'cluster-scheduler',
+  }),
+  onError(reason, details) {
+    // Use onError hook to catch runtime exceptions
+    // thrown inside scheduled tasks
+    console.log(reason, details.error);
+  }
+});
+```
+
+#### PostgreSQL Adapter
+
+*Since* `v5.2.0`
+
+JoSk has no dependencies, hence make sure `pg` NPM package (`npm i pg`) is installed. Adapter auto-creates `josk_tasks` and `josk_locks` tables on init. Uses conditional UPDATEs for locking. Use connection Pool. Separate DB/schema recommended to avoid contention.
+
+```js
+import { JoSk, PostgresAdapter } from 'josk';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  connectionString: 'postgres://user:pass@localhost:5432/joskdb'
+});
+
+const jobs = new JoSk({
+  adapter: new PostgresAdapter({
+    client: pool,
     prefix: 'cluster-scheduler',
   }),
   onError(reason, details) {
@@ -588,7 +617,7 @@ MongoClient.connect('mongodb://url', options, (error, client) => {
 ## Notes
 
 - This package is perfect when you have multiple horizontally scaled servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code running repeating tasks that needs to run only once per application/cluster, not per server/instance;
-- Limitation — task must be run not often than once per two seconds (from 2 to ∞ seconds). Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodical application logic operations or Periodical data fetch, sync, and etc;
+- Limitation — unique task must be run not often than once per two seconds (from 2 to ∞ seconds; no limit on different parallel tasks). Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodic application logic operations or Periodic data fetch, sync, and etc;
 - Accuracy — Delay of each task depends on storage and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + Storage_Request_Delay)`. That means this package won't fit when you need to run a task with very precise delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution;
 - Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce storage read/writes;
 - This package implements "Read Locking" via "RedLock" for Redis and dedicated `.lock` collection for MongoDB.
@@ -632,6 +661,15 @@ Run MongoDB-related tests only
 ```shell
 # Before running Mongo tests you need to have MongoDB server installed and running
 MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm run test-mongo
+
+# Be patient, tests are taking around 3 mins
+```
+### Run PostgreSQL tests only
+
+```shell
+# Before running, have Postgres server running, create DB e.g. npm-josk-test-001
+# Install pg if not: npm install --save-dev pg
+PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm run test-postgres
 
 # Be patient, tests are taking around 3 mins
 ```
