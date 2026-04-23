@@ -1,7 +1,7 @@
 {
   "name": "josk",
   "version": "5.0.0",
-  "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications",
+  "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications. Supports Redis, MongoDB, PostgreSQL adapters.",
   "main": "index.js",
   "type": "module",
   "exports": {
@@ -9,10 +9,11 @@
     "require": "./index.cjs"
   },
   "scripts": {
-    "prepublishOnly": "rollup index.js --file index.cjs --format cjs",
+    "prepublishOnly": "rollup index.js --file index.cjs --format cjs && tsc --emitDeclarationOnly --declaration --outDir ./ --rootDir ./",
     "test": "mocha ./test/npm.js",
     "test-redis": "mocha ./test/npm-redis.js",
-    "test-mongo": "mocha ./test/npm-mongo.js"
+    "test-mongo": "mocha ./test/npm-mongo.js",
+    "test-postgres": "mocha ./test/npm-postgres.js"
   },
   "keywords": [
     "agenda",
@@ -80,6 +81,14 @@
     "cron-parser": "^4.9.0",
     "mocha": "^10.4.0",
     "mongodb": "^6.5.0",
-    "redis": "^4.6.13"
+    "pg": "^8.13.1",
+    "redis": "^4.6.13",
+    "typescript": "^5.8.2"
+  },
+  "types": "./index.d.ts",
+  "typesVersions": {
+    "*": {
+      "require": ["./index.d.cts"]
+    }
   }
 }
