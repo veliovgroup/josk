@@ -1,0 +1,56 @@
+# AGENTS.md
+
+JoSk. Node task scheduler. Single execution across scaled instances (clusters, multi-server, multi-DC). Mimics setTimeout/setInterval. CRON via helper. Sync via Redis/Mongo/Postgres/custom adapter. Read locks, zombie recovery, autoClear. Zero core deps. ~99% test cov.
+
+## Mission
+Ensure exactly-once task execution in horizontally scaled Node.js. Bulletproof. High perf. Storage agnostic. Easy adapters.
+
+## Structure
+- `index.js`: core ESM (JoSk + adapters). Edit this.
+- `index.cjs`: generated via `prepublishOnly: rollup index.js --file index.cjs --format cjs` (npm publish runs it). CJS bundle for "require". Never edit directly. Regenerate before publish.
+- `adapters/`: postgres.js (pg Pool/tables/indexes/locks), mongo.js, redis.js, blank-example.js + .d.ts. Implement Adapter.
+- `test/`: npm-*.js (mocha+chai), meteor-*.js.
+- `*.d.ts`: Generated from JSDoc in `index.js` + adapters via `tsc --emitDeclarationOnly` on `prepublishOnly`. Do not edit manually.
+- `docs/adapter-api.md`: full adapter contract.
+- README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
+
+## Coding Style
+- Indentation: 2 spaces
+- Class-driven JS
+- Prefer small reusable functions
+
+## Standards
+- ESM primary. JSDoc on public API.
+- Strict validation in ctors. Throw on missing adapter/client/db.
+- Private: __ prefix. Use joskInstance.__errorHandler, __execute.
+- Terse. No obvious comments. Exact adapter API compliance.
+- Update: README (examples/prereqs), all .d.ts, tests, CHANGELOG.md, package version on change.
+- Errors: onError hook preferred over throw. ready() or returned Promise controls completion.
+- TS: JSDoc in source drives declarations. Adapter required in JoSkOption. Run `npm run prepublishOnly` after changes to `index.js`/adapters.
+- Never edit `index.cjs` or any `.d.ts`. Always edit source, regenerate before publish.
+- Yes, `index.cjs` in `.cursorignore`.
+- Follow terse response rule: drop articles/fillers. [subject] [verb] [reason]. [next].
+
+## Testing
+```sh
+# Full (Redis+Mongo+PG)
+REDIS_URL=redis://127.0.0.1:6379 MONGO_URL=mongodb://127.0.0.1:27017/test PG_URL=postgres://... npm test
+npm run test-redis
+npm run test-mongo
+npm run test-postgres
+```
+- ~3-6min. Requires running DBs.
+- Cover: set*/clear*, zombie (zombieTime), onError/onExecuted, autoClear, destroy mid-run, CRON helper, promise vs cb ready(), malformed, short delays, concurrent.
+- Add test for any change. Target 99%+.
+
+## Guidelines
+- Read adapter-api.md + existing adapters + tests before edit.
+- New adapter: copy blank-example, add .d.ts, test/*.js, update README/index.js/TS/CHANGELOG.
+- Bug: reproduce in test. Fix + regression test.
+- Feature: update docs/TS/tests first. Maintain 2s min interval, jitter note.
+- Weak points: precision (±256ms+), no <2s tasks. Document. No ultra-precision.
+- PR: full test suite, lint clean, update CHANGELOG.
+- Further dev: built-in CRON, more adapters (Dynamo/KeyDB/SQLite), metrics/tracing, UI, tighter locks, serverless opt.
+- Use MongoDB skills only on query/index/schema. PG similar. Frontend skill never. Always read files first.
+
+Update this AGENTS.md on major refactors.
