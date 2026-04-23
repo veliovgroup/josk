@@ -15,9 +15,11 @@ Ensure exactly-once task execution in horizontally scaled Node.js. Bulletproof. 
 - README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
 
 ## Coding Style
-- Indentation: 2 spaces
-- Class-driven JS
-- Prefer small reusable functions
+- **Indentation:** 2 spaces.
+- Use **single quotes** for strings.
+- **Prefer simple ES classes** for cohesive state/services when they clarify lifecycle (e.g. a small data service with start/stop).
+- Use **small pure functions** for transforms, formatting, and validation.
+- **Performance**: favor O(n) single passes, avoid repeated work in autoruns, cache derived values when dependencies are narrow.
 
 ## Standards
 - ESM primary. JSDoc on public API.
