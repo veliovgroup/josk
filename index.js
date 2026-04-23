@@ -1,5 +1,6 @@
 import { MongoAdapter } from './adapters/mongo.js';
 import { RedisAdapter } from './adapters/redis.js';
+import { PostgresAdapter } from './adapters/postgres.js';
 
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
@@ -25,6 +26,7 @@ class JoSk {
   /**
    * Create a JoSk instance
    * @param {object} opts - configuration object
+   * @param {object} opts.adapter - Required. RedisAdapter, MongoAdapter, PostgresAdapter or custom Adapter (see docs/adapter-api.md)
    * @param {boolean} [opts.debug] - Enable debug logging
    * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
    * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
@@ -437,4 +439,4 @@ class JoSk {
   }
 }
 
-export { JoSk, MongoAdapter, RedisAdapter };
+export { JoSk, MongoAdapter, RedisAdapter, PostgresAdapter };
