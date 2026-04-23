@@ -1,3 +1,4 @@
+.cursor/hooks/state
 .npm
 .DS_Store
 .eslintcache
