@@ -89,7 +89,7 @@ class BlankAdapter {
    * @memberOf BlankAdapter
    * Function called to release write/read lock from Storage adapter
    * @name releaseLock
-   * @returns {Promise<void 0>}
+   * @returns {Promise<void>}
    */
   async releaseLock() {
     await this.requiredOption.release();
@@ -121,7 +121,7 @@ class BlankAdapter {
    * @param {string} uid - Unique ID of the task
    * @param {boolean} isInterval - true/false defining loop or one-time task
    * @param {number} delay - Delay in milliseconds
-   * @returns {Promise<void 0>}
+   * @returns {Promise<void>}
    */
   async add(uid, isInterval, delay) {
     const next = Date.now() + delay;
@@ -151,7 +151,7 @@ class BlankAdapter {
       return false;
     }
 
-    if (!nextExecuteAt instanceof Date) {
+    if (!(nextExecuteAt instanceof Date)) {
       this.joskInstance.__errorHandler({ nextExecuteAt }, '[StorageAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
       return false;
     }
@@ -179,8 +179,7 @@ class BlankAdapter {
    * Find and run tasks one by one
    * @name iterate
    * @param {Date} nextExecuteAt - Date defining time of the next execution for "zombie" tasks
-   * @param {function} cb - callback that must get called after looping over tasks
-   * @returns {void 0}
+   * @returns {Promise<void>}
    */
   async iterate(nextExecuteAt) {
     // GET TASKS WITHIN this.uniqueName SCOPE!
@@ -207,6 +206,7 @@ class BlankAdapter {
     }
   }
 
+  /** @internal */
   __customPrivateMethod() {
     // DEFINE PREFIXED __ CUSTOM METHODS
     // WHEN NEEDED FOR THE ADAPTER
