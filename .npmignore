@@ -7,6 +7,7 @@
 .npm
 .meteorignore
 .versions
+AGENTS.md
 adapters/blank-example.js
 cover.jpg
 cover.png
