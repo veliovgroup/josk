@@ -8,3 +8,4 @@ node_modules
 cover.jpg
 cover.png
 npm-debug.log*
+index.cjs
