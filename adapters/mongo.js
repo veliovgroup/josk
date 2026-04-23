@@ -1,3 +1,35 @@
+/**
+ * @typedef {import('mongodb').Collection} Collection
+ * @typedef {import('mongodb').Db} Db
+ * @typedef {import('../index.js').JoSk} JoSk
+ */
+
+/**
+ * @typedef {object} AdapterPingResult
+ * @property {string} status
+ * @property {number} code
+ * @property {number} statusCode
+ * @property {unknown} [error]
+ */
+
+/**
+ * @typedef {object} MongoAdapterOption
+ * @property {Db} db
+ * @property {string} [lockCollectionName]
+ * @property {string} [prefix]
+ * @property {boolean} [resetOnInit]
+ */
+
+/**
+ * @typedef {object} MongoTask
+ * @property {unknown} _id
+ * @property {string} uid
+ * @property {number} delay
+ * @property {Date} [executeAt]
+ * @property {boolean} isInterval
+ * @property {boolean} isDeleted
+ */
+
 const logError = (error, ...args) => {
   if (error) {
     console.error('[josk] [MongoAdapter] [logError]:', error, ...args);
@@ -10,7 +42,7 @@ const logError = (error, ...args) => {
  * @param {Collection} collection - Mongo's driver Collection instance
  * @param {object} keys - Field and value pairs where the field is the index key and the value describes the type of index for that field
  * @param {object} opts - Set of options that controls the creation of the index
- * @returns {void 0}
+ * @returns {Promise<void>}
  */
 const ensureIndex = async (collection, keys, opts) => {
   try {
@@ -55,11 +87,7 @@ const ensureIndex = async (collection, keys, opts) => {
 class MongoAdapter {
   /**
    * Create a MongoAdapter instance
-   * @param {object} opts - configuration object
-   * @param {Db} opts.db - Required, Mongo's `Db` instance, like one returned from `MongoClient#db()` method
-   * @param {string} [opts.lockCollectionName] - custom "lock" collection name
-   * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
-   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
+   * @param {MongoAdapterOption} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'mongo';
@@ -73,16 +101,21 @@ class MongoAdapter {
       });
     }
 
+    /** @type {Db} */
     this.db = opts.db;
     this.uniqueName = `__JobTasks__${this.prefix}`;
+    /** @type {Collection} */
     this.collection = opts.db.collection(this.uniqueName);
     ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
     ensureIndex(this.collection, {uid: 1, isDeleted: 1}, {background: false});
     ensureIndex(this.collection, {executeAt: 1}, {background: false});
 
+    /** @type {Collection} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
     ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
+    /** @type {JoSk | undefined} */
+    this.joskInstance = void 0;
 
     if (this.resetOnInit) {
       this.collection.deleteMany({
@@ -100,7 +133,7 @@ class MongoAdapter {
    * @memberOf MongoAdapter
    * @name ping
    * @description Check connection to MongoDB
-   * @returns {Promise<object>}
+   * @returns {Promise<AdapterPingResult>}
    */
   async ping() {
     if (!this.joskInstance) {
@@ -139,6 +172,9 @@ class MongoAdapter {
     };
   }
 
+  /**
+   * @returns {Promise<boolean>}
+   */
   async acquireLock() {
     const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
 
@@ -174,10 +210,17 @@ class MongoAdapter {
     }
   }
 
+  /**
+   * @returns {Promise<void>}
+   */
   async releaseLock() {
     await this.lockCollection.deleteOne({ uniqueName: this.uniqueName });
   }
 
+  /**
+   * @param {string} uid
+   * @returns {Promise<boolean>}
+   */
   async remove(uid) {
     try {
       const result = await this.collection.findOneAndUpdate({
@@ -208,6 +251,12 @@ class MongoAdapter {
     }
   }
 
+  /**
+   * @param {string} uid
+   * @param {boolean} isInterval
+   * @param {number} delay
+   * @returns {Promise<boolean>}
+   */
   async add(uid, isInterval, delay) {
     const next = Date.now() + delay;
 
@@ -259,13 +308,18 @@ class MongoAdapter {
     }
   }
 
+  /**
+   * @param {{ uid: string }} task
+   * @param {Date} nextExecuteAt
+   * @returns {Promise<boolean>}
+   */
   async update(task, nextExecuteAt) {
     if (typeof task !== 'object' || typeof task.uid !== 'string') {
       this.joskInstance.__errorHandler({ task }, '[MongoAdapter] [update] [task]', 'Task malformed or undefined');
       return false;
     }
 
-    if (!nextExecuteAt instanceof Date) {
+    if (!(nextExecuteAt instanceof Date)) {
       this.joskInstance.__errorHandler({ nextExecuteAt }, '[MongoAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
       return false;
     }
@@ -280,11 +334,15 @@ class MongoAdapter {
       });
       return updateResult?.modifiedCount >= 1;
     } catch (opError) {
-      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [update] [opError]', 'Exception inside RedisAdapter#update() method', task.uid);
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [update] [opError]', 'Exception inside MongoAdapter#update() method', task.uid);
       return false;
     }
   }
 
+  /**
+   * @param {Date} nextExecuteAt
+   * @returns {Promise<void>}
+   */
   async iterate(nextExecuteAt) {
     const _ids = [];
     const tasks = [];
@@ -324,7 +382,7 @@ class MongoAdapter {
     }
 
     for (const task of tasks) {
-      this.joskInstance.__execute(task);
+      this.joskInstance.__execute(/** @type {MongoTask} */ (task));
     }
 
     await cursor.close();

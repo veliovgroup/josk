@@ -1,11 +1,37 @@
+/**
+ * @typedef {import('redis').RedisClientType} RedisClient
+ * @typedef {import('../index.js').JoSk} JoSk
+ */
+
+/**
+ * @typedef {object} AdapterPingResult
+ * @property {string} status
+ * @property {number} code
+ * @property {number} statusCode
+ * @property {unknown} [error]
+ */
+
+/**
+ * @typedef {object} RedisAdapterOption
+ * @property {RedisClient} client
+ * @property {string} [prefix]
+ * @property {boolean} [resetOnInit]
+ */
+
+/**
+ * @typedef {object} RedisTask
+ * @property {string} uid
+ * @property {number} delay
+ * @property {number} executeAt
+ * @property {boolean} isInterval
+ * @property {boolean} isDeleted
+ */
+
 /** Class representing Redis adapter for JoSk */
 class RedisAdapter {
   /**
    * Create a RedisAdapter instance
-   * @param {object} opts - configuration object
-   * @param {RedisClient} opts.client - Required, Redis'es `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
-   * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
-   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
+   * @param {RedisAdapterOption} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'redis';
@@ -20,7 +46,10 @@ class RedisAdapter {
       });
     }
 
+    /** @type {RedisClient} */
     this.client = opts.client;
+    /** @type {JoSk | undefined} */
+    this.joskInstance = void 0;
     if (this.resetOnInit) {
       process.nextTick(async () => {
         const cursor = this.client.scanIterator({
@@ -41,7 +70,7 @@ class RedisAdapter {
    * @memberOf RedisAdapter
    * @name ping
    * @description Check connection to Redis
-   * @returns {Promise<object>}
+   * @returns {Promise<AdapterPingResult>}
    */
   async ping() {
     if (!this.joskInstance) {
@@ -75,6 +104,9 @@ class RedisAdapter {
     }
   }
 
+  /**
+   * @returns {Promise<boolean>}
+   */
   async acquireLock() {
     const isLocked = await this.client.exists(this.lockKey);
     if (isLocked >= 1) {
@@ -87,10 +119,17 @@ class RedisAdapter {
     return res === 'OK';
   }
 
+  /**
+   * @returns {Promise<void>}
+   */
   async releaseLock() {
     await this.client.del(this.lockKey);
   }
 
+  /**
+   * @param {string} uid
+   * @returns {Promise<boolean>}
+   */
   async remove(uid) {
     const taskKey = this.__getTaskKey(uid);
     try {
@@ -109,6 +148,12 @@ class RedisAdapter {
     }
   }
 
+  /**
+   * @param {string} uid
+   * @param {boolean} isInterval
+   * @param {number} delay
+   * @returns {Promise<boolean>}
+   */
   async add(uid, isInterval, delay) {
     const taskKey = this.__getTaskKey(uid);
 
@@ -152,13 +197,18 @@ class RedisAdapter {
     }
   }
 
+  /**
+   * @param {{ uid: string }} task
+   * @param {Date} nextExecuteAt
+   * @returns {Promise<boolean>}
+   */
   async update(task, nextExecuteAt) {
     if (typeof task !== 'object' || typeof task.uid !== 'string') {
       this.joskInstance.__errorHandler({ task }, '[RedisAdapter] [update] [task]', 'Task malformed or undefined');
       return false;
     }
 
-    if (!nextExecuteAt instanceof Date) {
+    if (!(nextExecuteAt instanceof Date)) {
       this.joskInstance.__errorHandler({ nextExecuteAt }, '[RedisAdapter] [update] [nextExecuteAt]', 'Next execution date is malformed or undefined', task.uid);
       return false;
     }
@@ -179,6 +229,10 @@ class RedisAdapter {
     }
   }
 
+  /**
+   * @param {Date} nextExecuteAt
+   * @returns {Promise<void>}
+   */
   async iterate(nextExecuteAt) {
     const now = Date.now();
     const nextRetry = +nextExecuteAt;
@@ -195,17 +249,22 @@ class RedisAdapter {
         await this.client.hSet(taskKey, {
           executeAt: `${nextRetry}`
         });
-        this.joskInstance.__execute({
+        this.joskInstance.__execute(/** @type {RedisTask} */ ({
           uid: task.uid,
           delay: +task.delay,
           executeAt: +task.executeAt,
           isInterval: !!+task.isInterval,
           isDeleted: !!+task.isDeleted,
-        });
+        }));
       }
     }
   }
 
+  /**
+   * @internal
+   * @param {string} uid
+   * @returns {string}
+   */
   __getTaskKey(uid) {
     return `${this.uniqueName}:task:${uid}`;
   }

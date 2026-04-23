@@ -4,6 +4,100 @@ import { PostgresAdapter } from './adapters/postgres.js';
 
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 
+/**
+ * @typedef {object} JoSkPingResult
+ * @property {string} status
+ * @property {number} code
+ * @property {number} statusCode
+ * @property {unknown} [error]
+ */
+
+/**
+ * @typedef {object} JoSkErrorDetails
+ * @property {string} description
+ * @property {unknown} error
+ * @property {string | null} uid
+ * @property {unknown} [task]
+ */
+
+/**
+ * @typedef {object} JoSkExecutedDetails
+ * @property {string} uid
+ * @property {Date} date
+ * @property {number} delay
+ * @property {number} timestamp
+ */
+
+/**
+ * @typedef {object} JoSkTask
+ * @property {string} uid
+ * @property {number} delay
+ * @property {boolean} isInterval
+ * @property {boolean} isDeleted
+ * @property {Date | number} [executeAt]
+ */
+
+/**
+ * @callback JoSkOnError
+ * @param {string} title
+ * @param {JoSkErrorDetails} details
+ * @returns {void}
+ */
+
+/**
+ * @callback JoSkOnExecuted
+ * @param {string} uid
+ * @param {JoSkExecutedDetails} details
+ * @returns {void}
+ */
+
+/**
+ * @callback JoSkReadyCallback
+ * @param {Error | undefined} error
+ * @param {boolean} success
+ * @returns {void}
+ */
+
+/**
+ * @callback JoSkReady
+ * @param {Date | number | JoSkReadyCallback} [nextExecuteAt]
+ * @returns {Promise<boolean>}
+ */
+
+/**
+ * @callback JoSkTaskHandler
+ * @param {JoSkReady} ready
+ * @returns {void | Promise<void>}
+ */
+
+/**
+ * @typedef {JoSkTaskHandler & { isMissing?: boolean }} JoSkStoredTask
+ */
+
+/**
+ * @typedef {object} JoSkAdapter
+ * @property {JoSk | undefined} [joskInstance]
+ * @property {() => Promise<boolean>} acquireLock
+ * @property {() => Promise<void>} releaseLock
+ * @property {(uid: string) => Promise<boolean>} remove
+ * @property {(uid: string, isInterval: boolean, delay: number) => Promise<boolean | void>} add
+ * @property {(task: JoSkTask, nextExecuteAt: Date) => Promise<boolean>} update
+ * @property {(nextExecuteAt: Date) => Promise<void>} iterate
+ * @property {() => Promise<JoSkPingResult>} ping
+ */
+
+/**
+ * @typedef {object} JoSkOption
+ * @property {JoSkAdapter} adapter
+ * @property {boolean} [debug]
+ * @property {JoSkOnError} [onError]
+ * @property {boolean} [autoClear]
+ * @property {number} [zombieTime]
+ * @property {JoSkOnExecuted} [onExecuted]
+ * @property {number} [minRevolvingDelay]
+ * @property {number} [maxRevolvingDelay]
+ */
+
 const errors = {
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
@@ -25,15 +119,7 @@ const errors = {
 class JoSk {
   /**
    * Create a JoSk instance
-   * @param {object} opts - configuration object
-   * @param {object} opts.adapter - Required. RedisAdapter, MongoAdapter, PostgresAdapter or custom Adapter (see docs/adapter-api.md)
-   * @param {boolean} [opts.debug] - Enable debug logging
-   * @param {function} [opts.onError] - Informational hook, called instead of throwing exceptions, see readme for more details
-   * @param {boolean} [opts.autoClear] - Remove obsolete tasks (any tasks which are not found in the instance memory during runtime, but exists in the database)
-   * @param {number} [opts.zombieTime] - Time in milliseconds, after this period of time - task will be interpreted as "zombie". This parameter allows to rescue task from "zombie mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic
-   * @param {function} [opts.onExecuted] - Informational hook, called when task is finished, see readme for more details
-   * @param {number} [opts.minRevolvingDelay] - Minimum revolving delay — the minimum delay between tasks executions in milliseconds
-   * @param {number} [opts.maxRevolvingDelay] - Maximum revolving delay — the maximum delay between tasks executions in milliseconds
+   * @param {JoSkOption} opts - configuration object
    */
   constructor(opts = {}) {
     this.debug = opts.debug || false;
@@ -44,6 +130,7 @@ class JoSk {
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
+    /** @internal */
     this.nextRevolutionTimeout = null;
 
     if (!opts.adapter || typeof opts.adapter !== 'object') {
@@ -52,12 +139,15 @@ class JoSk {
       });
     }
 
+    /** @type {Record<string, JoSkStoredTask>} */
     this.tasks = {};
 
+    /** @internal */
     this._debug = (...args) => {
       this.debug === true && console.info.call(console, '[DEBUG] [josk]', ...args);
     };
 
+    /** @type {JoSkAdapter} */
     this.adapter = opts.adapter;
     this.adapter.joskInstance = this;
     const adapterMethods = ['acquireLock', 'releaseLock', 'remove', 'add', 'update', 'iterate', 'ping'];
@@ -76,7 +166,7 @@ class JoSk {
    * @memberOf JoSk
    * @name ping
    * @description Check package readiness and connection to Storage
-   * @returns {Promise<object>}
+   * @returns {Promise<JoSkPingResult>}
    * @throws {mix}
    */
   async ping() {
@@ -88,7 +178,7 @@ class JoSk {
    * @memberOf JoSk
    * Create recurring task (loop)
    * @name setInterval
-   * @param {function} func - Function (task) to execute
+   * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {number} delay - Delay between task execution in milliseconds
    * @param {string} uid - Unique function (task) identification as a string
    * @returns {Promise<string>} - Timer ID
@@ -121,7 +211,7 @@ class JoSk {
    * @memberOf JoSk
    * Create delayed task
    * @name setTimeout
-   * @param {function} func - Function (task) to execute
+   * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {number} delay - Delay before task execution in milliseconds
    * @param {string} uid - Unique function (task) identification as a string
    * @returns {Promise<string>} - Timer ID
@@ -154,7 +244,7 @@ class JoSk {
    * @memberOf JoSk
    * Create task, which would get executed immediately and only once across multi-server setup
    * @name setImmediate
-   * @param {function} func - Function (task) to execute
+   * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {string} uid - Unique function (task) identification as a string
    * @returns {Promise<string>} - Timer ID
    */
@@ -229,6 +319,7 @@ class JoSk {
     return false;
   }
 
+  /** @internal */
   __checkState() {
     if (this.isDestroyed) {
       if (this.onError) {
@@ -246,6 +337,7 @@ class JoSk {
     return false;
   }
 
+  /** @internal */
   async __remove(timerId) {
     if (typeof timerId !== 'string') {
       return false;
@@ -258,6 +350,7 @@ class JoSk {
     return isRemoved;
   }
 
+  /** @internal */
   async __add(uid, isInterval, delay) {
     if (this.isDestroyed) {
       return;
@@ -266,6 +359,11 @@ class JoSk {
     await this.adapter.add(uid, isInterval, delay);
   }
 
+  /**
+   * @internal
+   * @param {JoSkTask} task
+   * @returns {Promise<void>}
+   */
   async __execute(task) {
     if (this.isDestroyed || task.isDeleted === true) {
       return;
@@ -372,7 +470,7 @@ class JoSk {
     }
 
     await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
-    this.tasks[task.uid] = function () { };
+    this.tasks[task.uid] = /** @type {JoSkStoredTask} */ (function () { });
     this.tasks[task.uid].isMissing = true;
 
     if (this.autoClear) {
@@ -401,6 +499,7 @@ class JoSk {
     }
   }
 
+  /** @internal */
   async __iterate() {
     if (this.isDestroyed) {
       return;
@@ -420,6 +519,7 @@ class JoSk {
     }
   }
 
+  /** @internal */
   __tick() {
     if (this.isDestroyed) {
       return;
@@ -428,6 +528,7 @@ class JoSk {
     this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
   }
 
+  /** @internal */
   __errorHandler(error, title, description, uid) {
     if (error) {
       if (this.onError) {
