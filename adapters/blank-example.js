@@ -4,17 +4,15 @@ class BlankAdapter {
    * @param {object} opts - configuration object
    * @param {object} opts.requiredOption - Required option description
    * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
-   * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
+   * @param {boolean} [opts.resetOnInit] - clear old tasks on startup
    */
   constructor(opts = {}) {
     this.name = 'adapter-name'; // set unique adapter name
     this.prefix = opts.prefix || 'default'; // Pass down user-defined prefix
-    this.resetOnInit = opts.resetOnInit || false;
+    this.resetOnInit = !!opts.resetOnInit;
     this.uniqueName = `josk-${this.prefix}`; // Unique ID when multiple instances of JoSk are used
     this.lockKey = `${this.uniqueName}.lock`; // Key used for storage lock/release while tasks are running
 
-    // Check that user has provided required option,
-    // usually DB connector of some sort or other
     if (!opts.requiredOption) {
       throw new Error('{requiredOption} option is required for BlankAdapter', {
         description: 'BlankAdapter requires {requiredOption} option, e.g. returned from `driver.getRequiredOption()` method'
@@ -22,8 +20,21 @@ class BlankAdapter {
     }
 
     this.requiredOption = opts.requiredOption;
-    if (this.resetOnInit) { // Check if user wish to reset storage on init
-      // REMOVE TASKS RECORDS ONLY WITHIN this.uniqueName SCOPE!
+    this.__readyPromise = this.__setup();
+  }
+
+  /**
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.__readyPromise;
+  }
+
+  /** @internal */
+  async __setup() {
+    if (this.resetOnInit) {
+      await this.requiredOption.clearScope(this.uniqueName);
+      await this.requiredOption.release(this.lockKey);
     }
   }
 
@@ -35,7 +46,7 @@ class BlankAdapter {
    * @returns {Promise<object>}
    */
   async ping() {
-    // LEAVE THIS if BLOCK UNCHANGED
+    // LEAVE THIS `if` BLOCK UNCHANGED
     if (!this.joskInstance) {
       const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
       return {
@@ -47,6 +58,7 @@ class BlankAdapter {
     }
 
     try {
+      await this.ready();
       const ping = await this.requiredOption.ping();
       if (ping === 'PONG') {
         return {
@@ -70,80 +82,84 @@ class BlankAdapter {
   /**
    * @async
    * @memberOf BlankAdapter
-   * Function called to acquire read/write lock on Storage adapter
+   * Acquire second-layer scheduler lock with owner token
    * @name acquireLock
+   * @param {{ ownerId: string, leaseId: string, expiresAtMs: number }} lock
    * @returns {Promise<boolean>}
    */
-  async acquireLock() {
-    const isLocked = await this.requiredOption.lock();
-    if (isLocked) {
-      // Lock not available
-      return false;
-    }
-    // Lock acquired
-    return true;
-  }
-
-  /**
-   * @async
-   * @memberOf BlankAdapter
-   * Function called to release write/read lock from Storage adapter
-   * @name releaseLock
-   * @returns {Promise<void>}
-   */
-  async releaseLock() {
-    await this.requiredOption.release();
-  }
-
-  /**
-   * @async
-   * @memberOf BlankAdapter
-   * Function called to remove task from the storage
-   * @name remove
-   * @param {string} uid - Unique ID of the task
-   * @returns {Promise<boolean>}
-   */
-  async remove(uid) {
-    const isRemoved = await this.requiredOption.remove(uid);
-    if (isRemoved) {
-      // Task removed
-      return true;
-    }
-    // Can not remove the task
-    return false;
-  }
-
-  /**
-   * @async
-   * @memberOf BlankAdapter
-   * Function called to add task to the storage
-   * @name add
-   * @param {string} uid - Unique ID of the task
-   * @param {boolean} isInterval - true/false defining loop or one-time task
-   * @param {number} delay - Delay in milliseconds
-   * @returns {Promise<void>}
-   */
-  async add(uid, isInterval, delay) {
-    const next = Date.now() + delay;
-    // STORE TASK IN THE STORAGE IN THE NEXT FORMAT
-    this.requiredOption.save({
-      uid: uid, // String
-      delay: delay, // Number
-      executeAt: next, // Date or Number
-      isInterval: isInterval, // Boolean
-      isDeleted: false // Boolean
+  async acquireLock(lock) {
+    await this.ready();
+    return await this.requiredOption.acquireLock({
+      key: this.lockKey,
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId,
+      expiresAtMs: lock.expiresAtMs,
     });
   }
 
   /**
    * @async
    * @memberOf BlankAdapter
-   * Function called after executing tasks
-   * Used by "Interval" tasks to set the next execution
+   * Release second-layer scheduler lock only when owner token matches
+   * @name releaseLock
+   * @param {{ ownerId: string, leaseId: string }} lock
+   * @returns {Promise<void>}
+   */
+  async releaseLock(lock) {
+    await this.ready();
+    await this.requiredOption.releaseLock({
+      key: this.lockKey,
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId,
+    });
+  }
+
+  /**
+   * @async
+   * @memberOf BlankAdapter
+   * Remove task from storage
+   * @name remove
+   * @param {string} uid - Unique ID of task
+   * @returns {Promise<boolean>}
+   */
+  async remove(uid) {
+    await this.ready();
+    return await this.requiredOption.remove({
+      scope: this.uniqueName,
+      uid,
+    });
+  }
+
+  /**
+   * @async
+   * @memberOf BlankAdapter
+   * Upsert task in storage
+   * @name add
+   * @param {string} uid - Unique ID of task
+   * @param {boolean} isInterval - true/false defining loop or one-time task
+   * @param {number} delay - Delay in milliseconds
+   * @returns {Promise<boolean>}
+   */
+  async add(uid, isInterval, delay) {
+    await this.ready();
+    return await this.requiredOption.save({
+      scope: this.uniqueName,
+      uid,
+      delay,
+      executeAt: Date.now() + delay,
+      isInterval,
+      isDeleted: false
+    });
+  }
+
+  /**
+   * @async
+   * @memberOf BlankAdapter
+   * Update next execution timestamp
    * @name update
-   * @param {object} task - Full object of the task from storage
-   * @param {Date} nextExecuteAt - Date defining time of the next execution for "Interval" tasks
-   * @returns {Promise<boolean>} - `true` if updated, `false` id doesn't exist
+   * @param {object} task - Full object of task from storage
+   * @param {Date} nextExecuteAt - Date defining time of next execution
+   * @returns {Promise<boolean>}
    */
   async update(task, nextExecuteAt) {
     if (typeof task !== 'object' || typeof task.uid !== 'string') {
@@ -156,17 +172,14 @@ class BlankAdapter {
       return false;
     }
 
+    await this.ready();
+
     try {
-      const exists = await this.requiredOption.exists(task.uid);
-      if (!exists) {
-        return false;
-      }
-      await this.requiredOption.update({
-        uid: task.uid
-      }, {
-        executeAt: nextExecuteAt
+      return await this.requiredOption.update({
+        scope: this.uniqueName,
+        uid: task.uid,
+        executeAt: +nextExecuteAt
       });
-      return true;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[StorageAdapter] [update] [opError]', 'Exception inside StorageAdapter#update() method', task.uid);
       return false;
@@ -176,40 +189,41 @@ class BlankAdapter {
   /**
    * @async
    * @memberOf BlankAdapter
-   * Find and run tasks one by one
+   * Claim due tasks atomically and execute them
    * @name iterate
-   * @param {Date} nextExecuteAt - Date defining time of the next execution for "zombie" tasks
-   * @returns {Promise<void>}
+   * @param {Date} nextExecuteAt - Date defining time of next execution for zombie recovery
+   * @param {{ ownerId: string, leaseId: string }} lock
+   * @param {'batch' | 'one'} executeMode
+   * @returns {Promise<number>}
    */
-  async iterate(nextExecuteAt) {
-    // GET TASKS WITHIN this.uniqueName SCOPE!
-    // AND ONLY WHERE executeAt <= now
-    // RUN ONE BY ONE VIA this.joskInstance.__execute() METHOD
+  async iterate(nextExecuteAt, lock, executeMode) {
+    await this.ready();
 
-    const cursorWithTasks = this.requiredOption.getTasks({
-      scope: this.uniqueName,
-      executeAt: {
-        $lte: Date.now() // Number (timestamp)
-      }
-    });
+    let executed = 0;
+    const maxIterations = executeMode === 'one' ? 1 : Number.MAX_SAFE_INTEGER;
 
-    for await (const task of cursorWithTasks) {
-      // "Lock task" by setting the next execution far ahead (timestamp + zombieTime)
-      await this.requiredOption.update({
-        uid: task.uid
-      }, {
-        executeAt: +nextExecuteAt, // Convert Date to Number (timestamp)
+    while (executed < maxIterations) {
+      const task = await this.requiredOption.claimNextTask({
+        scope: this.uniqueName,
+        before: Date.now(),
+        nextExecuteAt: +nextExecuteAt,
+        ownerId: lock.ownerId,
+        leaseId: lock.leaseId
       });
 
-      // EXECUTE TASK
+      if (!task) {
+        break;
+      }
+
+      executed++;
       this.joskInstance.__execute(task);
     }
+
+    return executed;
   }
 
   /** @internal */
   __customPrivateMethod() {
-    // DEFINE PREFIXED __ CUSTOM METHODS
-    // WHEN NEEDED FOR THE ADAPTER
     return true;
   }
 }

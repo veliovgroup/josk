@@ -4,7 +4,7 @@ export class BlankAdapter {
      * @param {object} opts - configuration object
      * @param {object} opts.requiredOption - Required option description
      * @param {string} [opts.prefix] - prefix for scope isolation; use when creating multiple JoSK instances within the single application
-     * @param {boolean} [opts.resetOnInit] - Make sure all old tasks is completed before setting a new one, see readme for more details
+     * @param {boolean} [opts.resetOnInit] - clear old tasks on startup
      */
     constructor(opts?: {
         requiredOption: object;
@@ -17,6 +17,13 @@ export class BlankAdapter {
     uniqueName: string;
     lockKey: string;
     requiredOption: object;
+    __readyPromise: Promise<void>;
+    /**
+     * @returns {Promise<void>}
+     */
+    ready(): Promise<void>;
+    /** @internal */
+    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf BlankAdapter
@@ -28,59 +35,72 @@ export class BlankAdapter {
     /**
      * @async
      * @memberOf BlankAdapter
-     * Function called to acquire read/write lock on Storage adapter
+     * Acquire second-layer scheduler lock with owner token
      * @name acquireLock
+     * @param {{ ownerId: string, leaseId: string, expiresAtMs: number }} lock
      * @returns {Promise<boolean>}
      */
-    acquireLock(): Promise<boolean>;
+    acquireLock(lock: {
+        ownerId: string;
+        leaseId: string;
+        expiresAtMs: number;
+    }): Promise<boolean>;
     /**
      * @async
      * @memberOf BlankAdapter
-     * Function called to release write/read lock from Storage adapter
+     * Release second-layer scheduler lock only when owner token matches
      * @name releaseLock
+     * @param {{ ownerId: string, leaseId: string }} lock
      * @returns {Promise<void>}
      */
-    releaseLock(): Promise<void>;
+    releaseLock(lock: {
+        ownerId: string;
+        leaseId: string;
+    }): Promise<void>;
     /**
      * @async
      * @memberOf BlankAdapter
-     * Function called to remove task from the storage
+     * Remove task from storage
      * @name remove
-     * @param {string} uid - Unique ID of the task
+     * @param {string} uid - Unique ID of task
      * @returns {Promise<boolean>}
      */
     remove(uid: string): Promise<boolean>;
     /**
      * @async
      * @memberOf BlankAdapter
-     * Function called to add task to the storage
+     * Upsert task in storage
      * @name add
-     * @param {string} uid - Unique ID of the task
+     * @param {string} uid - Unique ID of task
      * @param {boolean} isInterval - true/false defining loop or one-time task
      * @param {number} delay - Delay in milliseconds
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>}
      */
-    add(uid: string, isInterval: boolean, delay: number): Promise<void>;
+    add(uid: string, isInterval: boolean, delay: number): Promise<boolean>;
     /**
      * @async
      * @memberOf BlankAdapter
-     * Function called after executing tasks
-     * Used by "Interval" tasks to set the next execution
+     * Update next execution timestamp
      * @name update
-     * @param {object} task - Full object of the task from storage
-     * @param {Date} nextExecuteAt - Date defining time of the next execution for "Interval" tasks
-     * @returns {Promise<boolean>} - `true` if updated, `false` id doesn't exist
+     * @param {object} task - Full object of task from storage
+     * @param {Date} nextExecuteAt - Date defining time of next execution
+     * @returns {Promise<boolean>}
      */
     update(task: object, nextExecuteAt: Date): Promise<boolean>;
     /**
      * @async
      * @memberOf BlankAdapter
-     * Find and run tasks one by one
+     * Claim due tasks atomically and execute them
      * @name iterate
-     * @param {Date} nextExecuteAt - Date defining time of the next execution for "zombie" tasks
-     * @returns {Promise<void>}
+     * @param {Date} nextExecuteAt - Date defining time of next execution for zombie recovery
+     * @param {{ ownerId: string, leaseId: string }} lock
+     * @param {'batch' | 'one'} executeMode
+     * @returns {Promise<number>}
      */
-    iterate(nextExecuteAt: Date): Promise<void>;
+    iterate(nextExecuteAt: Date, lock: {
+        ownerId: string;
+        leaseId: string;
+    }, executeMode: "batch" | "one"): Promise<number>;
     /** @internal */
     __customPrivateMethod(): boolean;
 }
