@@ -19,6 +19,13 @@ const noop = (ready) => {
   typeof ready === 'function' && ready();
 };
 const ZOMBIE_TIME = 8000;
+const getTask = async (adapter, uid) => {
+  const payload = await adapter.client.hGet(adapter.tasksKey, uid);
+  return payload ? JSON.parse(payload) : null;
+};
+const hasTask = async (adapter, uid) => {
+  return await adapter.client.hExists(adapter.tasksKey, uid);
+};
 
 const callbacks = {};
 const exceptions = {};
@@ -341,32 +348,32 @@ describe('Redis - JoSk', function () {
 
     it('setTimeout', async function () {
       const uid = await job.setTimeout(noop, 2048, 'timeoutOverride');
-      const task = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
+      const task = await getTask(job.adapter, uid);
 
       assert.ok(typeof task === 'object', 'setTimeout override — record exists');
       assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
       await job.setTimeout(noop, 3072, 'timeoutOverride');
 
-      assert.equal((await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`)).delay, 3072, 'setTimeout override — Have correct updated delay');
+      assert.equal((await getTask(job.adapter, uid)).delay, 3072, 'setTimeout override — Have correct updated delay');
 
       const isRemoved = await job.clearTimeout(uid);
       assert.isTrue(isRemoved, 'timeoutOverride task is properly removed');
-      assert.equal(await job.adapter.client.exists([`${job.adapter.uniqueName}:task:${uid}`]), false, 'setTimeout override — Task cleared');
+      assert.equal(await hasTask(job.adapter, uid), false, 'setTimeout override — Task cleared');
     });
 
     it('setInterval', async function () {
       const uid = await job.setInterval(noop, 1024, 'intervalOverride');
-      const task = await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`);
+      const task = await getTask(job.adapter, uid);
 
       assert.ok(typeof task === 'object', 'setInterval override — record exists');
       assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
       await job.setInterval(noop, 2048, 'intervalOverride');
 
-      assert.equal((await job.adapter.client.hGetAll(`${job.adapter.uniqueName}:task:${uid}`)).delay, 2048, 'setInterval override — Have correct updated delay');
+      assert.equal((await getTask(job.adapter, uid)).delay, 2048, 'setInterval override — Have correct updated delay');
 
       const isRemoved = await job.clearInterval(uid);
       assert.isTrue(isRemoved, 'intervalOverride task is properly removed');
-      assert.equal(await job.adapter.client.exists([`${job.adapter.uniqueName}:task:${uid}`]), false, 'setInterval override — Task cleared');
+      assert.equal(await hasTask(job.adapter, uid), false, 'setInterval override — Task cleared');
     });
   });
 
@@ -967,8 +974,8 @@ describe('Redis - JoSk', function () {
     });
 
     it('Check that collections are clear', async function () {
-      const count = (await jobCron.adapter.client.keys(`${jobCron.adapter.uniqueName}:task:*`)).length;
-      const count2 = (await job.adapter.client.keys(`${job.adapter.uniqueName}:task:*`)).length;
+      const count = await jobCron.adapter.client.hLen(jobCron.adapter.tasksKey);
+      const count2 = await job.adapter.client.hLen(job.adapter.tasksKey);
       assert.equal(count, 0, 'jobCron.count === 0');
       assert.equal(count2, 0, 'job.count === 0');
     });

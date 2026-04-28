@@ -1,10 +1,10 @@
 import josk = require('josk');
 
 const adapter = {
-  async acquireLock() {
+  async acquireLock(_lock: { ownerId: string; leaseId: string; expireAt: Date; expiresAtMs: number }) {
     return true;
   },
-  async releaseLock() {},
+  async releaseLock(_lock: { ownerId: string; leaseId: string; expireAt: Date; expiresAtMs: number }) {},
   async remove(_uid: string) {
     return true;
   },
@@ -14,7 +14,7 @@ const adapter = {
   async update(_task: { uid: string }, _nextExecuteAt: Date) {
     return true;
   },
-  async iterate(_nextExecuteAt: Date) {},
+  async iterate(_nextExecuteAt: Date, _lock: { ownerId: string; leaseId: string; expireAt: Date; expiresAtMs: number }, _executeMode: 'one' | 'batch') {},
   async ping() {
     return {
       status: 'OK',
@@ -24,7 +24,7 @@ const adapter = {
   }
 };
 
-const jobs = new josk.JoSk({ adapter });
+const jobs = new josk.JoSk({ adapter, execute: 'batch' });
 
 jobs.setImmediate(() => {}, 'cjs-task');
 jobs.destroy();

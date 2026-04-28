@@ -17,6 +17,13 @@ const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
 const noop = (ready) => {
   typeof ready === 'function' && ready();
 };
+const getTask = async (adapter, uid) => {
+  const payload = await adapter.client.hGet(adapter.tasksKey, uid);
+  return payload ? JSON.parse(payload) : null;
+};
+const hasTask = async (adapter, uid) => {
+  return await adapter.client.hExists(adapter.tasksKey, uid);
+};
 const timestamps  = {};
 const callbacks   = {};
 const revolutions = {};
@@ -198,21 +205,21 @@ describe('redis - override settings', function () {
       const uid = await cron.setTimeout(noop, 2048, 'timeoutOverride');
 
       setTimeout(async () => {
-        const task = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+        const task = await getTask(cron.adapter, uid);
 
         assert.ok(typeof task === 'object', 'setTimeout override — record exists');
         assert.equal(task.delay, 2048, 'setTimeout override — Have correct initial delay');
         cron.setTimeout(noop, 3072, 'timeoutOverride');
 
         setTimeout(async () => {
-          const updatedTask = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+          const updatedTask = await getTask(cron.adapter, uid);
 
           assert.equal(updatedTask.delay, 3072, 'setTimeout override — Have correct updated delay');
 
           process.nextTick(() => {
             cron.clearTimeout(uid);
             setTimeout(async () => {
-              assert.equal(await cron.adapter.client.exists([`${cron.adapter.uniqueName}:task:${uid}`]), false, 'setTimeout override — Task cleared');
+              assert.equal(await hasTask(cron.adapter, uid), false, 'setTimeout override — Task cleared');
               done();
             }, 384);
           });
@@ -226,21 +233,21 @@ describe('redis - override settings', function () {
       const uid = await cron.setInterval(noop, 1024, 'intervalOverride');
 
       setTimeout(async () => {
-        const task = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+        const task = await getTask(cron.adapter, uid);
 
         assert.ok(typeof task === 'object', 'setInterval override — record exists');
         assert.equal(task.delay, 1024, 'setInterval override — Have correct initial delay');
         cron.setInterval(noop, 2048, 'intervalOverride');
 
         setTimeout(async () => {
-          const updatedTask = await cron.adapter.client.hGetAll(`${cron.adapter.uniqueName}:task:${uid}`);
+          const updatedTask = await getTask(cron.adapter, uid);
 
           assert.equal(updatedTask.delay, 2048, 'setInterval override — Have correct updated delay');
 
           process.nextTick(() => {
             cron.clearInterval(uid);
             setTimeout(async () => {
-              assert.equal(await cron.adapter.client.exists([`${cron.adapter.uniqueName}:task:${uid}`]), false, 'setInterval override — Task cleared');
+              assert.equal(await hasTask(cron.adapter, uid), false, 'setInterval override — Task cleared');
               done();
             }, 384);
           });
