@@ -133,6 +133,13 @@ export class PostgresAdapter {
      * @returns {Promise<PostgresTask | null>}
      */
     __claimNextTask(nextExecuteAt: Date, lock: JoSkLock): Promise<PostgresTask | null>;
+    /**
+     * @param {Date} nextExecuteAt
+     * @param {JoSkLock} lock
+     * @param {number} limit
+     * @returns {Promise<PostgresTask[]>}
+     */
+    __claimNextTasks(nextExecuteAt: Date, lock: JoSkLock, limit: number): Promise<PostgresTask[]>;
     /** @internal */
     __customPrivateMethod(): boolean;
 }
