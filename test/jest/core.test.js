@@ -169,6 +169,69 @@ describe('JoSk core', () => {
     expect(adapter.readyCalls).toBe(1);
   });
 
+  it('pings storage after adapter readiness', async () => {
+    const { job } = createJob();
+
+    await expect(job.ping()).resolves.toEqual({
+      status: 'OK',
+      code: 200,
+      statusCode: 200
+    });
+  });
+
+  it('supports adapters without ready hook', async () => {
+    const adapter = {
+      acquireLock: async () => true,
+      releaseLock: async () => {},
+      remove: async () => true,
+      add: async () => true,
+      update: async () => true,
+      iterate: async () => 0,
+      ping: async () => ({
+        status: 'OK',
+        code: 200,
+        statusCode: 200
+      })
+    };
+    const { job } = createJob({}, adapter);
+
+    await expect(job.__adapterReady()).resolves.toBeUndefined();
+  });
+
+  it('returns empty ids from destroyed interval and immediate registration', async () => {
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job, adapter } = createJob({
+      debug: true
+    });
+
+    job.destroy();
+
+    await expect(job.setInterval(() => {}, 1, 'destroyed-interval')).resolves.toBe('');
+    await expect(job.setImmediate(() => {}, 'destroyed-immediate')).resolves.toBe('');
+
+    expect(adapter.addCalls).toHaveLength(0);
+    expect(info).toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('clears interval promise ids', async () => {
+    const { job, adapter } = createJob();
+    adapter.stored.set('promise-intervalsetInterval', {});
+
+    await expect(job.clearInterval(Promise.resolve('promise-intervalsetInterval'))).resolves.toBe(true);
+
+    expect(adapter.removeCalls).toEqual(['promise-intervalsetInterval']);
+  });
+
+  it('skips private add when destroyed', async () => {
+    const { job, adapter } = createJob();
+
+    job.destroy();
+    await job.__add('destroyed-add', false, 1);
+
+    expect(adapter.addCalls).toHaveLength(0);
+  });
+
   it('acquires scheduler lock, iterates with selected mode, and releases same lease', async () => {
     const { job, adapter } = createJob({
       execute: 'one',
@@ -217,6 +280,35 @@ describe('JoSk core', () => {
     expect(adapter.releaseCalls).toHaveLength(1);
   });
 
+  it('routes release lock failures through onError', async () => {
+    const error = new Error('release failed');
+    const errors = [];
+    const { job, adapter } = createJob({
+      onError(title, details) {
+        errors.push({ title, details });
+      }
+    });
+    adapter.releaseLock = async () => {
+      throw error;
+    };
+
+    await job.__iterate();
+
+    expect(errors[0].title).toBe('[__iterate] [releaseLock] releaseError:');
+    expect(errors[0].details.error).toBe(error);
+  });
+
+  it('skips iterate and tick after destruction', async () => {
+    const { job, adapter } = createJob();
+
+    job.destroy();
+    await job.__iterate();
+    job.__tick();
+
+    expect(adapter.acquireCalls).toHaveLength(0);
+    expect(job.nextRevolutionTimeout).toBeNull();
+  });
+
   it('destroys once and blocks future task registration', async () => {
     const errors = [];
     const { job, adapter } = createJob({
@@ -261,6 +353,41 @@ describe('JoSk core', () => {
     expect(executed[0].details.date).toBeInstanceOf(Date);
   });
 
+  it('skips deleted and already-missing tasks', async () => {
+    const { job, adapter } = createJob();
+    const deleted = {
+      uid: 'deletedsetTimeout',
+      delay: 1,
+      isInterval: false,
+      isDeleted: true
+    };
+    const missing = {
+      uid: 'missing-marksetInterval',
+      delay: 1,
+      isInterval: true,
+      isDeleted: false
+    };
+    job.tasks[missing.uid] = () => {};
+    job.tasks[missing.uid].isMissing = true;
+
+    await job.__execute(deleted);
+    await job.__execute(missing);
+
+    expect(adapter.updateCalls).toHaveLength(0);
+  });
+
+  it('debugs malformed tasks when onError is absent', async () => {
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job } = createJob({
+      debug: true
+    });
+
+    await job.__execute(null);
+
+    expect(info).toHaveBeenCalledWith('[DEBUG] [josk]', '[__execute] received malformed task', null);
+    info.mockRestore();
+  });
+
   it('reschedules interval with custom Date from ready()', async () => {
     const { job, adapter } = createJob();
     const next = new Date(Date.now() + 5000);
@@ -279,6 +406,42 @@ describe('JoSk core', () => {
     expect(adapter.updateCalls).toHaveLength(1);
     expect(adapter.updateCalls[0].task).toBe(task);
     expect(adapter.updateCalls[0].nextExecuteAt).toBe(next);
+  });
+
+  it('reschedules interval with timestamp and callback ready values', async () => {
+    let callbackError;
+    let callbackResult;
+    const { job, adapter } = createJob();
+    const timestamp = Date.now() + 5000;
+    const timestampTask = {
+      uid: 'timestamp-readysetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+    const callbackTask = {
+      uid: 'callback-readysetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+    job.tasks[timestampTask.uid] = (ready) => {
+      ready(timestamp);
+    };
+    job.tasks[callbackTask.uid] = (ready) => {
+      ready((error, result) => {
+        callbackError = error;
+        callbackResult = result;
+      });
+    };
+
+    await job.__execute(timestampTask);
+    await job.__execute(callbackTask);
+
+    expect(+adapter.updateCalls[0].nextExecuteAt).toBe(timestamp);
+    expect(callbackError).toBeUndefined();
+    expect(callbackResult).toBe(true);
+    expect(adapter.updateCalls).toHaveLength(2);
   });
 
   it('resolves returned promises with implicit ready() for intervals', async () => {
@@ -348,6 +511,30 @@ describe('JoSk core', () => {
     expect(callbackResult).toBe(false);
   });
 
+  it('debugs remove failures while executing timeout tasks', async () => {
+    const removeError = new Error('remove failed');
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job, adapter } = createJob({
+      debug: true
+    });
+    const task = {
+      uid: 'remove-failsetTimeout',
+      delay: 1,
+      isInterval: false,
+      isDeleted: false
+    };
+    job.tasks[task.uid] = jest.fn();
+    adapter.remove = async () => {
+      throw removeError;
+    };
+
+    await job.__execute(task);
+
+    expect(job.tasks[task.uid]).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith('[DEBUG] [josk]', `[${task.uid}] [__execute] [__remove] has thrown an exception; Check connection with StorageAdapter; removeError:`, removeError);
+    info.mockRestore();
+  });
+
   it('updates and auto-clears missing tasks', async () => {
     const { job, adapter } = createJob({
       autoClear: true
@@ -365,6 +552,30 @@ describe('JoSk core', () => {
     expect(adapter.updateCalls).toHaveLength(1);
     expect(adapter.removeCalls).toEqual([task.uid]);
     expect(job.tasks[task.uid]).toBeUndefined();
+  });
+
+  it('debugs autoClear remove failures for missing tasks', async () => {
+    const removeError = new Error('auto clear failed');
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job, adapter } = createJob({
+      autoClear: true,
+      debug: true
+    });
+    const task = {
+      uid: 'auto-clear-failsetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+    adapter.remove = async () => {
+      throw removeError;
+    };
+
+    await job.__execute(task);
+
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(info).toHaveBeenCalledWith('[DEBUG] [josk]', `[${task.uid}] [__execute] [this.autoClear] [__remove] has thrown an exception; removeError:`, removeError);
+    info.mockRestore();
   });
 
   it('reports missing tasks when autoClear is disabled', async () => {
@@ -387,5 +598,39 @@ describe('JoSk core', () => {
     expect(adapter.updateCalls).toHaveLength(1);
     expect(errors[0].title).toBe('One of your tasks is missing');
     expect(errors[0].details.uid).toBe(task.uid);
+  });
+
+  it('debugs missing tasks when autoClear and onError are disabled', async () => {
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job, adapter } = createJob({
+      debug: true
+    });
+    const task = {
+      uid: 'missing-debugsetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+
+    await job.__execute(task);
+
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(info).toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('logs internal errors when onError is absent', () => {
+    const error = new Error('internal');
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { job } = createJob();
+
+    job.__errorHandler(error, 'Internal title', 'Internal description', 'internal-id');
+
+    expect(errorSpy).toHaveBeenCalledWith('Internal title', {
+      description: 'Internal description',
+      error,
+      uid: 'internal-id'
+    });
+    errorSpy.mockRestore();
   });
 });
