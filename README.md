@@ -674,12 +674,15 @@ MongoClient.connect('mongodb://url', options, (error, client) => {
 # Install NPM dependencies
 npm install --save-dev
 
-# Before running tests you need
-# to have access to MongoDB and Redis servers
-REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm test
+# Before running full tests you need MongoDB, Redis, and PostgreSQL servers.
+# Required URLs:
+# - REDIS_URL: Redis connection string
+# - MONGO_URL: MongoDB connection string
+# - PG_URL: PostgreSQL connection string
+REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm test
 
 # If previous run has errors — add "debug" to output extra logs
-DEBUG=true REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm test
+DEBUG=true REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm test
 
 # Be patient, tests are taking around 6 mins
 ```
@@ -708,7 +711,8 @@ MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm run test-mongo
 ### Run PostgreSQL tests only
 
 ```shell
-# Before running, have Postgres server running, create DB e.g. npm-josk-test-001
+# Before running, have PostgreSQL server running and create DB, e.g. npm-josk-test-001
+# PG_URL is required for PostgreSQL tests.
 # Install pg if not: npm install --save-dev pg
 PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm run test-postgres
 
