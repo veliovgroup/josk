@@ -108,14 +108,14 @@ describe('PostgresAdapter + JoSk', function () {
     const uid = 'pg-interval-' + Date.now();
     let count = 0;
 
-    await jobs.setInterval((ready) => {
+    const timerId = await jobs.setInterval((ready) => {
       count++;
       ready();
     }, 300, uid);
 
     await wait(1200);
     assert.isAtLeast(count, 2, 'multiple executions');
-    await jobs.clearInterval(uid);
+    await jobs.clearInterval(timerId);
   });
 
   it('handles onError and zombie recovery', async function () {
@@ -145,13 +145,13 @@ describe('PostgresAdapter + JoSk', function () {
       }, next - Date.now(), name);
     };
 
-    await setCron(uid, '*/2 * * * * *', () => {
+    const timerId = await setCron(uid, '*/2 * * * * *', () => {
       ran++;
     });
 
     await wait(5000);
     assert.isAtLeast(ran, 1);
-    await jobs.clearInterval(uid);
+    await jobs.clearInterval(timerId);
   });
 
   it('allows same uid in different prefixes', async function () {
