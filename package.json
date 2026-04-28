@@ -1,9 +1,10 @@
 {
   "name": "josk",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications. Supports Redis, MongoDB, PostgreSQL adapters.",
   "main": "index.js",
   "type": "module",
+  "types": "./index.d.ts",
   "exports": {
     ".": {
       "import": {
@@ -19,11 +20,11 @@
   "scripts": {
     "prepublishOnly": "rollup index.js --file index.cjs --format cjs && rm -rf ./.types-tmp && tsc --emitDeclarationOnly --declaration --outDir ./.types-tmp --rootDir ./ && cp ./.types-tmp/index.d.ts ./index.d.ts && cp ./.types-tmp/index.d.ts ./index.d.cts && cp ./.types-tmp/adapters/*.d.ts ./adapters/ && rm -rf ./.types-tmp",
     "test": "mocha ./test/npm.js",
-    "test-adapter-guards": "mocha ./test/adapter-guards.js",
-    "test-types": "tsc -p ./tsconfig.types.json",
-    "test-redis": "mocha ./test/npm-redis.js",
-    "test-mongo": "mocha ./test/npm-mongo.js",
-    "test-postgres": "mocha ./test/npm-postgres.js"
+    "test:adapter-guards": "mocha ./test/adapter-guards.js",
+    "test:types": "tsc -p ./tsconfig.types.json",
+    "test:redis": "mocha ./test/npm-redis.js",
+    "test:mongo": "mocha ./test/npm-mongo.js",
+    "test:postgres": "mocha ./test/npm-postgres.js"
   },
   "keywords": [
     "agenda",
@@ -94,6 +95,5 @@
     "pg": "^8.13.1",
     "redis": "^4.6.13",
     "typescript": "^5.8.2"
-  },
-  "types": "./index.d.ts"
+  }
 }
