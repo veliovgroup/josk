@@ -681,6 +681,9 @@ npm install --save-dev
 # - PG_URL: PostgreSQL connection string
 REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm test
 
+# Run Jest suite for core plus live adapter contract tests
+REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://localhost:5432/josk-tests" npm run test:jest
+
 # If previous run has errors — add "debug" to output extra logs
 DEBUG=true REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm test
 
