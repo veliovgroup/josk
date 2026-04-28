@@ -13,12 +13,12 @@ meteor add ostrio:cron-jobs
 ## Usage
 
 ```js
-import { JoSk, RedisAdapter, MongoAdapter } from 'meteor/ostrio:cron-jobs';
+import { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } from 'meteor/ostrio:cron-jobs';
 ```
 
 ### Initialization
 
-JoSk is storage-agnostic (since `v4.0.0`). It's shipped with Redis and MongoDb "adapters" out of the box. Documentation below related to working with MongoDB provided and managed by Meteor.js. If you wish to use Redis as a driver for JoSk follow [Redis-related documentation from NPM version of the package](https://github.com/veliovgroup/josk?tab=readme-ov-file#redis-adapter). NPM section of the documentation is fully applicable to package installed from Atmosphere/Packosphere, the only difference is in how package imported
+JoSk is storage-agnostic (since `v4.0.0`). Atmosphere package ships Redis, MongoDB, and PostgreSQL adapters. Documentation below focuses on MongoDB provided and managed by Meteor.js. For Redis and PostgreSQL adapter details follow NPM package docs; options are same, import path is different.
 
 ```js
 import { MongoInternals } from 'meteor/mongo';
@@ -26,9 +26,12 @@ import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
 
 const jobs = new JoSk({
   adapter: new MongoAdapter({
-    db: db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
+    db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
     prefix: 'cluster-scheduler',
   }),
+  execute: 'batch',
+  minRevolvingDelay: 128,
+  maxRevolvingDelay: 768,
   onError(reason, details) {
     // Use onError hook to catch runtime exceptions
     // thrown inside scheduled tasks
@@ -51,6 +54,88 @@ jobs.setInterval((ready) => {
 }, 60000, 'task-1m');
 ```
 
+### Options
+
+Same JoSk options from NPM package are available in Meteor:
+
+- `adapter` — required storage adapter instance: `MongoAdapter`, `RedisAdapter`, or `PostgresAdapter`
+- `execute` — `batch` (default) drains due tasks under one lease; `one` claims one task per lease
+- `zombieTime` — stuck-task retry time; default is `900000` ms
+- `lockOwnerId` — optional stable owner id for scheduler lease tokens
+- `minRevolvingDelay` and `maxRevolvingDelay` — polling jitter range; higher values reduce storage writes
+- `autoClear` — removes storage tasks missing from current process memory
+- `onError` and `onExecuted` — runtime hooks for task failures and completed executions
+
+Adapter options:
+
+- `MongoAdapter`: `db`, `prefix`, `lockCollectionName`, `resetOnInit`
+- `RedisAdapter`: `client`, `prefix`, `resetOnInit`
+- `PostgresAdapter`: `client`, `prefix`, `resetOnInit`
+
+Keep `resetOnInit: false` in clustered production. It deletes current-prefix adapter state during initialization.
+
+### Redis Adapter
+
+Install Redis driver in Meteor app if Redis storage is used:
+
+```shell
+meteor npm install redis
+```
+
+```js
+import { JoSk, RedisAdapter } from 'meteor/ostrio:cron-jobs';
+import { createClient } from 'redis';
+
+const redisClient = await createClient({
+  url: process.env.REDIS_URL
+}).connect();
+
+const jobs = new JoSk({
+  adapter: new RedisAdapter({
+    client: redisClient,
+    prefix: 'cluster-scheduler',
+  }),
+});
+```
+
+Use one writable Redis/KeyDB primary. Do not route JoSk traffic to replicas.
+
+### PostgreSQL Adapter
+
+Install PostgreSQL driver in Meteor app if PostgreSQL storage is used:
+
+```shell
+meteor npm install pg
+```
+
+```js
+import { JoSk, PostgresAdapter } from 'meteor/ostrio:cron-jobs';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  connectionString: process.env.PG_URL
+});
+
+const jobs = new JoSk({
+  adapter: new PostgresAdapter({
+    client: pool,
+    prefix: 'cluster-scheduler',
+  }),
+  execute: 'batch',
+});
+```
+
+Use one writable PostgreSQL primary. Adapter creates `josk_tasks` and `josk_locks` tables in current database/schema. Use same `prefix` for instances sharing one schedule; use different prefixes for isolated apps, tenants, or tests.
+
+### Guidelines
+
+- Create JoSk only on server startup. Package is server-only.
+- Use same codebase and task `uid` set on every horizontally scaled Meteor instance that shares a `prefix`.
+- Always use unique `uid` per logical task. Do not reuse same `uid` for different schedules.
+- Always call `ready()` for callback-style or long-running async tasks. Promise-returning handlers are also supported.
+- Prefer `execute: 'batch'` for normal production throughput. Use `execute: 'one'` when smaller execution bursts or instance fairness is preferred.
+- For multi-DC exactly-once scheduling, use strongly consistent storage with one write authority.
+
 Note: This library relies on job ID. Always use different `uid`, even for the same task:
 
 ```js
@@ -69,12 +154,12 @@ Use JoSk to invoke synchronized tasks by CRON schedule, and [`cron-parser` packa
 
 ```js
 import { MongoInternals } from 'meteor/mongo';
-import JoSk from 'meteor/ostrio:cron-jobs';
+import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
 import parser from 'cron-parser';
 
 const jobsCron = new JoSk({
   adapter: new MongoAdapter({
-    db: db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
+    db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
     prefix: 'cron-scheduler',
   }),
   minRevolvingDelay: 512, // Adjust revolving delays to higher values
@@ -105,21 +190,24 @@ setCron('Run every two seconds cron', '*/2 * * * * *', function () {
 4. Then run:
 
 ```shell
-# Default
+# Default Meteor package tests require REDIS_URL.
 REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha
 
 # With custom port
 REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
-# With local MongoDB, debug and custom port
+# With local MongoDB, debug, and custom port
 DEBUG=true MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+
+# With PostgreSQL tests enabled, PG_URL is required.
+DEBUG=true MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" PG_URL="postgres://postgres:postgres@localhost:5432/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
 # Be patient, tests are taking around 4 mins
 ```
 
 ## Known Meteor Issues:
 
-`meteor@1` and `meteor@2` known to rely on `fibers` an may cause the next exception:
+`meteor@1` and `meteor@2` known to rely on `fibers` and may cause the next exception:
 
 ```log
 Error: Can't wait without a fiber
@@ -132,8 +220,12 @@ const bound = Meteor.bindEnvironment((callback) => {
   callback();
 });
 
-const db  = Collection.rawDatabase();
-const jobs = new JoSk({db: db});
+const db = Collection.rawDatabase();
+const jobs = new JoSk({
+  adapter: new MongoAdapter({
+    db,
+  }),
+});
 
 const task = (ready) => {
   bound(() => { // <-- use "bound" inside of a task
