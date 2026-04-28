@@ -53,7 +53,7 @@ __Note: JoSk is the server-only package.__
 
 ## Prerequisites
 
-- `redis-server@>=5.0.0` — for RedisAdapter
+- `redis-server@>=5.0.0` or KeyDB with Redis-compatible Lua + sorted-set support — for RedisAdapter
 - `mongod@>=4.0.0` — for MongoAdapter
 - `postgres@>=12` — for PostgresAdapter (uses `pg` NPM package)
 - `node@>=14.20.0` — Node.js version
@@ -88,6 +88,8 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
 - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to below `60000` (*one minute*)
+- `opts.execute` {*String*} - [Optional] due-task execution mode. Use `one` to claim and run one task per scheduler lease, or `batch` to drain all currently due tasks under same lease. Default: `batch`
+- `opts.lockOwnerId` {*String*} - [Optional] custom stable owner id for scheduler lease tokens. Default: auto-generated per `JoSk` instance
 - `opts.minRevolvingDelay` {*Number*} - [Optional] Minimum revolving delay — the minimum delay between tasks executions in milliseconds. Default: `128`
 - `opts.maxRevolvingDelay` {*Number*} - [Optional] Maximum revolving delay — the maximum delay between tasks executions in milliseconds. Default: `768`
 - `opts.onError` {*Function*} - [Optional] Informational hook, called instead of throwing exceptions. Default: `false`. Called with two arguments:
@@ -121,13 +123,28 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
 - `opts.lockCollectionName` {*String*} - [Optional] By default all JoSk instances use the same `__JobTasks__.lock` collection for locking
 - `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks are completed during initialization. Useful for single-instance apps to clean up unfinished that occurred due to intermediate shutdown, reboot, or exception. Default: `false`
 
+### `new PostgresAdapter(opts)`
+
+*Since* `v5.2.0`
+
+- `opts.client` {*Pool*|*Client*} - [*Required*] `pg` client with `.query()` method. `Pool` is recommended for long-running applications
+- `opts.prefix` {*String*} - [Optional] use to create multiple isolated scheduler namespaces in same database. Default: `default`
+- `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) deletes tasks and locks for current `prefix` during initialization. Useful for local development and single-instance startup recovery. Default: `false`
+
 ### Initialization
 
 JoSk is storage-agnostic (since `v4.0.0`). Shipped with Redis, MongoDB, and PostgreSQL adapters. Extend via [custom adapter](docs/adapter-api.md)
 
 #### Redis Adapter
 
-JoSk has no dependencies, hence make sure `redis` NPM package is installed in order to support Redis Storage Adapter. `RedisAdapter` utilize basic set of commands `SET`, `GET`, `DEL`, `EXISTS`, `HSET`, `HGETALL`, and `SCAN`. `RedisAdapter` is compatible with all Redis-alike databases, and was well-tested with [Redis](https://redis.io/) and [KeyDB](https://docs.keydb.dev/)
+JoSk has no dependencies, hence make sure `redis` NPM package is installed in order to support Redis Storage Adapter. `RedisAdapter` stores due timestamps in sorted set and task payloads in hash, then claims due work atomically via Lua scripts. `RedisAdapter` is compatible with Redis-like databases with Lua + sorted-set support, and was well-tested with [Redis](https://redis.io/) and [KeyDB](https://docs.keydb.dev/)
+
+KeyDB guidelines:
+
+- Use a single writable KeyDB primary or a KeyDB Cluster endpoint with all JoSk keys on the same hash slot. Adapter keys use hash tags: `josk:{prefix}:schedule`, `josk:{prefix}:tasks`, `josk:{prefix}:lock`.
+- Do not route JoSk reads or writes to replicas. Scheduler correctness depends on immediate visibility of lock and task-claim writes.
+- Avoid KeyDB active-replication/multi-master mode for JoSk exactly-once execution. Conflict resolution and eventual convergence can allow duplicate task claims across writers.
+- For multi-DC exactly-once scheduling, use a strongly consistent storage topology, or prefer PostgreSQL with one write authority.
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -178,7 +195,7 @@ const jobs = new JoSk({
 
 *Since* `v5.2.0`
 
-JoSk has no dependencies, hence make sure `pg` NPM package (`npm i pg`) is installed. Adapter auto-creates `josk_tasks` and `josk_locks` tables on init. Uses conditional UPDATEs for locking. Use connection Pool. Separate DB/schema recommended to avoid contention.
+JoSk has no dependencies, hence make sure `pg` NPM package (`npm i pg`) is installed. PostgreSQL `>=12` is recommended. Adapter auto-creates and migrates `josk_tasks` and `josk_locks` tables on init, using current database/schema from the provided client.
 
 ```js
 import { JoSk, PostgresAdapter } from 'josk';
@@ -200,6 +217,17 @@ const jobs = new JoSk({
   }
 });
 ```
+
+PostgreSQL guidelines:
+
+- Use `pg.Pool` for application runtime. Share same pool when scheduler tasks also use PostgreSQL, or use a small dedicated pool when you want scheduler isolation.
+- Use one writable primary endpoint. Do not route JoSk reads or writes to read replicas; task claims must be immediately visible across app instances.
+- Use same `prefix` on instances that must share one schedule. Use different `prefix` values for isolated tenants, environments, or test suites.
+- Prefer a dedicated database or schema when possible. Adapter creates `josk_tasks` and `josk_locks`; table names are fixed, isolation is by `prefix`.
+- Keep `resetOnInit: false` in clustered production. `true` deletes current-prefix tasks and lock rows during adapter initialization.
+- `execute: 'batch'` is default. It claims due tasks in batches using `FOR UPDATE SKIP LOCKED`, then iterates returned task list in memory. Best for draining backlogs with fewer DB round-trips.
+- `execute: 'one'` claims one due task per scheduler lease with `LIMIT 1`. Useful when you want smaller execution bursts or tighter fairness between instances.
+- Tune `minRevolvingDelay` and `maxRevolvingDelay` with pool capacity and task runtime. Lower delays poll more often and increase database writes.
 
 #### Create the first task
 
@@ -569,10 +597,10 @@ During development and tests you may want to clean up Adapter's Storage
 To clean up old tasks via Redis CLI use the next query pattern:
 
 ```shell
-redis-cli --no-auth-warning KEYS "josk:default:*" | xargs redis-cli --raw --no-auth-warning DEL
+redis-cli --no-auth-warning --scan --pattern "josk:{default}:*" | xargs redis-cli --raw --no-auth-warning DEL
 
 # If you're using multiple JoSk instances with prefix:
-redis-cli --no-auth-warning KEYS "josk:prefix:*" | xargs redis-cli --raw --no-auth-warning DEL
+redis-cli --no-auth-warning --scan --pattern "josk:{prefix}:*" | xargs redis-cli --raw --no-auth-warning DEL
 ```
 
 #### Clean up MongoDB
@@ -584,6 +612,19 @@ To clean up old tasks via MongoDB use the next query pattern:
 db.getCollection('__JobTasks__').remove({});
 // If you're using multiple JoSk instances with prefix:
 db.getCollection('__JobTasks__PrefixHere').remove({});
+```
+
+#### Clean up PostgreSQL
+
+To clean up old tasks and lock for current prefix via PostgreSQL:
+
+```sql
+DELETE FROM josk_tasks WHERE prefix = 'default';
+DELETE FROM josk_locks WHERE lock_key = 'josk-default.lock';
+
+-- If you're using custom prefix:
+DELETE FROM josk_tasks WHERE prefix = 'cluster-scheduler';
+DELETE FROM josk_locks WHERE lock_key = 'josk-cluster-scheduler.lock';
 ```
 
 ### MongoDB connection fine tuning
@@ -620,7 +661,7 @@ MongoClient.connect('mongodb://url', options, (error, client) => {
 - Limitation — unique task must be run not often than once per two seconds (from 2 to ∞ seconds; no limit on different parallel tasks). Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodic application logic operations or Periodic data fetch, sync, and etc;
 - Accuracy — Delay of each task depends on storage and "de-synchronization delay". Trusted time-range of execution period is `task_delay ± (256 + Storage_Request_Delay)`. That means this package won't fit when you need to run a task with very precise delays. For other cases, if `±256 ms` delays are acceptable - this package is the great solution;
 - Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce storage read/writes;
-- This package implements "Read Locking" via "RedLock" for Redis and dedicated `.lock` collection for MongoDB.
+- This package implements scheduler locking via Redis key, MongoDB `.lock` collection, or PostgreSQL `josk_locks` table. Task claims are adapter-level atomic operations.
 
 ## Running Tests
 
