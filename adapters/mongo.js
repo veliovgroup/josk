@@ -2,6 +2,8 @@
  * @typedef {import('mongodb').Collection} Collection
  * @typedef {import('mongodb').Db} Db
  * @typedef {import('../index.js').JoSk} JoSk
+ * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
+ * @typedef {import('../index.js').JoSkLock} JoSkLock
  */
 
 /**
@@ -22,7 +24,7 @@
 
 /**
  * @typedef {object} MongoTask
- * @property {unknown} _id
+ * @property {unknown} [_id]
  * @property {string} uid
  * @property {number} delay
  * @property {Date} [executeAt]
@@ -37,49 +39,42 @@ const logError = (error, ...args) => {
 };
 
 /**
- * Ensure (create) index on MongoDB collection, catch and log exception if thrown
- * @function ensureIndex
- * @param {Collection} collection - Mongo's driver Collection instance
- * @param {object} keys - Field and value pairs where the field is the index key and the value describes the type of index for that field
- * @param {object} opts - Set of options that controls the creation of the index
+ * @param {Collection} collection
+ * @param {object} keys
+ * @param {object} opts
  * @returns {Promise<void>}
  */
 const ensureIndex = async (collection, keys, opts) => {
   try {
     await collection.createIndex(keys, opts);
-  } catch (e) {
-    if (e.code === 85) {
-      let indexName;
-      const indexes = await collection.indexes();
-      for (const index of indexes) {
-        let drop = true;
-        for (const indexKey of Object.keys(keys)) {
-          if (typeof index.key[indexKey] === 'undefined') {
-            drop = false;
-            break;
-          }
-        }
+  } catch (error) {
+    if (error?.code !== 85 && error?.codeName !== 'IndexOptionsConflict') {
+      throw error;
+    }
 
-        for (const indexKey of Object.keys(index.key)) {
-          if (typeof keys[indexKey] === 'undefined') {
-            drop = false;
-            break;
-          }
-        }
+    const indexes = await collection.indexes();
+    for (const index of indexes) {
+      const indexKeys = Object.keys(index.key || {});
+      const desiredKeys = Object.keys(keys);
+      if (indexKeys.length !== desiredKeys.length) {
+        continue;
+      }
 
-        if (drop) {
-          indexName = index.name;
+      let matches = true;
+      for (const key of desiredKeys) {
+        if (index.key[key] !== keys[key]) {
+          matches = false;
           break;
         }
       }
 
-      if (indexName) {
-        await collection.dropIndex(indexName);
-        await collection.createIndex(keys, opts);
+      if (matches) {
+        await collection.dropIndex(index.name);
+        break;
       }
-    } else {
-      console.info(`[INFO] [josk] [MongoAdapter] [ensureIndex] Can not set ${Object.keys(keys).join(' + ')} index on "${collection._name || 'MongoDB'}" collection`, { keys, opts, details: e });
     }
+
+    await collection.createIndex(keys, opts);
   }
 };
 
@@ -91,9 +86,9 @@ class MongoAdapter {
    */
   constructor(opts = {}) {
     this.name = 'mongo';
-    this.prefix = (typeof opts.prefix === 'string') ? opts.prefix : '';
+    this.prefix = typeof opts.prefix === 'string' ? opts.prefix : '';
     this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
-    this.resetOnInit = opts.resetOnInit || false;
+    this.resetOnInit = !!opts.resetOnInit;
 
     if (!opts.db) {
       throw new Error('{db} option is required for MongoAdapter', {
@@ -106,25 +101,47 @@ class MongoAdapter {
     this.uniqueName = `__JobTasks__${this.prefix}`;
     /** @type {Collection} */
     this.collection = opts.db.collection(this.uniqueName);
-    ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
-    ensureIndex(this.collection, {uid: 1, isDeleted: 1}, {background: false});
-    ensureIndex(this.collection, {executeAt: 1}, {background: false});
-
     /** @type {Collection} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
-    ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
-    ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    this.__readyPromise = this.__setup();
+  }
+
+  /**
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.__readyPromise;
+  }
+
+  /** @internal */
+  async __setup() {
+    await ensureIndex(this.collection, { uid: 1 }, { name: 'uid_unique', unique: true }).catch((error) => {
+      logError(error, '[setup] [createIndex] uid_unique');
+      throw error;
+    });
+
+    await ensureIndex(this.collection, { isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' }).catch((error) => {
+      logError(error, '[setup] [createIndex] due_lookup');
+      throw error;
+    });
+
+    await ensureIndex(this.lockCollection, { uniqueName: 1 }, { name: 'uniqueName_unique', unique: true }).catch((error) => {
+      logError(error, '[setup] [createIndex] uniqueName_unique');
+      throw error;
+    });
+
+    await ensureIndex(this.lockCollection, { expireAt: 1 }, { name: 'expireAt_ttl', expireAfterSeconds: 0 }).catch((error) => {
+      logError(error, '[setup] [createIndex] expireAt_ttl');
+      throw error;
+    });
 
     if (this.resetOnInit) {
-      this.collection.deleteMany({
-        isInterval: false
-      }).then(() => {}).catch(logError);
-
-      this.lockCollection.deleteMany({
+      await this.collection.deleteMany({});
+      await this.lockCollection.deleteMany({
         uniqueName: this.uniqueName
-      }).then(() => {}).catch(logError);
+      });
     }
   }
 
@@ -142,17 +159,18 @@ class MongoAdapter {
         status: reason,
         code: 503,
         statusCode: 503,
-        error: new Error(reason),
+        error: new Error(reason)
       };
     }
 
     try {
+      await this.ready();
       const ping = await this.db.command({ ping: 1 });
       if (ping?.ok === 1) {
         return {
           status: 'OK',
           code: 200,
-          statusCode: 200,
+          statusCode: 200
         };
       }
     } catch (pingError) {
@@ -173,48 +191,52 @@ class MongoAdapter {
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<boolean>}
    */
-  async acquireLock() {
-    const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
+  async acquireLock(lock) {
+    await this.ready();
 
     try {
-      const record = await this.lockCollection.findOne({
-        uniqueName: this.uniqueName
-      }, {
-        projection: {
-          uniqueName: 1
-        }
-      });
-
-      if (record?.uniqueName === this.uniqueName) {
-        return false;
-      }
-
-      const result = await this.lockCollection.insertOne({
+      const result = await this.lockCollection.updateOne({
         uniqueName: this.uniqueName,
-        expireAt
+        $or: [
+          { expireAt: { $lte: new Date() } },
+          { expireAt: { $exists: false } }
+        ]
+      }, {
+        $set: {
+          uniqueName: this.uniqueName,
+          ownerId: lock.ownerId,
+          leaseId: lock.leaseId,
+          expireAt: lock.expireAt
+        }
+      }, {
+        upsert: true
       });
 
-      if (result.insertedId) {
-        return true;
-      }
-      return false;
-    } catch(opError) {
+      return result.modifiedCount >= 1 || !!result.upsertedCount;
+    } catch (opError) {
       if (opError?.code === 11000) {
         return false;
       }
 
-      this.joskInstance.__errorHandler(opError, '[acquireLock] [opError]', 'Exception inside MongoAdapter#acquireLock() method');
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [acquireLock] [opError]', 'Exception inside MongoAdapter#acquireLock() method', null);
       return false;
     }
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<void>}
    */
-  async releaseLock() {
-    await this.lockCollection.deleteOne({ uniqueName: this.uniqueName });
+  async releaseLock(lock) {
+    await this.ready();
+    await this.lockCollection.deleteOne({
+      uniqueName: this.uniqueName,
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId
+    });
   }
 
   /**
@@ -222,31 +244,22 @@ class MongoAdapter {
    * @returns {Promise<boolean>}
    */
   async remove(uid) {
+    await this.ready();
+
     try {
-      const result = await this.collection.findOneAndUpdate({
+      const result = await this.collection.findOneAndDelete({
         uid,
         isDeleted: false
       }, {
-        $set: {
-          isDeleted: true
-        }
-      }, {
-        returnNewDocument: false,
         projection: {
-          _id: 1,
-          isDeleted: 1
+          _id: 1
         }
       });
 
-      const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
-      if (res?.isDeleted === false) {
-        const deleteResult = await this.collection.deleteOne({ _id: res._id });
-        return deleteResult?.deletedCount >= 1;
-      }
-
-      return false;
-    } catch(opError) {
-      this.joskInstance.__errorHandler(opError, '[remove] [opError]', 'Exception inside MongoAdapter#remove() method', uid);
+      const removed = result?._id ? result : result?.value;
+      return !!removed?._id;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [remove] [opError]', 'Exception inside MongoAdapter#remove() method', uid);
       return false;
     }
   }
@@ -258,52 +271,25 @@ class MongoAdapter {
    * @returns {Promise<boolean>}
    */
   async add(uid, isInterval, delay) {
-    const next = Date.now() + delay;
+    await this.ready();
 
     try {
-      const task = await this.collection.findOne({
-        uid: uid
-      });
-
-      if (!task) {
-        await this.collection.insertOne({
-          uid: uid,
-          delay: delay,
-          executeAt: new Date(next),
-          isInterval: isInterval,
+      await this.collection.updateOne({
+        uid
+      }, {
+        $set: {
+          uid,
+          delay,
+          executeAt: new Date(Date.now() + delay),
+          isInterval,
           isDeleted: false
-        });
-
-        return true;
-      }
-
-      if (task.isDeleted === false) {
-        let update = null;
-        if (task.delay !== delay) {
-          update = { delay };
         }
-
-        if (+task.executeAt !== next) {
-          if (!update) {
-            update = {};
-          }
-          update.executeAt = new Date(next);
-        }
-
-        if (update) {
-          await this.collection.updateOne({
-            uid: uid
-          }, {
-            $set: update
-          });
-        }
-
-        return true;
-      }
-
-      return false;
+      }, {
+        upsert: true
+      });
+      return true;
     } catch (opError) {
-      this.joskInstance.__errorHandler(opError, '[add] [opError]', 'Exception inside MongoAdapter#add()', uid);
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [add] [opError]', 'Exception inside MongoAdapter#add() method', uid);
       return false;
     }
   }
@@ -324,9 +310,12 @@ class MongoAdapter {
       return false;
     }
 
+    await this.ready();
+
     try {
       const updateResult = await this.collection.updateOne({
-        uid: task.uid
+        uid: task.uid,
+        isDeleted: false
       }, {
         $set: {
           executeAt: nextExecuteAt
@@ -341,51 +330,159 @@ class MongoAdapter {
 
   /**
    * @param {Date} nextExecuteAt
-   * @returns {Promise<void>}
+   * @param {JoSkLock} lock
+   * @param {JoSkExecuteMode} executeMode
+   * @returns {Promise<number>}
    */
-  async iterate(nextExecuteAt) {
-    const _ids = [];
-    const tasks = [];
+  async iterate(nextExecuteAt, lock, executeMode) {
+    await this.ready();
 
-    const cursor = this.collection.find({
-      executeAt: {
-        $lte: new Date()
+    let executed = 0;
+    if (executeMode === 'one') {
+      const task = await this.__claimNextTask(nextExecuteAt, lock);
+      if (!task) {
+        return executed;
       }
-    }, {
-      projection: {
-        _id: 1,
-        uid: 1,
-        delay: 1,
-        isDeleted: 1,
-        isInterval: 1
-      }
-    });
 
+      this.joskInstance.__execute(task);
+      return executed + 1;
+    }
+
+    while (true) {
+      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, 100);
+      if (tasks.length === 0) {
+        break;
+      }
+
+      executed += tasks.length;
+      for (const task of tasks) {
+        this.joskInstance.__execute(task);
+      }
+    }
+
+    return executed;
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @returns {Promise<MongoTask | null>}
+   */
+  async __claimNextTask(nextExecuteAt, lock) {
     try {
-      let task;
-      while (await cursor.hasNext()) {
-        task = await cursor.next();
-        _ids.push(task._id);
-        tasks.push(task);
-      }
-      await this.collection.updateMany({
-        _id: {
-          $in: _ids
+      const result = await this.collection.findOneAndUpdate({
+        isDeleted: false,
+        executeAt: {
+          $lte: new Date()
         }
       }, {
         $set: {
-          executeAt: nextExecuteAt
+          executeAt: nextExecuteAt,
+          claimOwnerId: lock.ownerId,
+          claimLeaseId: lock.leaseId,
+          claimedAt: new Date()
         }
+      }, {
+        sort: {
+          executeAt: 1
+        },
+        projection: {
+          uid: 1,
+          delay: 1,
+          executeAt: 1,
+          isDeleted: 1,
+          isInterval: 1
+        },
+        returnDocument: 'before'
       });
+
+      const task = result?._id ? result : result?.value;
+      return task || null;
     } catch (mongoError) {
-      logError('[iterate] mongoError:', mongoError);
+      this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [claim]', 'Exception inside MongoAdapter#__claimNextTask() method', null);
+      return null;
     }
+  }
 
-    for (const task of tasks) {
-      this.joskInstance.__execute(/** @type {MongoTask} */ (task));
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @param {number} limit
+   * @returns {Promise<MongoTask[]>}
+   */
+  async __claimNextTasks(nextExecuteAt, lock, limit) {
+    try {
+      const now = new Date();
+      const tasks = await this.collection.find({
+        isDeleted: false,
+        executeAt: {
+          $lte: now
+        }
+      }, {
+        sort: {
+          executeAt: 1
+        },
+        limit,
+        projection: {
+          _id: 1,
+          uid: 1,
+          delay: 1,
+          executeAt: 1,
+          isDeleted: 1,
+          isInterval: 1
+        }
+      }).toArray();
+
+      if (tasks.length === 0) {
+        return [];
+      }
+
+      const claimedAt = new Date();
+      const ops = tasks.map((task) => ({
+        updateOne: {
+          filter: {
+            _id: task._id,
+            isDeleted: false,
+            executeAt: task.executeAt
+          },
+          update: {
+            $set: {
+              executeAt: nextExecuteAt,
+              claimOwnerId: lock.ownerId,
+              claimLeaseId: lock.leaseId,
+              claimedAt
+            }
+          }
+        }
+      }));
+
+      const result = await this.collection.bulkWrite(ops, {
+        ordered: false
+      });
+
+      if ((result.modifiedCount || 0) === tasks.length) {
+        return tasks;
+      }
+
+      const claimed = await this.collection.find({
+        _id: {
+          $in: tasks.map((task) => task._id)
+        },
+        claimOwnerId: lock.ownerId,
+        claimLeaseId: lock.leaseId,
+        claimedAt
+      }, {
+        projection: {
+          _id: 1
+        }
+      }).toArray();
+      const claimedIds = new Set(claimed.map((task) => String(task._id)));
+
+      return tasks.filter((task) => claimedIds.has(String(task._id)));
+    } catch (mongoError) {
+      this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [batchClaim]', 'Exception inside MongoAdapter#__claimNextTasks() method', null);
+      return [];
     }
-
-    await cursor.close();
   }
 }
 

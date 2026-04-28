@@ -1,6 +1,8 @@
 export type Collection = import("mongodb").Collection;
 export type Db = import("mongodb").Db;
 export type JoSk = import("../index.js").JoSk;
+export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
+export type JoSkLock = import("../index.js").JoSkLock;
 export type AdapterPingResult = {
     status: string;
     code: number;
@@ -14,7 +16,7 @@ export type MongoAdapterOption = {
     resetOnInit?: boolean | undefined;
 };
 export type MongoTask = {
-    _id: unknown;
+    _id?: unknown;
     uid: string;
     delay: number;
     executeAt?: Date | undefined;
@@ -39,6 +41,13 @@ export class MongoAdapter {
     collection: Collection;
     /** @type {Collection} */
     lockCollection: Collection;
+    __readyPromise: Promise<void>;
+    /**
+     * @returns {Promise<void>}
+     */
+    ready(): Promise<void>;
+    /** @internal */
+    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf MongoAdapter
@@ -48,13 +57,15 @@ export class MongoAdapter {
      */
     ping(): Promise<AdapterPingResult>;
     /**
+     * @param {JoSkLock} lock
      * @returns {Promise<boolean>}
      */
-    acquireLock(): Promise<boolean>;
+    acquireLock(lock: JoSkLock): Promise<boolean>;
     /**
+     * @param {JoSkLock} lock
      * @returns {Promise<void>}
      */
-    releaseLock(): Promise<void>;
+    releaseLock(lock: JoSkLock): Promise<void>;
     /**
      * @param {string} uid
      * @returns {Promise<boolean>}
@@ -77,7 +88,22 @@ export class MongoAdapter {
     }, nextExecuteAt: Date): Promise<boolean>;
     /**
      * @param {Date} nextExecuteAt
-     * @returns {Promise<void>}
+     * @param {JoSkLock} lock
+     * @param {JoSkExecuteMode} executeMode
+     * @returns {Promise<number>}
      */
-    iterate(nextExecuteAt: Date): Promise<void>;
+    iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode): Promise<number>;
+    /**
+     * @param {Date} nextExecuteAt
+     * @param {JoSkLock} lock
+     * @returns {Promise<MongoTask | null>}
+     */
+    __claimNextTask(nextExecuteAt: Date, lock: JoSkLock): Promise<MongoTask | null>;
+    /**
+     * @param {Date} nextExecuteAt
+     * @param {JoSkLock} lock
+     * @param {number} limit
+     * @returns {Promise<MongoTask[]>}
+     */
+    __claimNextTasks(nextExecuteAt: Date, lock: JoSkLock, limit: number): Promise<MongoTask[]>;
 }
