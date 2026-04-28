@@ -6,6 +6,8 @@ export type PostgresClient = {
     query: (queryText: string, values?: unknown[]) => Promise<PostgresQueryResult>;
 };
 export type JoSk = import("../index.js").JoSk;
+export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
+export type JoSkLock = import("../index.js").JoSkLock;
 export type AdapterPingResult = {
     status: string;
     code: number;
@@ -35,6 +37,8 @@ export type PostgresTask = {
  */
 /**
  * @typedef {import('../index.js').JoSk} JoSk
+ * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
+ * @typedef {import('../index.js').JoSkLock} JoSkLock
  */
 /**
  * @typedef {object} AdapterPingResult
@@ -71,8 +75,13 @@ export class PostgresAdapter {
     resetOnInit: boolean;
     /** @type {PostgresClient} */
     client: PostgresClient;
+    __readyPromise: Promise<void>;
+    /**
+     * @returns {Promise<void>}
+     */
+    ready(): Promise<void>;
     /** @internal */
-    _setupTables(): Promise<void>;
+    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf PostgresAdapter
@@ -82,13 +91,15 @@ export class PostgresAdapter {
      */
     ping(): Promise<AdapterPingResult>;
     /**
+     * @param {JoSkLock} lock
      * @returns {Promise<boolean>}
      */
-    acquireLock(): Promise<boolean>;
+    acquireLock(lock: JoSkLock): Promise<boolean>;
     /**
+     * @param {JoSkLock} lock
      * @returns {Promise<void>}
      */
-    releaseLock(): Promise<void>;
+    releaseLock(lock: JoSkLock): Promise<void>;
     /**
      * @param {string} uid
      * @returns {Promise<boolean>}
@@ -111,9 +122,17 @@ export class PostgresAdapter {
     }, nextExecuteAt: Date): Promise<boolean>;
     /**
      * @param {Date} nextExecuteAt
-     * @returns {Promise<void>}
+     * @param {JoSkLock} lock
+     * @param {JoSkExecuteMode} executeMode
+     * @returns {Promise<number>}
      */
-    iterate(nextExecuteAt: Date): Promise<void>;
+    iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode): Promise<number>;
+    /**
+     * @param {Date} nextExecuteAt
+     * @param {JoSkLock} lock
+     * @returns {Promise<PostgresTask | null>}
+     */
+    __claimNextTask(nextExecuteAt: Date, lock: JoSkLock): Promise<PostgresTask | null>;
     /** @internal */
     __customPrivateMethod(): boolean;
 }

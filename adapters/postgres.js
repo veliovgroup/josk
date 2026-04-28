@@ -11,6 +11,8 @@
 
 /**
  * @typedef {import('../index.js').JoSk} JoSk
+ * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
+ * @typedef {import('../index.js').JoSkLock} JoSkLock
  */
 
 /**
@@ -43,9 +45,9 @@ class PostgresAdapter {
    * Create a PostgresAdapter instance
    * @param {PostgresAdapterOption} opts - configuration object
    */
-  constructor (opts = {}) {
+  constructor(opts = {}) {
     this.name = 'postgres';
-    this.prefix = (typeof opts.prefix === 'string' && opts.prefix.length > 0) ? opts.prefix : 'default';
+    this.prefix = typeof opts.prefix === 'string' && opts.prefix.length > 0 ? opts.prefix : 'default';
     this.uniqueName = `josk-${this.prefix}`;
     this.lockKey = `${this.uniqueName}.lock`;
     this.resetOnInit = !!opts.resetOnInit;
@@ -60,57 +62,114 @@ class PostgresAdapter {
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    this.__readyPromise = this.__setup();
+  }
 
-    // Setup DB tables asynchronously
-    this._setupTables();
-
-    if (this.resetOnInit) {
-      process.nextTick(async () => {
-        try {
-          await this.client.query('DELETE FROM josk_tasks WHERE prefix = $1', [this.prefix]);
-          await this.client.query('DELETE FROM josk_locks WHERE lock_key = $1', [this.lockKey]);
-        } catch (resetErr) {
-          console.error('[josk] [PostgresAdapter] [resetOnInit] error:', resetErr);
-        }
-      });
-    }
+  /**
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.__readyPromise;
   }
 
   /** @internal */
-  async _setupTables () {
-    process.nextTick(async () => {
-      try {
-        await this.client.query(`
-          CREATE TABLE IF NOT EXISTS josk_tasks (
-            uid TEXT PRIMARY KEY,
-            prefix TEXT NOT NULL DEFAULT 'default',
-            delay INTEGER NOT NULL,
-            execute_at BIGINT NOT NULL,
-            is_interval BOOLEAN NOT NULL DEFAULT false,
-            is_deleted BOOLEAN NOT NULL DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-        await this.client.query(`
-          CREATE INDEX IF NOT EXISTS idx_josk_tasks_prefix_execute 
-          ON josk_tasks (prefix, execute_at) 
-          WHERE is_deleted = false;
-        `);
-        await this.client.query('CREATE INDEX IF NOT EXISTS idx_josk_tasks_uid ON josk_tasks (uid);');
+  async __setup() {
+    await this.client.query('SELECT pg_advisory_lock($1)', [93824517]);
 
+    try {
+      await this.client.query(`
+        CREATE TABLE IF NOT EXISTS josk_tasks (
+          prefix TEXT NOT NULL DEFAULT 'default',
+          uid TEXT NOT NULL,
+          delay INTEGER NOT NULL,
+          execute_at BIGINT NOT NULL,
+          is_interval BOOLEAN NOT NULL DEFAULT false,
+          is_deleted BOOLEAN NOT NULL DEFAULT false,
+          claim_owner_id TEXT,
+          claim_lease_id TEXT,
+          claimed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT 'default'`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS uid TEXT NOT NULL DEFAULT ''`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS delay INTEGER NOT NULL DEFAULT 0`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS execute_at BIGINT NOT NULL DEFAULT 0`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_interval BOOLEAN NOT NULL DEFAULT false`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_owner_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_lease_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+
+      const primaryKeyResult = await this.client.query(`
+        SELECT kc.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kc
+          ON tc.constraint_name = kc.constraint_name
+         AND tc.table_schema = kc.table_schema
+        WHERE tc.table_name = 'josk_tasks'
+          AND tc.constraint_type = 'PRIMARY KEY'
+        ORDER BY kc.ordinal_position ASC
+      `);
+      const primaryKeyColumns = (primaryKeyResult.rows || []).map((row) => row.column_name);
+
+      if (primaryKeyColumns.length === 1 && primaryKeyColumns[0] === 'uid') {
         await this.client.query(`
-          CREATE TABLE IF NOT EXISTS josk_locks (
-            lock_key TEXT PRIMARY KEY,
-            locked_until BIGINT,
-            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-          )
+          ALTER TABLE josk_tasks
+          DROP CONSTRAINT IF EXISTS josk_tasks_pkey
         `);
-        this.joskInstance?._debug('[PostgresAdapter] tables ready');
-      } catch (setupErr) {
-        console.error('[josk] [PostgresAdapter] [_setupTables] error:', setupErr);
       }
-    });
+
+      await this.client.query(`
+        ALTER TABLE josk_tasks
+        ADD CONSTRAINT josk_tasks_pkey PRIMARY KEY (prefix, uid)
+      `).catch(async (error) => {
+        if (error?.code !== '42P16' && error?.code !== '42710') {
+          throw error;
+        }
+      });
+
+      await this.client.query(`
+        CREATE INDEX IF NOT EXISTS idx_josk_tasks_prefix_execute
+        ON josk_tasks (prefix, execute_at)
+        WHERE is_deleted = false
+      `);
+
+      await this.client.query(`
+        CREATE TABLE IF NOT EXISTS josk_locks (
+          lock_key TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          lease_id TEXT NOT NULL,
+          locked_until BIGINT NOT NULL,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS owner_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS lease_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS locked_until BIGINT`);
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+      await this.client.query(`UPDATE josk_locks SET owner_id = COALESCE(owner_id, ''), lease_id = COALESCE(lease_id, ''), locked_until = COALESCE(locked_until, 0)`);
+      await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN owner_id SET NOT NULL`);
+      await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN lease_id SET NOT NULL`);
+      await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN locked_until SET NOT NULL`);
+
+      await this.client.query(`
+        CREATE INDEX IF NOT EXISTS idx_josk_locks_locked_until
+        ON josk_locks (locked_until)
+      `);
+
+      if (this.resetOnInit) {
+        await this.client.query('DELETE FROM josk_tasks WHERE prefix = $1', [this.prefix]);
+        await this.client.query('DELETE FROM josk_locks WHERE lock_key = $1', [this.lockKey]);
+      }
+    } finally {
+      await this.client.query('SELECT pg_advisory_unlock($1)', [93824517]);
+    }
   }
 
   /**
@@ -120,7 +179,7 @@ class PostgresAdapter {
    * @description Check connection to PostgreSQL
    * @returns {Promise<AdapterPingResult>}
    */
-  async ping () {
+  async ping() {
     if (!this.joskInstance) {
       const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
       return {
@@ -132,6 +191,7 @@ class PostgresAdapter {
     }
 
     try {
+      await this.ready();
       const res = await this.client.query('SELECT 1 as ping');
       if (res.rows && res.rows[0] && res.rows[0].ping === 1) {
         return {
@@ -152,34 +212,26 @@ class PostgresAdapter {
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<boolean>}
    */
-  async acquireLock () {
-    const now = Date.now();
-    const until = now + this.joskInstance.zombieTime;
-    try {
-      // Try update if expired or no lock
-      let res = await this.client.query(
-        `UPDATE josk_locks 
-         SET locked_until = $2, updated_at = CURRENT_TIMESTAMP 
-         WHERE lock_key = $1 
-           AND (locked_until IS NULL OR locked_until < $3) 
-         RETURNING locked_until`,
-        [this.lockKey, until, now]
-      );
-      if (res.rowCount > 0) {
-        return true;
-      }
+  async acquireLock(lock) {
+    await this.ready();
 
-      // Insert new lock
-      res = await this.client.query(
-        `INSERT INTO josk_locks (lock_key, locked_until) 
-         VALUES ($1, $2) 
-         ON CONFLICT (lock_key) DO NOTHING 
-         RETURNING locked_until`,
-        [this.lockKey, until]
+    try {
+      const res = await this.client.query(
+        `INSERT INTO josk_locks (lock_key, owner_id, lease_id, locked_until)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (lock_key) DO UPDATE
+           SET owner_id = EXCLUDED.owner_id,
+               lease_id = EXCLUDED.lease_id,
+               locked_until = EXCLUDED.locked_until,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE josk_locks.locked_until <= $5
+         RETURNING lease_id`,
+        [this.lockKey, lock.ownerId, lock.leaseId, lock.expiresAtMs, Date.now()]
       );
-      return res.rowCount > 0;
+      return (res.rowCount || 0) >= 1;
     } catch (lockError) {
       this.joskInstance.__errorHandler(lockError, '[PostgresAdapter] [acquireLock]', 'Failed to acquire lock', null);
       return false;
@@ -187,18 +239,21 @@ class PostgresAdapter {
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<void>}
    */
-  async releaseLock () {
+  async releaseLock(lock) {
+    await this.ready();
+
     try {
       await this.client.query(
-        `UPDATE josk_locks 
-         SET locked_until = NULL, updated_at = CURRENT_TIMESTAMP 
-         WHERE lock_key = $1`,
-        [this.lockKey]
+        `DELETE FROM josk_locks
+         WHERE lock_key = $1
+           AND owner_id = $2
+           AND lease_id = $3`,
+        [this.lockKey, lock.ownerId, lock.leaseId]
       );
     } catch (releaseError) {
-      // Non-critical, log via debug if possible
       this.joskInstance?._debug('[PostgresAdapter] [releaseLock] non-critical error:', releaseError);
     }
   }
@@ -207,17 +262,18 @@ class PostgresAdapter {
    * @param {string} uid
    * @returns {Promise<boolean>}
    */
-  async remove (uid) {
+  async remove(uid) {
+    await this.ready();
+
     try {
       const res = await this.client.query(
-        `UPDATE josk_tasks 
-         SET is_deleted = true, updated_at = CURRENT_TIMESTAMP 
-         WHERE uid = $1 AND prefix = $2 
+        `DELETE FROM josk_tasks
+         WHERE prefix = $1
+           AND uid = $2
          RETURNING uid`,
-        [uid, this.prefix]
+        [this.prefix, uid]
       );
-      const removed = res.rowCount > 0;
-      return removed;
+      return (res.rowCount || 0) >= 1;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[PostgresAdapter] [remove]', 'Exception inside remove method', uid);
       return false;
@@ -230,19 +286,20 @@ class PostgresAdapter {
    * @param {number} delay
    * @returns {Promise<boolean>}
    */
-  async add (uid, isInterval, delay) {
-    const executeAt = Date.now() + delay;
+  async add(uid, isInterval, delay) {
+    await this.ready();
+
     try {
       await this.client.query(
-        `INSERT INTO josk_tasks (uid, prefix, delay, execute_at, is_interval, is_deleted)
-         VALUES ($1, $2, $3, $4, $5, false)
-         ON CONFLICT (uid) DO UPDATE SET 
+        `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT (prefix, uid) DO UPDATE SET
            delay = EXCLUDED.delay,
            execute_at = EXCLUDED.execute_at,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
            updated_at = CURRENT_TIMESTAMP`,
-        [uid, this.prefix, delay, executeAt, isInterval]
+        [this.prefix, uid, delay, Date.now() + delay, isInterval]
       );
       return true;
     } catch (opError) {
@@ -256,7 +313,7 @@ class PostgresAdapter {
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
-  async update (task, nextExecuteAt) {
+  async update(task, nextExecuteAt) {
     if (typeof task !== 'object' || typeof task.uid !== 'string') {
       this.joskInstance.__errorHandler({ task }, '[PostgresAdapter] [update] [task]', 'Task malformed or undefined');
       return false;
@@ -267,15 +324,20 @@ class PostgresAdapter {
       return false;
     }
 
+    await this.ready();
+
     try {
       const res = await this.client.query(
-        `UPDATE josk_tasks 
-         SET execute_at = $1, updated_at = CURRENT_TIMESTAMP 
-         WHERE uid = $2 AND prefix = $3 AND is_deleted = false 
+        `UPDATE josk_tasks
+         SET execute_at = $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE prefix = $2
+           AND uid = $3
+           AND is_deleted = false
          RETURNING uid`,
-        [+nextExecuteAt, task.uid, this.prefix]
+        [+nextExecuteAt, this.prefix, task.uid]
       );
-      return res.rowCount > 0;
+      return (res.rowCount || 0) >= 1;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[PostgresAdapter] [update] [opError]', 'Exception inside update method', task.uid);
       return false;
@@ -284,44 +346,141 @@ class PostgresAdapter {
 
   /**
    * @param {Date} nextExecuteAt
-   * @returns {Promise<void>}
+   * @param {JoSkLock} lock
+   * @param {JoSkExecuteMode} executeMode
+   * @returns {Promise<number>}
    */
-  async iterate (nextExecuteAt) {
-    const now = Date.now();
-    const nextRetry = +nextExecuteAt;
+  async iterate(nextExecuteAt, lock, executeMode) {
+    await this.ready();
 
-    try {
-      const res = await this.client.query(
-        `SELECT uid, delay, execute_at, is_interval, is_deleted 
-         FROM josk_tasks 
-         WHERE prefix = $1 
-           AND is_deleted = false 
-           AND execute_at <= $2 
-         ORDER BY execute_at ASC`,
-        [this.prefix, now]
-      );
+    let executed = 0;
+    if (executeMode === 'one') {
+      const task = await this.__claimNextTask(nextExecuteAt, lock);
+      if (!task) {
+        return executed;
+      }
 
-      for (const row of /** @type {PostgresTask[]} */ (res.rows || [])) {
-        // Lock task by advancing execute_at to zombie time
-        await this.update({ uid: row.uid }, new Date(nextRetry));
+      this.joskInstance.__execute({
+        uid: task.uid,
+        delay: parseInt(task.delay, 10),
+        executeAt: parseInt(task.execute_at, 10),
+        isInterval: task.is_interval,
+        isDeleted: task.is_deleted
+      });
 
-        // Execute via JoSk
+      return executed + 1;
+    }
+
+    while (true) {
+      const limit = 100;
+      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, limit);
+      if (tasks.length === 0) {
+        break;
+      }
+
+      executed += tasks.length;
+      for (const task of tasks) {
         this.joskInstance.__execute({
-          uid: row.uid,
-          delay: parseInt(row.delay, 10),
-          executeAt: parseInt(row.execute_at, 10),
-          isInterval: row.is_interval,
-          isDeleted: row.is_deleted
+          uid: task.uid,
+          delay: parseInt(task.delay, 10),
+          executeAt: parseInt(task.execute_at, 10),
+          isInterval: task.is_interval,
+          isDeleted: task.is_deleted
         });
       }
+
+      if (tasks.length < limit) {
+        break;
+      }
+    }
+
+    return executed;
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @returns {Promise<PostgresTask | null>}
+   */
+  async __claimNextTask(nextExecuteAt, lock) {
+    try {
+      const res = await this.client.query(
+        `WITH due AS (
+           SELECT prefix, uid, delay, execute_at, is_interval, is_deleted
+           FROM josk_tasks
+           WHERE prefix = $1
+             AND is_deleted = false
+             AND execute_at <= $2
+           ORDER BY execute_at ASC
+           FOR UPDATE SKIP LOCKED
+           LIMIT 1
+         )
+         UPDATE josk_tasks AS task
+         SET execute_at = $3,
+             claim_owner_id = $4,
+             claim_lease_id = $5,
+             claimed_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         FROM due
+         WHERE task.prefix = due.prefix
+           AND task.uid = due.uid
+         RETURNING due.uid, due.delay, due.execute_at, due.is_interval, due.is_deleted`,
+        [this.prefix, Date.now(), +nextExecuteAt, lock.ownerId, lock.leaseId]
+      );
+
+      return /** @type {PostgresTask | null} */ ((res.rows && res.rows[0]) || null);
     } catch (iterError) {
-      this.joskInstance.__errorHandler(iterError, '[PostgresAdapter] [iterate]', 'Exception inside iterate method', null);
+      this.joskInstance.__errorHandler(iterError, '[PostgresAdapter] [iterate] [claim]', 'Exception inside PostgresAdapter#__claimNextTask() method', null);
+      return null;
+    }
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @param {number} limit
+   * @returns {Promise<PostgresTask[]>}
+   */
+  async __claimNextTasks(nextExecuteAt, lock, limit) {
+    try {
+      const res = await this.client.query(
+        `WITH due AS (
+           SELECT prefix, uid, delay, execute_at, is_interval, is_deleted
+           FROM josk_tasks
+           WHERE prefix = $1
+             AND is_deleted = false
+             AND execute_at <= $2
+           ORDER BY execute_at ASC
+           FOR UPDATE SKIP LOCKED
+           LIMIT $6
+         ),
+         updated AS (
+           UPDATE josk_tasks AS task
+           SET execute_at = $3,
+               claim_owner_id = $4,
+               claim_lease_id = $5,
+               claimed_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           FROM due
+           WHERE task.prefix = due.prefix
+             AND task.uid = due.uid
+           RETURNING due.uid, due.delay, due.execute_at, due.is_interval, due.is_deleted
+         )
+         SELECT uid, delay, execute_at, is_interval, is_deleted
+         FROM updated
+         ORDER BY execute_at ASC`,
+        [this.prefix, Date.now(), +nextExecuteAt, lock.ownerId, lock.leaseId, limit]
+      );
+
+      return /** @type {PostgresTask[]} */ (res.rows || []);
+    } catch (iterError) {
+      this.joskInstance.__errorHandler(iterError, '[PostgresAdapter] [iterate] [batchClaim]', 'Exception inside PostgresAdapter#__claimNextTasks() method', null);
+      return [];
     }
   }
 
   /** @internal */
-  __customPrivateMethod () {
-    // private methods prefixed with __ as per adapter convention
+  __customPrivateMethod() {
     return true;
   }
 }
