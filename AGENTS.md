@@ -14,12 +14,54 @@ Ensure exactly-once task execution in horizontally scaled Node.js. Bulletproof. 
 - `docs/adapter-api.md`: full adapter contract.
 - README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
 
-## Coding Style
+## Code Style
 - **Indentation:** 2 spaces.
 - Use **single quotes** for strings.
 - **Prefer simple ES classes** for cohesive state/services when they clarify lifecycle (e.g. a small data service with start/stop).
 - Use **small pure functions** for transforms, formatting, and validation.
-- **Performance**: favor O(n) single passes, avoid repeated work in autoruns, cache derived values when dependencies are narrow.
+- **Performance**: favor O(n) single passes, avoid repeated work and heavy loops, cache derived values when dependencies are narrow.
+- Always end line with semicolon `;`.
+- Prefer `void 0` to `undefined` where applicable, like `return void 0`.
+- Prefer functions defined as variable to "named functions" where applicable.
+
+### JS Style Example
+
+```js
+const string = 'string value';
+const object = {
+  key: string,
+};
+
+const complexObject = {
+  key: string,
+  array: ['one', 'two', 'three'],
+  date: new Date(),
+  timestamp: Date.now(),
+  arrayWithObjects: [{
+    key: {
+      keyLevel2: false,
+    },
+    key2: {
+      array: [{
+        keyLevel3: true,
+      }]
+    }
+  }, {
+    keySecondObject: {
+      keyLevel2: true,
+      otherKeyLevel2: 'string - lorem ipsium',
+    }
+  }],
+};
+
+const sayName = (name) => {
+  if (!name) {
+    return void 0;
+  }
+
+  return `Your name is ${name}`;
+};
+```
 
 ## Standards
 - ESM primary. JSDoc on public API.
@@ -54,5 +96,11 @@ npm run test-postgres
 - PR: full test suite, lint clean, update CHANGELOG.
 - Further dev: built-in CRON, more adapters (Dynamo/KeyDB/SQLite), metrics/tracing, UI, tighter locks, serverless opt.
 - Use MongoDB skills only on query/index/schema. PG similar. Frontend skill never. Always read files first.
+
+## Edit rules and flow
+- Introduce changes, validate, run tests.
+- Update TS definitions if absolutely necessary after introduced changes.
+- Update documentation if necessary adding new features or changing old ones.
+- In case of major updates — Add migration instructions to package documentation.
 
 Update this AGENTS.md on major refactors.
