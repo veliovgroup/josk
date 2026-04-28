@@ -23,6 +23,13 @@ export type JoSkTask = {
     isDeleted: boolean;
     executeAt?: number | Date | undefined;
 };
+export type JoSkExecuteMode = "batch" | "one";
+export type JoSkLock = {
+    ownerId: string;
+    leaseId: string;
+    expireAt: Date;
+    expiresAtMs: number;
+};
 export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void;
 export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void;
 export type JoSkReadyCallback = (error: Error | undefined, success: boolean) => void;
@@ -33,13 +40,14 @@ export type JoSkStoredTask = JoSkTaskHandler & {
 };
 export type JoSkAdapter = {
     joskInstance?: JoSk | undefined;
-    acquireLock: () => Promise<boolean>;
-    releaseLock: () => Promise<void>;
+    acquireLock: (lock: JoSkLock) => Promise<boolean>;
+    releaseLock: (lock: JoSkLock) => Promise<void>;
     remove: (uid: string) => Promise<boolean>;
     add: (uid: string, isInterval: boolean, delay: number) => Promise<boolean | void>;
     update: (task: JoSkTask, nextExecuteAt: Date) => Promise<boolean>;
-    iterate: (nextExecuteAt: Date) => Promise<void>;
+    iterate: (nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode) => Promise<number | void>;
     ping: () => Promise<JoSkPingResult>;
+    ready?: (() => Promise<void>) | undefined;
 };
 export type JoSkOption = {
     adapter: JoSkAdapter;
@@ -50,6 +58,8 @@ export type JoSkOption = {
     onExecuted?: JoSkOnExecuted | undefined;
     minRevolvingDelay?: number | undefined;
     maxRevolvingDelay?: number | undefined;
+    execute?: JoSkExecuteMode | undefined;
+    lockOwnerId?: string | undefined;
 };
 /** Class representing a JoSk task runner (cron). */
 export class JoSk {
@@ -66,8 +76,14 @@ export class JoSk {
     isDestroyed: boolean;
     minRevolvingDelay: number;
     maxRevolvingDelay: number;
+    execute: JoSkExecuteMode;
+    lockOwnerId: string;
     /** @internal */
     nextRevolutionTimeout: NodeJS.Timeout | null;
+    /** @internal */
+    __lockLeaseCounter: number;
+    /** @internal */
+    __adapterReadyPromise: Promise<void> | null;
     /** @type {Record<string, JoSkStoredTask>} */
     tasks: Record<string, JoSkStoredTask>;
     /** @internal */
@@ -80,7 +96,6 @@ export class JoSk {
      * @name ping
      * @description Check package readiness and connection to Storage
      * @returns {Promise<JoSkPingResult>}
-     * @throws {mix}
      */
     ping(): Promise<JoSkPingResult>;
     /**
@@ -122,7 +137,6 @@ export class JoSk {
      * Must be called in a separate event loop from `.setInterval()`
      * @name clearInterval
      * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
-     * @param {function} [callback] - optional callback
      * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
      */
     clearInterval(timerId: string | Promise<string>): Promise<boolean>;
@@ -133,7 +147,6 @@ export class JoSk {
      * Must be called in a separate event loop from `.setTimeout()`
      * @name clearTimeout
      * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
-     * @param {function} [callback] - optional callback
      * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
      */
     clearTimeout(timerId: string | Promise<string>): Promise<boolean>;
@@ -146,6 +159,15 @@ export class JoSk {
     destroy(): boolean;
     /** @internal */
     __checkState(): boolean;
+    /** @internal */
+    __adapterReady(): Promise<void>;
+    /** @internal */
+    __getLock(): {
+        ownerId: string;
+        leaseId: string;
+        expireAt: Date;
+        expiresAtMs: number;
+    };
     /** @internal */
     __remove(timerId: any): Promise<boolean>;
     /** @internal */

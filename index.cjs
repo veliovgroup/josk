@@ -4,6 +4,8 @@
  * @typedef {import('mongodb').Collection} Collection
  * @typedef {import('mongodb').Db} Db
  * @typedef {import('../index.js').JoSk} JoSk
+ * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
+ * @typedef {import('../index.js').JoSkLock} JoSkLock
  */
 
 /**
@@ -24,7 +26,7 @@
 
 /**
  * @typedef {object} MongoTask
- * @property {unknown} _id
+ * @property {unknown} [_id]
  * @property {string} uid
  * @property {number} delay
  * @property {Date} [executeAt]
@@ -39,49 +41,42 @@ const logError = (error, ...args) => {
 };
 
 /**
- * Ensure (create) index on MongoDB collection, catch and log exception if thrown
- * @function ensureIndex
- * @param {Collection} collection - Mongo's driver Collection instance
- * @param {object} keys - Field and value pairs where the field is the index key and the value describes the type of index for that field
- * @param {object} opts - Set of options that controls the creation of the index
+ * @param {Collection} collection
+ * @param {object} keys
+ * @param {object} opts
  * @returns {Promise<void>}
  */
 const ensureIndex = async (collection, keys, opts) => {
   try {
     await collection.createIndex(keys, opts);
-  } catch (e) {
-    if (e.code === 85) {
-      let indexName;
-      const indexes = await collection.indexes();
-      for (const index of indexes) {
-        let drop = true;
-        for (const indexKey of Object.keys(keys)) {
-          if (typeof index.key[indexKey] === 'undefined') {
-            drop = false;
-            break;
-          }
-        }
+  } catch (error) {
+    if (error?.code !== 85 && error?.codeName !== 'IndexOptionsConflict') {
+      throw error;
+    }
 
-        for (const indexKey of Object.keys(index.key)) {
-          if (typeof keys[indexKey] === 'undefined') {
-            drop = false;
-            break;
-          }
-        }
+    const indexes = await collection.indexes();
+    for (const index of indexes) {
+      const indexKeys = Object.keys(index.key || {});
+      const desiredKeys = Object.keys(keys);
+      if (indexKeys.length !== desiredKeys.length) {
+        continue;
+      }
 
-        if (drop) {
-          indexName = index.name;
+      let matches = true;
+      for (const key of desiredKeys) {
+        if (index.key[key] !== keys[key]) {
+          matches = false;
           break;
         }
       }
 
-      if (indexName) {
-        await collection.dropIndex(indexName);
-        await collection.createIndex(keys, opts);
+      if (matches) {
+        await collection.dropIndex(index.name);
+        break;
       }
-    } else {
-      console.info(`[INFO] [josk] [MongoAdapter] [ensureIndex] Can not set ${Object.keys(keys).join(' + ')} index on "${collection._name || 'MongoDB'}" collection`, { keys, opts, details: e });
     }
+
+    await collection.createIndex(keys, opts);
   }
 };
 
@@ -93,9 +88,9 @@ class MongoAdapter {
    */
   constructor(opts = {}) {
     this.name = 'mongo';
-    this.prefix = (typeof opts.prefix === 'string') ? opts.prefix : '';
+    this.prefix = typeof opts.prefix === 'string' ? opts.prefix : '';
     this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
-    this.resetOnInit = opts.resetOnInit || false;
+    this.resetOnInit = !!opts.resetOnInit;
 
     if (!opts.db) {
       throw new Error('{db} option is required for MongoAdapter', {
@@ -108,25 +103,47 @@ class MongoAdapter {
     this.uniqueName = `__JobTasks__${this.prefix}`;
     /** @type {Collection} */
     this.collection = opts.db.collection(this.uniqueName);
-    ensureIndex(this.collection, {uid: 1}, {background: false, unique: true});
-    ensureIndex(this.collection, {uid: 1, isDeleted: 1}, {background: false});
-    ensureIndex(this.collection, {executeAt: 1}, {background: false});
-
     /** @type {Collection} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
-    ensureIndex(this.lockCollection, {expireAt: 1}, {background: false, expireAfterSeconds: 1});
-    ensureIndex(this.lockCollection, {uniqueName: 1}, {background: false, unique: true});
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    this.__readyPromise = this.__setup();
+  }
+
+  /**
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.__readyPromise;
+  }
+
+  /** @internal */
+  async __setup() {
+    await ensureIndex(this.collection, { uid: 1 }, { name: 'uid_unique', unique: true }).catch((error) => {
+      logError(error, '[setup] [createIndex] uid_unique');
+      throw error;
+    });
+
+    await ensureIndex(this.collection, { isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' }).catch((error) => {
+      logError(error, '[setup] [createIndex] due_lookup');
+      throw error;
+    });
+
+    await ensureIndex(this.lockCollection, { uniqueName: 1 }, { name: 'uniqueName_unique', unique: true }).catch((error) => {
+      logError(error, '[setup] [createIndex] uniqueName_unique');
+      throw error;
+    });
+
+    await ensureIndex(this.lockCollection, { expireAt: 1 }, { name: 'expireAt_ttl', expireAfterSeconds: 0 }).catch((error) => {
+      logError(error, '[setup] [createIndex] expireAt_ttl');
+      throw error;
+    });
 
     if (this.resetOnInit) {
-      this.collection.deleteMany({
-        isInterval: false
-      }).then(() => {}).catch(logError);
-
-      this.lockCollection.deleteMany({
+      await this.collection.deleteMany({});
+      await this.lockCollection.deleteMany({
         uniqueName: this.uniqueName
-      }).then(() => {}).catch(logError);
+      });
     }
   }
 
@@ -144,17 +161,18 @@ class MongoAdapter {
         status: reason,
         code: 503,
         statusCode: 503,
-        error: new Error(reason),
+        error: new Error(reason)
       };
     }
 
     try {
+      await this.ready();
       const ping = await this.db.command({ ping: 1 });
       if (ping?.ok === 1) {
         return {
           status: 'OK',
           code: 200,
-          statusCode: 200,
+          statusCode: 200
         };
       }
     } catch (pingError) {
@@ -175,48 +193,52 @@ class MongoAdapter {
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<boolean>}
    */
-  async acquireLock() {
-    const expireAt = new Date(Date.now() + this.joskInstance.zombieTime);
+  async acquireLock(lock) {
+    await this.ready();
 
     try {
-      const record = await this.lockCollection.findOne({
-        uniqueName: this.uniqueName
-      }, {
-        projection: {
-          uniqueName: 1
-        }
-      });
-
-      if (record?.uniqueName === this.uniqueName) {
-        return false;
-      }
-
-      const result = await this.lockCollection.insertOne({
+      const result = await this.lockCollection.updateOne({
         uniqueName: this.uniqueName,
-        expireAt
+        $or: [
+          { expireAt: { $lte: new Date() } },
+          { expireAt: { $exists: false } }
+        ]
+      }, {
+        $set: {
+          uniqueName: this.uniqueName,
+          ownerId: lock.ownerId,
+          leaseId: lock.leaseId,
+          expireAt: lock.expireAt
+        }
+      }, {
+        upsert: true
       });
 
-      if (result.insertedId) {
-        return true;
-      }
-      return false;
-    } catch(opError) {
+      return result.modifiedCount >= 1 || !!result.upsertedCount;
+    } catch (opError) {
       if (opError?.code === 11000) {
         return false;
       }
 
-      this.joskInstance.__errorHandler(opError, '[acquireLock] [opError]', 'Exception inside MongoAdapter#acquireLock() method');
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [acquireLock] [opError]', 'Exception inside MongoAdapter#acquireLock() method', null);
       return false;
     }
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<void>}
    */
-  async releaseLock() {
-    await this.lockCollection.deleteOne({ uniqueName: this.uniqueName });
+  async releaseLock(lock) {
+    await this.ready();
+    await this.lockCollection.deleteOne({
+      uniqueName: this.uniqueName,
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId
+    });
   }
 
   /**
@@ -224,31 +246,22 @@ class MongoAdapter {
    * @returns {Promise<boolean>}
    */
   async remove(uid) {
+    await this.ready();
+
     try {
-      const result = await this.collection.findOneAndUpdate({
+      const result = await this.collection.findOneAndDelete({
         uid,
         isDeleted: false
       }, {
-        $set: {
-          isDeleted: true
-        }
-      }, {
-        returnNewDocument: false,
         projection: {
-          _id: 1,
-          isDeleted: 1
+          _id: 1
         }
       });
 
-      const res = result?._id ? result : result?.value; // mongodb 5 vs. 6 compatibility
-      if (res?.isDeleted === false) {
-        const deleteResult = await this.collection.deleteOne({ _id: res._id });
-        return deleteResult?.deletedCount >= 1;
-      }
-
-      return false;
-    } catch(opError) {
-      this.joskInstance.__errorHandler(opError, '[remove] [opError]', 'Exception inside MongoAdapter#remove() method', uid);
+      const removed = result?._id ? result : result?.value;
+      return !!removed?._id;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [remove] [opError]', 'Exception inside MongoAdapter#remove() method', uid);
       return false;
     }
   }
@@ -260,52 +273,25 @@ class MongoAdapter {
    * @returns {Promise<boolean>}
    */
   async add(uid, isInterval, delay) {
-    const next = Date.now() + delay;
+    await this.ready();
 
     try {
-      const task = await this.collection.findOne({
-        uid: uid
-      });
-
-      if (!task) {
-        await this.collection.insertOne({
-          uid: uid,
-          delay: delay,
-          executeAt: new Date(next),
-          isInterval: isInterval,
+      await this.collection.updateOne({
+        uid
+      }, {
+        $set: {
+          uid,
+          delay,
+          executeAt: new Date(Date.now() + delay),
+          isInterval,
           isDeleted: false
-        });
-
-        return true;
-      }
-
-      if (task.isDeleted === false) {
-        let update = null;
-        if (task.delay !== delay) {
-          update = { delay };
         }
-
-        if (+task.executeAt !== next) {
-          if (!update) {
-            update = {};
-          }
-          update.executeAt = new Date(next);
-        }
-
-        if (update) {
-          await this.collection.updateOne({
-            uid: uid
-          }, {
-            $set: update
-          });
-        }
-
-        return true;
-      }
-
-      return false;
+      }, {
+        upsert: true
+      });
+      return true;
     } catch (opError) {
-      this.joskInstance.__errorHandler(opError, '[add] [opError]', 'Exception inside MongoAdapter#add()', uid);
+      this.joskInstance.__errorHandler(opError, '[MongoAdapter] [add] [opError]', 'Exception inside MongoAdapter#add() method', uid);
       return false;
     }
   }
@@ -326,9 +312,12 @@ class MongoAdapter {
       return false;
     }
 
+    await this.ready();
+
     try {
       const updateResult = await this.collection.updateOne({
-        uid: task.uid
+        uid: task.uid,
+        isDeleted: false
       }, {
         $set: {
           executeAt: nextExecuteAt
@@ -343,57 +332,167 @@ class MongoAdapter {
 
   /**
    * @param {Date} nextExecuteAt
-   * @returns {Promise<void>}
+   * @param {JoSkLock} lock
+   * @param {JoSkExecuteMode} executeMode
+   * @returns {Promise<number>}
    */
-  async iterate(nextExecuteAt) {
-    const _ids = [];
-    const tasks = [];
+  async iterate(nextExecuteAt, lock, executeMode) {
+    await this.ready();
 
-    const cursor = this.collection.find({
-      executeAt: {
-        $lte: new Date()
+    let executed = 0;
+    if (executeMode === 'one') {
+      const task = await this.__claimNextTask(nextExecuteAt, lock);
+      if (!task) {
+        return executed;
       }
-    }, {
-      projection: {
-        _id: 1,
-        uid: 1,
-        delay: 1,
-        isDeleted: 1,
-        isInterval: 1
-      }
-    });
 
+      this.joskInstance.__execute(task);
+      return executed + 1;
+    }
+
+    while (true) {
+      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, 100);
+      if (tasks.length === 0) {
+        break;
+      }
+
+      executed += tasks.length;
+      for (const task of tasks) {
+        this.joskInstance.__execute(task);
+      }
+    }
+
+    return executed;
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @returns {Promise<MongoTask | null>}
+   */
+  async __claimNextTask(nextExecuteAt, lock) {
     try {
-      let task;
-      while (await cursor.hasNext()) {
-        task = await cursor.next();
-        _ids.push(task._id);
-        tasks.push(task);
-      }
-      await this.collection.updateMany({
-        _id: {
-          $in: _ids
+      const result = await this.collection.findOneAndUpdate({
+        isDeleted: false,
+        executeAt: {
+          $lte: new Date()
         }
       }, {
         $set: {
-          executeAt: nextExecuteAt
+          executeAt: nextExecuteAt,
+          claimOwnerId: lock.ownerId,
+          claimLeaseId: lock.leaseId,
+          claimedAt: new Date()
         }
+      }, {
+        sort: {
+          executeAt: 1
+        },
+        projection: {
+          uid: 1,
+          delay: 1,
+          executeAt: 1,
+          isDeleted: 1,
+          isInterval: 1
+        },
+        returnDocument: 'before'
       });
+
+      const task = result?._id ? result : result?.value;
+      return task || null;
     } catch (mongoError) {
-      logError('[iterate] mongoError:', mongoError);
+      this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [claim]', 'Exception inside MongoAdapter#__claimNextTask() method', null);
+      return null;
     }
+  }
 
-    for (const task of tasks) {
-      this.joskInstance.__execute(/** @type {MongoTask} */ (task));
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @param {number} limit
+   * @returns {Promise<MongoTask[]>}
+   */
+  async __claimNextTasks(nextExecuteAt, lock, limit) {
+    try {
+      const now = new Date();
+      const tasks = await this.collection.find({
+        isDeleted: false,
+        executeAt: {
+          $lte: now
+        }
+      }, {
+        sort: {
+          executeAt: 1
+        },
+        limit,
+        projection: {
+          _id: 1,
+          uid: 1,
+          delay: 1,
+          executeAt: 1,
+          isDeleted: 1,
+          isInterval: 1
+        }
+      }).toArray();
+
+      if (tasks.length === 0) {
+        return [];
+      }
+
+      const claimedAt = new Date();
+      const ops = tasks.map((task) => ({
+        updateOne: {
+          filter: {
+            _id: task._id,
+            isDeleted: false,
+            executeAt: task.executeAt
+          },
+          update: {
+            $set: {
+              executeAt: nextExecuteAt,
+              claimOwnerId: lock.ownerId,
+              claimLeaseId: lock.leaseId,
+              claimedAt
+            }
+          }
+        }
+      }));
+
+      const result = await this.collection.bulkWrite(ops, {
+        ordered: false
+      });
+
+      if ((result.modifiedCount || 0) === tasks.length) {
+        return tasks;
+      }
+
+      const claimed = await this.collection.find({
+        _id: {
+          $in: tasks.map((task) => task._id)
+        },
+        claimOwnerId: lock.ownerId,
+        claimLeaseId: lock.leaseId,
+        claimedAt
+      }, {
+        projection: {
+          _id: 1
+        }
+      }).toArray();
+      const claimedIds = new Set(claimed.map((task) => String(task._id)));
+
+      return tasks.filter((task) => claimedIds.has(String(task._id)));
+    } catch (mongoError) {
+      this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [batchClaim]', 'Exception inside MongoAdapter#__claimNextTasks() method', null);
+      return [];
     }
-
-    await cursor.close();
   }
 }
 
 /**
  * @typedef {import('redis').RedisClientType} RedisClient
  * @typedef {import('../index.js').JoSk} JoSk
+ * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
+ * @typedef {import('../index.js').JoSkLock} JoSkLock
  */
 
 /**
@@ -420,6 +519,154 @@ class MongoAdapter {
  * @property {boolean} isDeleted
  */
 
+const ACQUIRE_LOCK_SCRIPT = `
+  return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX')
+`;
+
+const RELEASE_LOCK_SCRIPT = `
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  end
+  return 0
+`;
+
+const ADD_TASK_SCRIPT = `
+  local payload = redis.call('HGET', KEYS[2], ARGV[1])
+  local task = payload and cjson.decode(payload) or {
+    uid = ARGV[1],
+    delay = tonumber(ARGV[2]),
+    executeAt = tonumber(ARGV[3]),
+    isInterval = ARGV[4] == '1',
+    isDeleted = false
+  }
+
+  if payload and task.isDeleted then
+    return 0
+  end
+
+  task.delay = tonumber(ARGV[2])
+  task.executeAt = tonumber(ARGV[3])
+  task.isInterval = ARGV[4] == '1'
+  task.isDeleted = false
+
+  redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
+  redis.call('ZADD', KEYS[1], tonumber(ARGV[3]), ARGV[1])
+  return 1
+`;
+
+const REMOVE_TASK_SCRIPT = `
+  local removed = redis.call('HDEL', KEYS[2], ARGV[1])
+  redis.call('ZREM', KEYS[1], ARGV[1])
+  return removed
+`;
+
+const UPDATE_TASK_SCRIPT = `
+  local payload = redis.call('HGET', KEYS[2], ARGV[1])
+  if not payload then
+    redis.call('ZREM', KEYS[1], ARGV[1])
+    return 0
+  end
+
+  local task = cjson.decode(payload)
+  if task.isDeleted then
+    redis.call('HDEL', KEYS[2], ARGV[1])
+    redis.call('ZREM', KEYS[1], ARGV[1])
+    return 0
+  end
+
+  task.executeAt = tonumber(ARGV[2])
+  redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
+  redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[1])
+  return 1
+`;
+
+const CLAIM_ONE_TASK_SCRIPT = `
+  local now = tonumber(ARGV[1])
+  local nextExecuteAt = tonumber(ARGV[2])
+  local scanned = 0
+
+  while scanned < 100 do
+    local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, 1)
+    if #due == 0 then
+      return nil
+    end
+
+    scanned = scanned + 1
+    local uid = due[1]
+    local payload = redis.call('HGET', KEYS[2], uid)
+    if not payload then
+      redis.call('ZREM', KEYS[1], uid)
+    else
+      local task = cjson.decode(payload)
+      if task.isDeleted then
+        redis.call('HDEL', KEYS[2], uid)
+        redis.call('ZREM', KEYS[1], uid)
+      elseif tonumber(task.executeAt) > now then
+        redis.call('ZADD', KEYS[1], tonumber(task.executeAt), uid)
+      else
+        task.executeAt = nextExecuteAt
+        task.claimOwnerId = ARGV[3]
+        task.claimLeaseId = ARGV[4]
+
+        redis.call('HSET', KEYS[2], uid, cjson.encode(task))
+        redis.call('ZADD', KEYS[1], nextExecuteAt, uid)
+        return cjson.encode(task)
+      end
+    end
+  end
+
+  return nil
+`;
+
+const CLAIM_BATCH_TASKS_SCRIPT = `
+  local now = tonumber(ARGV[1])
+  local nextExecuteAt = tonumber(ARGV[2])
+  local limit = tonumber(ARGV[5])
+  local maxScanned = limit * 4
+  local scanned = 0
+  local claimed = {}
+
+  while #claimed < limit and scanned < maxScanned do
+    local remaining = math.min(limit - #claimed, maxScanned - scanned)
+    local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, remaining)
+    if #due == 0 then
+      break
+    end
+
+    scanned = scanned + #due
+    for index, uid in ipairs(due) do
+      local payload = redis.call('HGET', KEYS[2], uid)
+      if not payload then
+        redis.call('ZREM', KEYS[1], uid)
+      else
+        local task = cjson.decode(payload)
+        if task.isDeleted then
+          redis.call('HDEL', KEYS[2], uid)
+          redis.call('ZREM', KEYS[1], uid)
+        elseif tonumber(task.executeAt) > now then
+          redis.call('ZADD', KEYS[1], tonumber(task.executeAt), uid)
+        else
+          task.executeAt = nextExecuteAt
+          task.claimOwnerId = ARGV[3]
+          task.claimLeaseId = ARGV[4]
+
+          redis.call('HSET', KEYS[2], uid, cjson.encode(task))
+          redis.call('ZADD', KEYS[1], nextExecuteAt, uid)
+          table.insert(claimed, task)
+        end
+
+        if #claimed >= limit then
+          break
+        end
+      end
+    end
+  end
+
+  return cjson.encode(claimed)
+`;
+
+const REDIS_BATCH_CLAIM_LIMIT = 100;
+
 /** Class representing Redis adapter for JoSk */
 class RedisAdapter {
   /**
@@ -428,10 +675,12 @@ class RedisAdapter {
    */
   constructor(opts = {}) {
     this.name = 'redis';
-    this.prefix = (typeof opts.prefix === 'string') ? opts.prefix : 'default';
-    this.uniqueName = `josk:${this.prefix}`;
+    this.prefix = typeof opts.prefix === 'string' ? opts.prefix : 'default';
+    this.uniqueName = `josk:{${this.prefix}}`;
     this.lockKey = `${this.uniqueName}:lock`;
-    this.resetOnInit = opts.resetOnInit || false;
+    this.scheduleKey = `${this.uniqueName}:schedule`;
+    this.tasksKey = `${this.uniqueName}:tasks`;
+    this.resetOnInit = !!opts.resetOnInit;
 
     if (!opts.client) {
       throw new Error('{client} option is required for RedisAdapter', {
@@ -443,18 +692,28 @@ class RedisAdapter {
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
-    if (this.resetOnInit) {
-      process.nextTick(async () => {
-        const cursor = this.client.scanIterator({
-          TYPE: 'hash',
-          MATCH: this.__getTaskKey('*'),
-          COUNT: 9999,
-        });
+    this.__readyPromise = this.__setup();
+  }
 
-        for await (const key of cursor) {
-          await this.client.del(key);
-        }
+  /**
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.__readyPromise;
+  }
+
+  /** @internal */
+  async __setup() {
+    if (this.resetOnInit) {
+      await this.client.del([this.scheduleKey, this.tasksKey, this.lockKey]);
+      const cursor = this.client.scanIterator({
+        MATCH: `${this.uniqueName}:task:*`,
+        COUNT: 9999
       });
+
+      for await (const key of cursor) {
+        await this.client.del(key);
+      }
     }
   }
 
@@ -472,17 +731,18 @@ class RedisAdapter {
         status: reason,
         code: 503,
         statusCode: 503,
-        error: new Error(reason),
+        error: new Error(reason)
       };
     }
 
     try {
+      await this.ready();
       const ping = await this.client.ping();
       if (ping === 'PONG') {
         return {
           status: 'OK',
           code: 200,
-          statusCode: 200,
+          statusCode: 200
         };
       }
 
@@ -492,31 +752,36 @@ class RedisAdapter {
         status: 'Internal Server Error',
         code: 500,
         statusCode: 500,
-        error: pingError,
+        error: pingError
       };
     }
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<boolean>}
    */
-  async acquireLock() {
-    const isLocked = await this.client.exists(this.lockKey);
-    if (isLocked >= 1) {
-      return false;
-    }
-    const res = await this.client.set(this.lockKey, `${Date.now() + this.joskInstance.zombieTime}`, {
-      PX: this.joskInstance.zombieTime,
-      NX: true
+  async acquireLock(lock) {
+    await this.ready();
+
+    const res = await this.client.eval(ACQUIRE_LOCK_SCRIPT, {
+      keys: [this.lockKey],
+      arguments: [this.__serializeLock(lock), `${this.joskInstance.zombieTime}`]
     });
+
     return res === 'OK';
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<void>}
    */
-  async releaseLock() {
-    await this.client.del(this.lockKey);
+  async releaseLock(lock) {
+    await this.ready();
+    await this.client.eval(RELEASE_LOCK_SCRIPT, {
+      keys: [this.lockKey],
+      arguments: [this.__serializeLock(lock)]
+    });
   }
 
   /**
@@ -524,19 +789,16 @@ class RedisAdapter {
    * @returns {Promise<boolean>}
    */
   async remove(uid) {
-    const taskKey = this.__getTaskKey(uid);
+    await this.ready();
+
     try {
-      const exists = await this.client.exists(taskKey);
-      if (!exists) {
-        return false;
-      }
-      await this.client.hSet(taskKey, {
-        isDeleted: '1'
+      const removed = await this.client.eval(REMOVE_TASK_SCRIPT, {
+        keys: [this.scheduleKey, this.tasksKey],
+        arguments: [uid]
       });
-      await this.client.del(taskKey);
-      return true;
+      return Number(removed) >= 1;
     } catch (removeError) {
-      this.joskInstance.__errorHandler(removeError, '[remove] removeError:', 'Exception inside RedisAdapter#remove() method', uid);
+      this.joskInstance.__errorHandler(removeError, '[RedisAdapter] [remove] removeError:', 'Exception inside RedisAdapter#remove() method', uid);
       return false;
     }
   }
@@ -548,44 +810,17 @@ class RedisAdapter {
    * @returns {Promise<boolean>}
    */
   async add(uid, isInterval, delay) {
-    const taskKey = this.__getTaskKey(uid);
+    await this.ready();
 
     try {
-      const exists = await this.client.exists(taskKey);
       const next = Date.now() + delay;
-      if (!exists) {
-        await this.client.hSet(taskKey, {
-          uid: uid,
-          delay: `${delay}`,
-          executeAt: `${next}`,
-          isInterval: isInterval ? '1' : '0',
-          isDeleted: '0'
-        });
-        return true;
-      }
-      const task = await this.client.hGetAll(taskKey);
-      if (+task.isDeleted) {
-        return false;
-      }
-
-      let update = null;
-      if (+task.delay !== delay) {
-        update = { delay };
-      }
-
-      if (+task.executeAt !== next) {
-        if (!update) {
-          update = {};
-        }
-        update.executeAt = next;
-      }
-
-      if (update) {
-        await this.client.hSet(taskKey, update);
-      }
-      return false;
-    } catch(opError) {
-      this.joskInstance.__errorHandler(opError, '[add] [exist] [opError]', 'Exception inside RedisAdapter#add() method', uid);
+      const result = await this.client.eval(ADD_TASK_SCRIPT, {
+        keys: [this.scheduleKey, this.tasksKey],
+        arguments: [uid, `${delay}`, `${next}`, isInterval ? '1' : '0']
+      });
+      return Number(result) >= 1;
+    } catch (opError) {
+      this.joskInstance.__errorHandler(opError, '[RedisAdapter] [add] [opError]', 'Exception inside RedisAdapter#add() method', uid);
       return false;
     }
   }
@@ -606,16 +841,14 @@ class RedisAdapter {
       return false;
     }
 
-    const taskKey = this.__getTaskKey(task.uid);
+    await this.ready();
+
     try {
-      const exists = await this.client.exists(taskKey);
-      if (!exists) {
-        return false;
-      }
-      await this.client.hSet(taskKey, {
-        executeAt: `${+nextExecuteAt}`
+      const exists = await this.client.eval(UPDATE_TASK_SCRIPT, {
+        keys: [this.scheduleKey, this.tasksKey],
+        arguments: [task.uid, `${+nextExecuteAt}`]
       });
-      return true;
+      return Number(exists) >= 1;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[RedisAdapter] [update] [opError]', 'Exception inside RedisAdapter#update() method', task.uid);
       return false;
@@ -624,33 +857,126 @@ class RedisAdapter {
 
   /**
    * @param {Date} nextExecuteAt
-   * @returns {Promise<void>}
+   * @param {JoSkLock} lock
+   * @param {JoSkExecuteMode} executeMode
+   * @returns {Promise<number>}
    */
-  async iterate(nextExecuteAt) {
-    const now = Date.now();
-    const nextRetry = +nextExecuteAt;
+  async iterate(nextExecuteAt, lock, executeMode) {
+    await this.ready();
 
-    const cursor = this.client.scanIterator({
-      TYPE: 'hash',
-      MATCH: this.__getTaskKey('*'),
-      COUNT: 9999,
-    });
+    let executed = 0;
+    if (executeMode === 'one') {
+      const task = await this.__claimNextTask(nextExecuteAt, lock);
+      if (!task) {
+        return executed;
+      }
 
-    for await (const taskKey of cursor) {
-      const task = await this.client.hGetAll(taskKey);
-      if (+task.executeAt <= now) {
-        await this.client.hSet(taskKey, {
-          executeAt: `${nextRetry}`
-        });
-        this.joskInstance.__execute(/** @type {RedisTask} */ ({
-          uid: task.uid,
-          delay: +task.delay,
-          executeAt: +task.executeAt,
-          isInterval: !!+task.isInterval,
-          isDeleted: !!+task.isDeleted,
-        }));
+      this.joskInstance.__execute(task);
+      return executed + 1;
+    }
+
+    while (true) {
+      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, REDIS_BATCH_CLAIM_LIMIT);
+      if (tasks.length === 0) {
+        break;
+      }
+
+      executed += tasks.length;
+      for (let i = 0; i < tasks.length; i++) {
+        this.joskInstance.__execute(tasks[i]);
+      }
+
+      if (tasks.length < REDIS_BATCH_CLAIM_LIMIT) {
+        break;
       }
     }
+
+    return executed;
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @returns {Promise<RedisTask | null>}
+   */
+  async __claimNextTask(nextExecuteAt, lock) {
+    try {
+      const claimed = await this.client.eval(CLAIM_ONE_TASK_SCRIPT, {
+        keys: [this.scheduleKey, this.tasksKey],
+        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId]
+      });
+
+      if (!claimed) {
+        return null;
+      }
+
+      const parsed = JSON.parse(String(claimed));
+      return this.__normalizeTask(parsed);
+    } catch (iterError) {
+      this.joskInstance.__errorHandler(iterError, '[RedisAdapter] [iterate] [claim]', 'Exception inside RedisAdapter#__claimNextTask() method', null);
+      return null;
+    }
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @param {number} limit
+   * @returns {Promise<RedisTask[]>}
+   */
+  async __claimNextTasks(nextExecuteAt, lock, limit) {
+    try {
+      const claimed = await this.client.eval(CLAIM_BATCH_TASKS_SCRIPT, {
+        keys: [this.scheduleKey, this.tasksKey],
+        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId, `${limit}`]
+      });
+
+      if (!claimed) {
+        return [];
+      }
+
+      const parsed = JSON.parse(String(claimed));
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed.map((task) => this.__normalizeTask(task)).filter(Boolean);
+    } catch (iterError) {
+      this.joskInstance.__errorHandler(iterError, '[RedisAdapter] [iterate] [batchClaim]', 'Exception inside RedisAdapter#__claimNextTasks() method', null);
+      return [];
+    }
+  }
+
+  /**
+   * @internal
+   * @param {Record<string, unknown>} task
+   * @returns {RedisTask | null}
+   */
+  __normalizeTask(task) {
+    if (!task || typeof task.uid !== 'string') {
+      return null;
+    }
+
+    return /** @type {RedisTask} */ ({
+      uid: task.uid,
+      delay: +task.delay,
+      executeAt: +task.executeAt,
+      isInterval: !!task.isInterval,
+      isDeleted: !!task.isDeleted
+    });
+  }
+
+  /**
+   * @internal
+   * @param {JoSkLock} lock
+   * @returns {string}
+   */
+  __serializeLock(lock) {
+    return JSON.stringify({
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId,
+      expiresAtMs: lock.expiresAtMs
+    });
   }
 
   /**
@@ -676,6 +1002,8 @@ class RedisAdapter {
 
 /**
  * @typedef {import('../index.js').JoSk} JoSk
+ * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
+ * @typedef {import('../index.js').JoSkLock} JoSkLock
  */
 
 /**
@@ -708,9 +1036,9 @@ class PostgresAdapter {
    * Create a PostgresAdapter instance
    * @param {PostgresAdapterOption} opts - configuration object
    */
-  constructor (opts = {}) {
+  constructor(opts = {}) {
     this.name = 'postgres';
-    this.prefix = (typeof opts.prefix === 'string' && opts.prefix.length > 0) ? opts.prefix : 'default';
+    this.prefix = typeof opts.prefix === 'string' && opts.prefix.length > 0 ? opts.prefix : 'default';
     this.uniqueName = `josk-${this.prefix}`;
     this.lockKey = `${this.uniqueName}.lock`;
     this.resetOnInit = !!opts.resetOnInit;
@@ -725,57 +1053,114 @@ class PostgresAdapter {
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    this.__readyPromise = this.__setup();
+  }
 
-    // Setup DB tables asynchronously
-    this._setupTables();
-
-    if (this.resetOnInit) {
-      process.nextTick(async () => {
-        try {
-          await this.client.query('DELETE FROM josk_tasks WHERE prefix = $1', [this.prefix]);
-          await this.client.query('DELETE FROM josk_locks WHERE lock_key = $1', [this.lockKey]);
-        } catch (resetErr) {
-          console.error('[josk] [PostgresAdapter] [resetOnInit] error:', resetErr);
-        }
-      });
-    }
+  /**
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.__readyPromise;
   }
 
   /** @internal */
-  async _setupTables () {
-    process.nextTick(async () => {
-      try {
-        await this.client.query(`
-          CREATE TABLE IF NOT EXISTS josk_tasks (
-            uid TEXT PRIMARY KEY,
-            prefix TEXT NOT NULL DEFAULT 'default',
-            delay INTEGER NOT NULL,
-            execute_at BIGINT NOT NULL,
-            is_interval BOOLEAN NOT NULL DEFAULT false,
-            is_deleted BOOLEAN NOT NULL DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-        await this.client.query(`
-          CREATE INDEX IF NOT EXISTS idx_josk_tasks_prefix_execute 
-          ON josk_tasks (prefix, execute_at) 
-          WHERE is_deleted = false;
-        `);
-        await this.client.query('CREATE INDEX IF NOT EXISTS idx_josk_tasks_uid ON josk_tasks (uid);');
+  async __setup() {
+    await this.client.query('SELECT pg_advisory_lock($1)', [93824517]);
 
+    try {
+      await this.client.query(`
+        CREATE TABLE IF NOT EXISTS josk_tasks (
+          prefix TEXT NOT NULL DEFAULT 'default',
+          uid TEXT NOT NULL,
+          delay INTEGER NOT NULL,
+          execute_at BIGINT NOT NULL,
+          is_interval BOOLEAN NOT NULL DEFAULT false,
+          is_deleted BOOLEAN NOT NULL DEFAULT false,
+          claim_owner_id TEXT,
+          claim_lease_id TEXT,
+          claimed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT 'default'`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS uid TEXT NOT NULL DEFAULT ''`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS delay INTEGER NOT NULL DEFAULT 0`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS execute_at BIGINT NOT NULL DEFAULT 0`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_interval BOOLEAN NOT NULL DEFAULT false`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_owner_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_lease_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+      await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+
+      const primaryKeyResult = await this.client.query(`
+        SELECT kc.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kc
+          ON tc.constraint_name = kc.constraint_name
+         AND tc.table_schema = kc.table_schema
+        WHERE tc.table_name = 'josk_tasks'
+          AND tc.constraint_type = 'PRIMARY KEY'
+        ORDER BY kc.ordinal_position ASC
+      `);
+      const primaryKeyColumns = (primaryKeyResult.rows || []).map((row) => row.column_name);
+
+      if (primaryKeyColumns.length === 1 && primaryKeyColumns[0] === 'uid') {
         await this.client.query(`
-          CREATE TABLE IF NOT EXISTS josk_locks (
-            lock_key TEXT PRIMARY KEY,
-            locked_until BIGINT,
-            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-          )
+          ALTER TABLE josk_tasks
+          DROP CONSTRAINT IF EXISTS josk_tasks_pkey
         `);
-        this.joskInstance?._debug('[PostgresAdapter] tables ready');
-      } catch (setupErr) {
-        console.error('[josk] [PostgresAdapter] [_setupTables] error:', setupErr);
       }
-    });
+
+      await this.client.query(`
+        ALTER TABLE josk_tasks
+        ADD CONSTRAINT josk_tasks_pkey PRIMARY KEY (prefix, uid)
+      `).catch(async (error) => {
+        if (error?.code !== '42P16' && error?.code !== '42710') {
+          throw error;
+        }
+      });
+
+      await this.client.query(`
+        CREATE INDEX IF NOT EXISTS idx_josk_tasks_prefix_execute
+        ON josk_tasks (prefix, execute_at)
+        WHERE is_deleted = false
+      `);
+
+      await this.client.query(`
+        CREATE TABLE IF NOT EXISTS josk_locks (
+          lock_key TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          lease_id TEXT NOT NULL,
+          locked_until BIGINT NOT NULL,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS owner_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS lease_id TEXT`);
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS locked_until BIGINT`);
+      await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+      await this.client.query(`UPDATE josk_locks SET owner_id = COALESCE(owner_id, ''), lease_id = COALESCE(lease_id, ''), locked_until = COALESCE(locked_until, 0)`);
+      await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN owner_id SET NOT NULL`);
+      await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN lease_id SET NOT NULL`);
+      await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN locked_until SET NOT NULL`);
+
+      await this.client.query(`
+        CREATE INDEX IF NOT EXISTS idx_josk_locks_locked_until
+        ON josk_locks (locked_until)
+      `);
+
+      if (this.resetOnInit) {
+        await this.client.query('DELETE FROM josk_tasks WHERE prefix = $1', [this.prefix]);
+        await this.client.query('DELETE FROM josk_locks WHERE lock_key = $1', [this.lockKey]);
+      }
+    } finally {
+      await this.client.query('SELECT pg_advisory_unlock($1)', [93824517]);
+    }
   }
 
   /**
@@ -785,7 +1170,7 @@ class PostgresAdapter {
    * @description Check connection to PostgreSQL
    * @returns {Promise<AdapterPingResult>}
    */
-  async ping () {
+  async ping() {
     if (!this.joskInstance) {
       const reason = 'JoSk instance not yet assigned to {joskInstance} of Storage Adapter context';
       return {
@@ -797,6 +1182,7 @@ class PostgresAdapter {
     }
 
     try {
+      await this.ready();
       const res = await this.client.query('SELECT 1 as ping');
       if (res.rows && res.rows[0] && res.rows[0].ping === 1) {
         return {
@@ -817,34 +1203,26 @@ class PostgresAdapter {
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<boolean>}
    */
-  async acquireLock () {
-    const now = Date.now();
-    const until = now + this.joskInstance.zombieTime;
-    try {
-      // Try update if expired or no lock
-      let res = await this.client.query(
-        `UPDATE josk_locks 
-         SET locked_until = $2, updated_at = CURRENT_TIMESTAMP 
-         WHERE lock_key = $1 
-           AND (locked_until IS NULL OR locked_until < $3) 
-         RETURNING locked_until`,
-        [this.lockKey, until, now]
-      );
-      if (res.rowCount > 0) {
-        return true;
-      }
+  async acquireLock(lock) {
+    await this.ready();
 
-      // Insert new lock
-      res = await this.client.query(
-        `INSERT INTO josk_locks (lock_key, locked_until) 
-         VALUES ($1, $2) 
-         ON CONFLICT (lock_key) DO NOTHING 
-         RETURNING locked_until`,
-        [this.lockKey, until]
+    try {
+      const res = await this.client.query(
+        `INSERT INTO josk_locks (lock_key, owner_id, lease_id, locked_until)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (lock_key) DO UPDATE
+           SET owner_id = EXCLUDED.owner_id,
+               lease_id = EXCLUDED.lease_id,
+               locked_until = EXCLUDED.locked_until,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE josk_locks.locked_until <= $5
+         RETURNING lease_id`,
+        [this.lockKey, lock.ownerId, lock.leaseId, lock.expiresAtMs, Date.now()]
       );
-      return res.rowCount > 0;
+      return (res.rowCount || 0) >= 1;
     } catch (lockError) {
       this.joskInstance.__errorHandler(lockError, '[PostgresAdapter] [acquireLock]', 'Failed to acquire lock', null);
       return false;
@@ -852,18 +1230,21 @@ class PostgresAdapter {
   }
 
   /**
+   * @param {JoSkLock} lock
    * @returns {Promise<void>}
    */
-  async releaseLock () {
+  async releaseLock(lock) {
+    await this.ready();
+
     try {
       await this.client.query(
-        `UPDATE josk_locks 
-         SET locked_until = NULL, updated_at = CURRENT_TIMESTAMP 
-         WHERE lock_key = $1`,
-        [this.lockKey]
+        `DELETE FROM josk_locks
+         WHERE lock_key = $1
+           AND owner_id = $2
+           AND lease_id = $3`,
+        [this.lockKey, lock.ownerId, lock.leaseId]
       );
     } catch (releaseError) {
-      // Non-critical, log via debug if possible
       this.joskInstance?._debug('[PostgresAdapter] [releaseLock] non-critical error:', releaseError);
     }
   }
@@ -872,17 +1253,18 @@ class PostgresAdapter {
    * @param {string} uid
    * @returns {Promise<boolean>}
    */
-  async remove (uid) {
+  async remove(uid) {
+    await this.ready();
+
     try {
       const res = await this.client.query(
-        `UPDATE josk_tasks 
-         SET is_deleted = true, updated_at = CURRENT_TIMESTAMP 
-         WHERE uid = $1 AND prefix = $2 
+        `DELETE FROM josk_tasks
+         WHERE prefix = $1
+           AND uid = $2
          RETURNING uid`,
-        [uid, this.prefix]
+        [this.prefix, uid]
       );
-      const removed = res.rowCount > 0;
-      return removed;
+      return (res.rowCount || 0) >= 1;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[PostgresAdapter] [remove]', 'Exception inside remove method', uid);
       return false;
@@ -895,19 +1277,20 @@ class PostgresAdapter {
    * @param {number} delay
    * @returns {Promise<boolean>}
    */
-  async add (uid, isInterval, delay) {
-    const executeAt = Date.now() + delay;
+  async add(uid, isInterval, delay) {
+    await this.ready();
+
     try {
       await this.client.query(
-        `INSERT INTO josk_tasks (uid, prefix, delay, execute_at, is_interval, is_deleted)
-         VALUES ($1, $2, $3, $4, $5, false)
-         ON CONFLICT (uid) DO UPDATE SET 
+        `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT (prefix, uid) DO UPDATE SET
            delay = EXCLUDED.delay,
            execute_at = EXCLUDED.execute_at,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
            updated_at = CURRENT_TIMESTAMP`,
-        [uid, this.prefix, delay, executeAt, isInterval]
+        [this.prefix, uid, delay, Date.now() + delay, isInterval]
       );
       return true;
     } catch (opError) {
@@ -921,7 +1304,7 @@ class PostgresAdapter {
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
-  async update (task, nextExecuteAt) {
+  async update(task, nextExecuteAt) {
     if (typeof task !== 'object' || typeof task.uid !== 'string') {
       this.joskInstance.__errorHandler({ task }, '[PostgresAdapter] [update] [task]', 'Task malformed or undefined');
       return false;
@@ -932,15 +1315,20 @@ class PostgresAdapter {
       return false;
     }
 
+    await this.ready();
+
     try {
       const res = await this.client.query(
-        `UPDATE josk_tasks 
-         SET execute_at = $1, updated_at = CURRENT_TIMESTAMP 
-         WHERE uid = $2 AND prefix = $3 AND is_deleted = false 
+        `UPDATE josk_tasks
+         SET execute_at = $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE prefix = $2
+           AND uid = $3
+           AND is_deleted = false
          RETURNING uid`,
-        [+nextExecuteAt, task.uid, this.prefix]
+        [+nextExecuteAt, this.prefix, task.uid]
       );
-      return res.rowCount > 0;
+      return (res.rowCount || 0) >= 1;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[PostgresAdapter] [update] [opError]', 'Exception inside update method', task.uid);
       return false;
@@ -949,49 +1337,149 @@ class PostgresAdapter {
 
   /**
    * @param {Date} nextExecuteAt
-   * @returns {Promise<void>}
+   * @param {JoSkLock} lock
+   * @param {JoSkExecuteMode} executeMode
+   * @returns {Promise<number>}
    */
-  async iterate (nextExecuteAt) {
-    const now = Date.now();
-    const nextRetry = +nextExecuteAt;
+  async iterate(nextExecuteAt, lock, executeMode) {
+    await this.ready();
 
-    try {
-      const res = await this.client.query(
-        `SELECT uid, delay, execute_at, is_interval, is_deleted 
-         FROM josk_tasks 
-         WHERE prefix = $1 
-           AND is_deleted = false 
-           AND execute_at <= $2 
-         ORDER BY execute_at ASC`,
-        [this.prefix, now]
-      );
+    let executed = 0;
+    if (executeMode === 'one') {
+      const task = await this.__claimNextTask(nextExecuteAt, lock);
+      if (!task) {
+        return executed;
+      }
 
-      for (const row of /** @type {PostgresTask[]} */ (res.rows || [])) {
-        // Lock task by advancing execute_at to zombie time
-        await this.update({ uid: row.uid }, new Date(nextRetry));
+      this.joskInstance.__execute({
+        uid: task.uid,
+        delay: parseInt(task.delay, 10),
+        executeAt: parseInt(task.execute_at, 10),
+        isInterval: task.is_interval,
+        isDeleted: task.is_deleted
+      });
 
-        // Execute via JoSk
+      return executed + 1;
+    }
+
+    while (true) {
+      const limit = 100;
+      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, limit);
+      if (tasks.length === 0) {
+        break;
+      }
+
+      executed += tasks.length;
+      for (const task of tasks) {
         this.joskInstance.__execute({
-          uid: row.uid,
-          delay: parseInt(row.delay, 10),
-          executeAt: parseInt(row.execute_at, 10),
-          isInterval: row.is_interval,
-          isDeleted: row.is_deleted
+          uid: task.uid,
+          delay: parseInt(task.delay, 10),
+          executeAt: parseInt(task.execute_at, 10),
+          isInterval: task.is_interval,
+          isDeleted: task.is_deleted
         });
       }
+
+      if (tasks.length < limit) {
+        break;
+      }
+    }
+
+    return executed;
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @returns {Promise<PostgresTask | null>}
+   */
+  async __claimNextTask(nextExecuteAt, lock) {
+    try {
+      const res = await this.client.query(
+        `WITH due AS (
+           SELECT prefix, uid, delay, execute_at, is_interval, is_deleted
+           FROM josk_tasks
+           WHERE prefix = $1
+             AND is_deleted = false
+             AND execute_at <= $2
+           ORDER BY execute_at ASC
+           FOR UPDATE SKIP LOCKED
+           LIMIT 1
+         )
+         UPDATE josk_tasks AS task
+         SET execute_at = $3,
+             claim_owner_id = $4,
+             claim_lease_id = $5,
+             claimed_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         FROM due
+         WHERE task.prefix = due.prefix
+           AND task.uid = due.uid
+         RETURNING due.uid, due.delay, due.execute_at, due.is_interval, due.is_deleted`,
+        [this.prefix, Date.now(), +nextExecuteAt, lock.ownerId, lock.leaseId]
+      );
+
+      return /** @type {PostgresTask | null} */ ((res.rows && res.rows[0]) || null);
     } catch (iterError) {
-      this.joskInstance.__errorHandler(iterError, '[PostgresAdapter] [iterate]', 'Exception inside iterate method', null);
+      this.joskInstance.__errorHandler(iterError, '[PostgresAdapter] [iterate] [claim]', 'Exception inside PostgresAdapter#__claimNextTask() method', null);
+      return null;
+    }
+  }
+
+  /**
+   * @param {Date} nextExecuteAt
+   * @param {JoSkLock} lock
+   * @param {number} limit
+   * @returns {Promise<PostgresTask[]>}
+   */
+  async __claimNextTasks(nextExecuteAt, lock, limit) {
+    try {
+      const res = await this.client.query(
+        `WITH due AS (
+           SELECT prefix, uid, delay, execute_at, is_interval, is_deleted
+           FROM josk_tasks
+           WHERE prefix = $1
+             AND is_deleted = false
+             AND execute_at <= $2
+           ORDER BY execute_at ASC
+           FOR UPDATE SKIP LOCKED
+           LIMIT $6
+         ),
+         updated AS (
+           UPDATE josk_tasks AS task
+           SET execute_at = $3,
+               claim_owner_id = $4,
+               claim_lease_id = $5,
+               claimed_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           FROM due
+           WHERE task.prefix = due.prefix
+             AND task.uid = due.uid
+           RETURNING due.uid, due.delay, due.execute_at, due.is_interval, due.is_deleted
+         )
+         SELECT uid, delay, execute_at, is_interval, is_deleted
+         FROM updated
+         ORDER BY execute_at ASC`,
+        [this.prefix, Date.now(), +nextExecuteAt, lock.ownerId, lock.leaseId, limit]
+      );
+
+      return /** @type {PostgresTask[]} */ (res.rows || []);
+    } catch (iterError) {
+      this.joskInstance.__errorHandler(iterError, '[PostgresAdapter] [iterate] [batchClaim]', 'Exception inside PostgresAdapter#__claimNextTasks() method', null);
+      return [];
     }
   }
 
   /** @internal */
-  __customPrivateMethod () {
-    // private methods prefixed with __ as per adapter convention
+  __customPrivateMethod() {
     return true;
   }
 }
 
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
+const validExecuteModes = new Set(['batch', 'one']);
+
+const createRandomId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 
 /**
  * @typedef {object} JoSkPingResult
@@ -1024,6 +1512,18 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
  * @property {Date | number} [executeAt]
+ */
+
+/**
+ * @typedef {'batch' | 'one'} JoSkExecuteMode
+ */
+
+/**
+ * @typedef {object} JoSkLock
+ * @property {string} ownerId
+ * @property {string} leaseId
+ * @property {Date} expireAt
+ * @property {number} expiresAtMs
  */
 
 /**
@@ -1066,13 +1566,14 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 /**
  * @typedef {object} JoSkAdapter
  * @property {JoSk | undefined} [joskInstance]
- * @property {() => Promise<boolean>} acquireLock
- * @property {() => Promise<void>} releaseLock
+ * @property {(lock: JoSkLock) => Promise<boolean>} acquireLock
+ * @property {(lock: JoSkLock) => Promise<void>} releaseLock
  * @property {(uid: string) => Promise<boolean>} remove
  * @property {(uid: string, isInterval: boolean, delay: number) => Promise<boolean | void>} add
  * @property {(task: JoSkTask, nextExecuteAt: Date) => Promise<boolean>} update
- * @property {(nextExecuteAt: Date) => Promise<void>} iterate
+ * @property {(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode) => Promise<number | void>} iterate
  * @property {() => Promise<JoSkPingResult>} ping
+ * @property {() => Promise<void>} [ready]
  */
 
 /**
@@ -1085,9 +1586,12 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
  * @property {JoSkOnExecuted} [onExecuted]
  * @property {number} [minRevolvingDelay]
  * @property {number} [maxRevolvingDelay]
+ * @property {JoSkExecuteMode} [execute]
+ * @property {string} [lockOwnerId]
  */
 
 const errors = {
+  execute: '[josk] [execute] option must be either "batch" or "one"!',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be positive Number!',
@@ -1101,7 +1605,7 @@ const errors = {
   setImmediate: {
     func: '[josk] [setImmediate] the first argument must be a function!',
     uid: '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]'
-  },
+  }
 };
 
 /** Class representing a JoSk task runner (cron). */
@@ -1119,8 +1623,18 @@ class JoSk {
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
+    this.execute = opts.execute || 'batch';
+    this.lockOwnerId = typeof opts.lockOwnerId === 'string' && opts.lockOwnerId.length > 0 ? opts.lockOwnerId : `josk-${createRandomId()}`;
     /** @internal */
     this.nextRevolutionTimeout = null;
+    /** @internal */
+    this.__lockLeaseCounter = 0;
+    /** @internal */
+    this.__adapterReadyPromise = null;
+
+    if (!validExecuteModes.has(this.execute)) {
+      throw new Error(errors.execute);
+    }
 
     if (!opts.adapter || typeof opts.adapter !== 'object') {
       throw new Error('{adapter} option is required for JoSk', {
@@ -1156,9 +1670,9 @@ class JoSk {
    * @name ping
    * @description Check package readiness and connection to Storage
    * @returns {Promise<JoSkPingResult>}
-   * @throws {mix}
    */
   async ping() {
+    await this.__adapterReady();
     return await this.adapter.ping();
   }
 
@@ -1263,7 +1777,6 @@ class JoSk {
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
    * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
-   * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearInterval(timerId) {
@@ -1280,7 +1793,6 @@ class JoSk {
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
    * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
-   * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearTimeout(timerId) {
@@ -1327,10 +1839,37 @@ class JoSk {
   }
 
   /** @internal */
+  async __adapterReady() {
+    if (typeof this.adapter.ready !== 'function') {
+      return;
+    }
+
+    if (!this.__adapterReadyPromise) {
+      this.__adapterReadyPromise = Promise.resolve().then(() => this.adapter.ready());
+    }
+
+    return await this.__adapterReadyPromise;
+  }
+
+  /** @internal */
+  __getLock() {
+    const expireAt = new Date(Date.now() + this.zombieTime);
+    this.__lockLeaseCounter++;
+    return {
+      ownerId: this.lockOwnerId,
+      leaseId: `${this.lockOwnerId}:${this.__lockLeaseCounter}:${createRandomId()}`,
+      expireAt,
+      expiresAtMs: +expireAt
+    };
+  }
+
+  /** @internal */
   async __remove(timerId) {
     if (typeof timerId !== 'string') {
       return false;
     }
+
+    await this.__adapterReady();
 
     const isRemoved = await this.adapter.remove(timerId);
     if (isRemoved && this.tasks?.[timerId]) {
@@ -1345,6 +1884,7 @@ class JoSk {
       return;
     }
 
+    await this.__adapterReady();
     await this.adapter.add(uid, isInterval, delay);
   }
 
@@ -1354,7 +1894,7 @@ class JoSk {
    * @returns {Promise<void>}
    */
   async __execute(task) {
-    if (this.isDestroyed || task.isDeleted === true) {
+    if (this.isDestroyed || task?.isDeleted === true) {
       return;
     }
 
@@ -1363,8 +1903,8 @@ class JoSk {
         this.onError('JoSk#__execute received malformed task', {
           description: 'Something went wrong with one of your tasks - malformed or undefined',
           error: null,
-          task: task,
-          uid: task.uid,
+          task,
+          uid: null
         });
       } else {
         this._debug('[__execute] received malformed task', task);
@@ -1410,16 +1950,16 @@ class JoSk {
         if (this.onExecuted) {
           this.onExecuted(task.uid.replace(prefixRegex, ''), {
             uid: task.uid,
-            date: date,
+            date,
             delay: task.delay,
-            timestamp: timestamp
+            timestamp
           });
         }
 
         return true;
       };
 
-      let hasError;
+      let hasError = false;
       let returnedPromise;
       try {
         if (task.isInterval === false) {
@@ -1459,7 +1999,7 @@ class JoSk {
     }
 
     await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
-    this.tasks[task.uid] = /** @type {JoSkStoredTask} */ (function () { });
+    this.tasks[task.uid] = /** @type {JoSkStoredTask} */ (function () {});
     this.tasks[task.uid].isMissing = true;
 
     if (this.autoClear) {
@@ -1495,16 +2035,26 @@ class JoSk {
     }
 
     const nextExecuteAt = new Date(Date.now() + this.zombieTime);
+    const lock = this.__getLock();
+    let isAcquired = false;
 
     try {
-      const isAcquired = await this.adapter.acquireLock();
+      await this.__adapterReady();
+      isAcquired = await this.adapter.acquireLock(lock);
       if (isAcquired) {
-        await this.adapter.iterate(nextExecuteAt);
-        await this.adapter.releaseLock();
+        await this.adapter.iterate(nextExecuteAt, lock, this.execute);
       }
-      this.__tick();
     } catch (runError) {
       this.__errorHandler(runError, '[__iterate] runError:', 'adapter.iterate has returned an error', null);
+    } finally {
+      if (isAcquired) {
+        try {
+          await this.adapter.releaseLock(lock);
+        } catch (releaseError) {
+          this.__errorHandler(releaseError, '[__iterate] [releaseLock] releaseError:', 'adapter.releaseLock has returned an error', null);
+        }
+      }
+      this.__tick();
     }
   }
 

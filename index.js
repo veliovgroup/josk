@@ -3,6 +3,9 @@ import { RedisAdapter } from './adapters/redis.js';
 import { PostgresAdapter } from './adapters/postgres.js';
 
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
+const validExecuteModes = new Set(['batch', 'one']);
+
+const createRandomId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 
 /**
  * @typedef {object} JoSkPingResult
@@ -35,6 +38,18 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
  * @property {Date | number} [executeAt]
+ */
+
+/**
+ * @typedef {'batch' | 'one'} JoSkExecuteMode
+ */
+
+/**
+ * @typedef {object} JoSkLock
+ * @property {string} ownerId
+ * @property {string} leaseId
+ * @property {Date} expireAt
+ * @property {number} expiresAtMs
  */
 
 /**
@@ -77,13 +92,14 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 /**
  * @typedef {object} JoSkAdapter
  * @property {JoSk | undefined} [joskInstance]
- * @property {() => Promise<boolean>} acquireLock
- * @property {() => Promise<void>} releaseLock
+ * @property {(lock: JoSkLock) => Promise<boolean>} acquireLock
+ * @property {(lock: JoSkLock) => Promise<void>} releaseLock
  * @property {(uid: string) => Promise<boolean>} remove
  * @property {(uid: string, isInterval: boolean, delay: number) => Promise<boolean | void>} add
  * @property {(task: JoSkTask, nextExecuteAt: Date) => Promise<boolean>} update
- * @property {(nextExecuteAt: Date) => Promise<void>} iterate
+ * @property {(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode) => Promise<number | void>} iterate
  * @property {() => Promise<JoSkPingResult>} ping
+ * @property {() => Promise<void>} [ready]
  */
 
 /**
@@ -96,9 +112,12 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
  * @property {JoSkOnExecuted} [onExecuted]
  * @property {number} [minRevolvingDelay]
  * @property {number} [maxRevolvingDelay]
+ * @property {JoSkExecuteMode} [execute]
+ * @property {string} [lockOwnerId]
  */
 
 const errors = {
+  execute: '[josk] [execute] option must be either "batch" or "one"!',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be positive Number!',
@@ -112,7 +131,7 @@ const errors = {
   setImmediate: {
     func: '[josk] [setImmediate] the first argument must be a function!',
     uid: '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]'
-  },
+  }
 };
 
 /** Class representing a JoSk task runner (cron). */
@@ -130,8 +149,18 @@ class JoSk {
     this.isDestroyed = false;
     this.minRevolvingDelay = opts.minRevolvingDelay || 128;
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
+    this.execute = opts.execute || 'batch';
+    this.lockOwnerId = typeof opts.lockOwnerId === 'string' && opts.lockOwnerId.length > 0 ? opts.lockOwnerId : `josk-${createRandomId()}`;
     /** @internal */
     this.nextRevolutionTimeout = null;
+    /** @internal */
+    this.__lockLeaseCounter = 0;
+    /** @internal */
+    this.__adapterReadyPromise = null;
+
+    if (!validExecuteModes.has(this.execute)) {
+      throw new Error(errors.execute);
+    }
 
     if (!opts.adapter || typeof opts.adapter !== 'object') {
       throw new Error('{adapter} option is required for JoSk', {
@@ -167,9 +196,9 @@ class JoSk {
    * @name ping
    * @description Check package readiness and connection to Storage
    * @returns {Promise<JoSkPingResult>}
-   * @throws {mix}
    */
   async ping() {
+    await this.__adapterReady();
     return await this.adapter.ping();
   }
 
@@ -274,7 +303,6 @@ class JoSk {
    * Must be called in a separate event loop from `.setInterval()`
    * @name clearInterval
    * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
-   * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearInterval(timerId) {
@@ -291,7 +319,6 @@ class JoSk {
    * Must be called in a separate event loop from `.setTimeout()`
    * @name clearTimeout
    * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
-   * @param {function} [callback] - optional callback
    * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
    */
   async clearTimeout(timerId) {
@@ -338,10 +365,37 @@ class JoSk {
   }
 
   /** @internal */
+  async __adapterReady() {
+    if (typeof this.adapter.ready !== 'function') {
+      return;
+    }
+
+    if (!this.__adapterReadyPromise) {
+      this.__adapterReadyPromise = Promise.resolve().then(() => this.adapter.ready());
+    }
+
+    return await this.__adapterReadyPromise;
+  }
+
+  /** @internal */
+  __getLock() {
+    const expireAt = new Date(Date.now() + this.zombieTime);
+    this.__lockLeaseCounter++;
+    return {
+      ownerId: this.lockOwnerId,
+      leaseId: `${this.lockOwnerId}:${this.__lockLeaseCounter}:${createRandomId()}`,
+      expireAt,
+      expiresAtMs: +expireAt
+    };
+  }
+
+  /** @internal */
   async __remove(timerId) {
     if (typeof timerId !== 'string') {
       return false;
     }
+
+    await this.__adapterReady();
 
     const isRemoved = await this.adapter.remove(timerId);
     if (isRemoved && this.tasks?.[timerId]) {
@@ -356,6 +410,7 @@ class JoSk {
       return;
     }
 
+    await this.__adapterReady();
     await this.adapter.add(uid, isInterval, delay);
   }
 
@@ -365,7 +420,7 @@ class JoSk {
    * @returns {Promise<void>}
    */
   async __execute(task) {
-    if (this.isDestroyed || task.isDeleted === true) {
+    if (this.isDestroyed || task?.isDeleted === true) {
       return;
     }
 
@@ -374,8 +429,8 @@ class JoSk {
         this.onError('JoSk#__execute received malformed task', {
           description: 'Something went wrong with one of your tasks - malformed or undefined',
           error: null,
-          task: task,
-          uid: task.uid,
+          task,
+          uid: null
         });
       } else {
         this._debug('[__execute] received malformed task', task);
@@ -421,16 +476,16 @@ class JoSk {
         if (this.onExecuted) {
           this.onExecuted(task.uid.replace(prefixRegex, ''), {
             uid: task.uid,
-            date: date,
+            date,
             delay: task.delay,
-            timestamp: timestamp
+            timestamp
           });
         }
 
         return true;
       };
 
-      let hasError;
+      let hasError = false;
       let returnedPromise;
       try {
         if (task.isInterval === false) {
@@ -470,7 +525,7 @@ class JoSk {
     }
 
     await this.adapter.update(task, new Date(Date.now() + this.zombieTime));
-    this.tasks[task.uid] = /** @type {JoSkStoredTask} */ (function () { });
+    this.tasks[task.uid] = /** @type {JoSkStoredTask} */ (function () {});
     this.tasks[task.uid].isMissing = true;
 
     if (this.autoClear) {
@@ -506,16 +561,26 @@ class JoSk {
     }
 
     const nextExecuteAt = new Date(Date.now() + this.zombieTime);
+    const lock = this.__getLock();
+    let isAcquired = false;
 
     try {
-      const isAcquired = await this.adapter.acquireLock();
+      await this.__adapterReady();
+      isAcquired = await this.adapter.acquireLock(lock);
       if (isAcquired) {
-        await this.adapter.iterate(nextExecuteAt);
-        await this.adapter.releaseLock();
+        await this.adapter.iterate(nextExecuteAt, lock, this.execute);
       }
-      this.__tick();
     } catch (runError) {
       this.__errorHandler(runError, '[__iterate] runError:', 'adapter.iterate has returned an error', null);
+    } finally {
+      if (isAcquired) {
+        try {
+          await this.adapter.releaseLock(lock);
+        } catch (releaseError) {
+          this.__errorHandler(releaseError, '[__iterate] [releaseLock] releaseError:', 'adapter.releaseLock has returned an error', null);
+        }
+      }
+      this.__tick();
     }
   }
 
