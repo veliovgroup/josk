@@ -2,15 +2,15 @@ import { JoSk, RedisAdapter } from '../index.js';
 import { createClient } from 'redis';
 
 import parser  from 'cron-parser';
-import { it, describe, before } from 'mocha';
+import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
+import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
 
 if (!process.env.REDIS_URL) {
   throw new Error('REDIS_URL env.var is not defined! Please run test with REDIS_URL, like `REDIS_URL=redis://127.0.0.1:6379 npm test`');
 }
 
 const DEBUG = process.env.DEBUG === 'true' ? true : false;
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
@@ -37,6 +37,7 @@ let job;
 let jobCron;
 let jobException;
 const jobRacing = {};
+const racingClients = [];
 
 const testInterval = function (interval) {
   it(`setInterval ${interval}`, function (endit) {
@@ -155,7 +156,10 @@ before(async function () {
   while (n++ < 6) {
     jobRacing[n] = new JoSk({
       adapter: new RedisAdapter({
-        client: await createClient({ url: process.env.REDIS_URL }).connect(),
+        client: await createClient({ url: process.env.REDIS_URL }).connect().then((racingClient) => {
+          racingClients.push(racingClient);
+          return racingClient;
+        }),
         prefix: 'testCaseNPM-racing-conditions',
         resetOnInit: n === 1,
       }),
@@ -165,6 +169,12 @@ before(async function () {
       maxRevolvingDelay: 512,
     });
   }
+});
+
+after(async function () {
+  destroyJobs(job, jobCron, jobException, Object.values(jobRacing));
+  await Promise.all(racingClients.map(quitRedisClient));
+  await quitRedisClient(client);
 });
 
 describe('Redis - Has JoSk Object', function () {
@@ -192,6 +202,8 @@ describe('Redis - JoSk', function () {
       assert.instanceOf(job.onExecuted, Function, 'JoSk# has .onExecuted');
       assert.equal(job.minRevolvingDelay, minRevolvingDelay, 'JoSk# has .minRevolvingDelay');
       assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'JoSk# has .maxRevolvingDelay');
+      assert.equal(job.execute, 'batch', 'JoSk# has default .execute');
+      assert.isString(job.lockOwnerId, 'JoSk# has .lockOwnerId');
       assert.instanceOf(job.tasks, Object, 'JoSk# has .tasks');
     });
   });
@@ -636,14 +648,14 @@ describe('Redis - JoSk', function () {
       }, 1024);
     });
 
-    it('setInterval - sync throw', function (endit) {
+    it('setInterval - sync throw', async function () {
       const errorMessage = 'Error thrown inside sync callback';
       const taskName = 'throw-inside-sync-256';
       const taskId = `${taskName}setInterval`;
       const maxRuns = 3;
       let runs = 0;
 
-      jobException.setInterval(function () {
+      await jobException.setInterval(function () {
         runs++;
         if (runs >= maxRuns) {
           jobException.clearInterval(taskId);
@@ -651,27 +663,25 @@ describe('Redis - JoSk', function () {
         throw new Error(errorMessage);
       }, 256, taskName);
 
-      setTimeout(async () => {
-        try {
-          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
-          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
-          const isRemoved = await jobException.clearInterval(taskId);
-          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
-          endit();
-        } catch (err) {
-          endit(err);
-        }
-      }, 2560);
+      await waitUntil(() => runs >= maxRuns, {
+        timeout: 5000,
+        message: `${taskName} did not reach ${maxRuns} runs`
+      });
+
+      assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
+      assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+      const isRemoved = await jobException.clearInterval(taskId);
+      assert.isFalse(isRemoved, `${taskName} task was properly removed`);
     });
 
-    it('setInterval - async throw', function (endit) {
+    it('setInterval - async throw', async function () {
       const errorMessage = 'Error thrown inside async callback';
       const taskName = 'throw-inside-async-256';
       const taskId = `${taskName}setInterval`;
       const maxRuns = 3;
       let runs = 0;
 
-      jobException.setInterval(async function () {
+      await jobException.setInterval(async function () {
         runs++;
         if (runs >= maxRuns) {
           await jobException.clearInterval(taskId);
@@ -679,17 +689,15 @@ describe('Redis - JoSk', function () {
         throw new Error(errorMessage);
       }, 256, taskName);
 
-      setTimeout(async () => {
-        try {
-          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
-          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
-          const isRemoved = await jobException.clearInterval(taskId);
-          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
-          endit();
-        } catch (err) {
-          endit(err);
-        }
-      }, 2560);
+      await waitUntil(() => runs >= maxRuns, {
+        timeout: 5000,
+        message: `${taskName} did not reach ${maxRuns} runs`
+      });
+
+      assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
+      assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+      const isRemoved = await jobException.clearInterval(taskId);
+      assert.isFalse(isRemoved, `${taskName} task was properly removed`);
     });
   });
 
@@ -726,8 +734,89 @@ describe('Redis - JoSk', function () {
   });
 
   describe('Redis - racing conditions', function () {
-    this.slow(3840);
-    this.timeout(4352);
+    this.slow(6000);
+    this.timeout(8000);
+
+    const createRacingCluster = async (prefix, execute = 'batch') => {
+      const racingJobs = [];
+      let n = 0;
+      while (n++ < 6) {
+        const racingClient = await createClient({ url: process.env.REDIS_URL }).connect();
+        racingClients.push(racingClient);
+        racingJobs.push(new JoSk({
+          adapter: new RedisAdapter({
+            client: racingClient,
+            prefix,
+            resetOnInit: n === 1,
+          }),
+          debug: DEBUG,
+          autoClear: true,
+          minRevolvingDelay: 512,
+          maxRevolvingDelay: 768,
+          execute
+        }));
+      }
+
+      return racingJobs;
+    };
+
+    it('setImmediate executes only once across equal instances', async function () {
+      const key = uniqueId('countRacingConditionsImmediate');
+      const racingJobs = await createRacingCluster(uniqueId('testCaseNPM-racing-immediate'));
+
+      try {
+        await client.set(key, 0);
+        await Promise.all(racingJobs.map((jobInstance) => {
+          return jobInstance.setImmediate(async (ready) => {
+            await client.incr(key);
+            ready();
+          }, 'countRacingImmediate');
+        }));
+
+        await waitUntil(async () => {
+          const rec = await client.get(key);
+          return Number(rec) >= 1 && rec;
+        }, {
+          timeout: 2500,
+          message: 'Redis setImmediate cluster task did not run'
+        });
+        await wait(512);
+
+        assert.equal(await client.get(key), '1', 'setImmediate task executed only once');
+      } finally {
+        destroyJobs(racingJobs);
+        await client.del(key);
+      }
+    });
+
+    it('setTimeout execute one runs only once across equal instances', async function () {
+      const key = uniqueId('countRacingConditionsTimeoutOne');
+      const racingJobs = await createRacingCluster(uniqueId('testCaseNPM-racing-timeout-one'), 'one');
+
+      try {
+        await client.set(key, 0);
+        await Promise.all(racingJobs.map((jobInstance) => {
+          assert.equal(jobInstance.execute, 'one', 'cluster job uses execute one');
+          return jobInstance.setTimeout(async () => {
+            await client.incr(key);
+          }, 128, 'countRacingTimeoutOne');
+        }));
+
+        await waitUntil(async () => {
+          const rec = await client.get(key);
+          return Number(rec) >= 1 && rec;
+        }, {
+          timeout: 2500,
+          message: 'Redis execute one cluster task did not run'
+        });
+        await wait(512);
+
+        assert.equal(await client.get(key), '1', 'execute one timeout task executed only once');
+      } finally {
+        destroyJobs(racingJobs);
+        await client.del(key);
+      }
+    });
 
     it('setTimeout', function (endit) {
       const taskIds = {};

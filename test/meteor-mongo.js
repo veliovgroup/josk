@@ -2,6 +2,7 @@ import { MongoInternals } from 'meteor/mongo';
 import { JoSk, MongoAdapter } from '../index.js';
 import parser from 'cron-parser';
 import { assert } from 'chai';
+import { destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
 
 const ZOMBIE_TIME = 8000;
 const DEBUG = process.env.DEBUG === 'true' ? true : false;
@@ -18,6 +19,10 @@ const timestamps = {};
 const revolutions = {};
 let cron;
 let createCronTask;
+
+after(function () {
+  destroyJobs(cron);
+});
 
 describe('Mongo - Has JoSk Object', () => {
   it('JoSk is Constructor', () => {
@@ -283,6 +288,65 @@ describe('Mongo - CRON Usage', function () {
 
       return true;
     });
+  });
+});
+
+describe('Mongo - racing conditions', function () {
+  this.slow(5000);
+  this.timeout(7000);
+
+  it('setTimeout executes only once across equal instances', async function () {
+    const prefix = uniqueId('testCaseMeteor-racing-timeout');
+    const collection = db.collection('countRacingConditionsMeteor');
+    const racingJobs = [];
+    const record = await collection.insertOne({
+      countRuns: 0
+    });
+
+    try {
+      let n = 0;
+      while (n++ < 4) {
+        racingJobs.push(new JoSk({
+          adapter: new MongoAdapter({
+            db,
+            prefix,
+            resetOnInit: n === 1,
+          }),
+          debug: DEBUG,
+          autoClear: true,
+          minRevolvingDelay: 32,
+          maxRevolvingDelay: 128,
+          execute: 'one'
+        }));
+      }
+
+      await Promise.all(racingJobs.map((jobInstance) => {
+        return jobInstance.setTimeout(async () => {
+          await collection.updateOne({
+            _id: record.insertedId
+          }, {
+            $inc: {
+              countRuns: 1
+            }
+          });
+        }, 128, 'countRacingConditions');
+      }));
+
+      await waitUntil(async () => {
+        const rec = await collection.findOne({ _id: record.insertedId });
+        return rec.countRuns >= 1 && rec;
+      }, {
+        timeout: 2500,
+        message: 'Meteor Mongo cluster task did not run'
+      });
+      await wait(512);
+
+      const rec = await collection.findOne({ _id: record.insertedId });
+      assert.equal(rec.countRuns, 1, 'task was executed only once');
+    } finally {
+      destroyJobs(racingJobs);
+      await collection.deleteOne({ _id: record.insertedId });
+    }
   });
 });
 

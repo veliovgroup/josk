@@ -2,15 +2,15 @@ import { JoSk, MongoAdapter } from '../index.js';
 import { MongoClient } from 'mongodb';
 
 import parser  from 'cron-parser';
-import { it, describe, before } from 'mocha';
+import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
+import { closeMongoClient, destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
 
 if (!process.env.MONGO_URL) {
   throw new Error('MONGO_URL env.var is not defined! Please run test with MONGO_URL, like `MONGO_URL=mongodb://127.0.0.1:27017/dbname npm test`');
 }
 
 const DEBUG = process.env.DEBUG === 'true' ? true : false;
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
@@ -33,6 +33,7 @@ let job;
 let jobCron;
 let jobException;
 const jobRacing = {};
+const racingClients = [];
 let db;
 
 const testInterval = function (interval) {
@@ -170,6 +171,9 @@ before(async function () {
       adapter: new MongoAdapter({
         db: (await MongoClient.connect(mongoAddr, {
           appname: `josk-test-suite-racing-${n}`
+        }).then((racingClient) => {
+          racingClients.push(racingClient);
+          return racingClient;
         })).db(dbName),
         prefix: 'testCaseNPM-racing-conditions',
         resetOnInit: n === 1,
@@ -180,6 +184,12 @@ before(async function () {
       maxRevolvingDelay: 512,
     });
   }
+});
+
+after(async function () {
+  destroyJobs(job, jobCron, jobException, Object.values(jobRacing));
+  await Promise.all(racingClients.map(closeMongoClient));
+  await closeMongoClient(client);
 });
 
 describe('Mongo - Has JoSk Object', function () {
@@ -207,6 +217,8 @@ describe('Mongo - JoSk', function () {
       assert.instanceOf(job.onExecuted, Function, 'JoSk# has .onExecuted');
       assert.equal(job.minRevolvingDelay, minRevolvingDelay, 'JoSk# has .minRevolvingDelay');
       assert.equal(job.maxRevolvingDelay, maxRevolvingDelay, 'JoSk# has .maxRevolvingDelay');
+      assert.equal(job.execute, 'batch', 'JoSk# has default .execute');
+      assert.isString(job.lockOwnerId, 'JoSk# has .lockOwnerId');
       assert.instanceOf(job.tasks, Object, 'JoSk# has .tasks');
     });
   });
@@ -647,14 +659,14 @@ describe('Mongo - JoSk', function () {
       }, 1024);
     });
 
-    it('setInterval - sync throw', function (endit) {
+    it('setInterval - sync throw', async function () {
       const errorMessage = 'Error thrown inside sync callback';
       const taskName = 'throw-inside-sync-256';
       const taskId = `${taskName}setInterval`;
       const maxRuns = 3;
       let runs = 0;
 
-      jobException.setInterval(function () {
+      await jobException.setInterval(function () {
         runs++;
         if (runs >= maxRuns) {
           jobException.clearInterval(taskId);
@@ -662,27 +674,25 @@ describe('Mongo - JoSk', function () {
         throw new Error(errorMessage);
       }, 256, taskName);
 
-      setTimeout(async () => {
-        try {
-          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
-          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
-          const isRemoved = await jobException.clearInterval(taskId);
-          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
-          endit();
-        } catch (err) {
-          endit(err);
-        }
-      }, 2560);
+      await waitUntil(() => runs >= maxRuns, {
+        timeout: 5000,
+        message: `${taskName} did not reach ${maxRuns} runs`
+      });
+
+      assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
+      assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+      const isRemoved = await jobException.clearInterval(taskId);
+      assert.isFalse(isRemoved, `${taskName} task was properly removed`);
     });
 
-    it('setInterval - async throw', function (endit) {
+    it('setInterval - async throw', async function () {
       const errorMessage = 'Error thrown inside async callback';
       const taskName = 'throw-inside-async-256';
       const taskId = `${taskName}setInterval`;
       const maxRuns = 3;
       let runs = 0;
 
-      jobException.setInterval(async function () {
+      await jobException.setInterval(async function () {
         runs++;
         if (runs >= maxRuns) {
           await jobException.clearInterval(taskId);
@@ -690,17 +700,15 @@ describe('Mongo - JoSk', function () {
         throw new Error(errorMessage);
       }, 256, taskName);
 
-      setTimeout(async () => {
-        try {
-          assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
-          assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
-          const isRemoved = await jobException.clearInterval(taskId);
-          assert.isFalse(isRemoved, `${taskName} task was properly removed`);
-          endit();
-        } catch (err) {
-          endit(err);
-        }
-      }, 2560);
+      await waitUntil(() => runs >= maxRuns, {
+        timeout: 5000,
+        message: `${taskName} did not reach ${maxRuns} runs`
+      });
+
+      assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
+      assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+      const isRemoved = await jobException.clearInterval(taskId);
+      assert.isFalse(isRemoved, `${taskName} task was properly removed`);
     });
   });
 
@@ -737,8 +745,111 @@ describe('Mongo - JoSk', function () {
   });
 
   describe('Mongo - racing conditions', function () {
-    this.slow(3840);
-    this.timeout(4352);
+    this.slow(6000);
+    this.timeout(8000);
+
+    const createRacingCluster = async (prefix, execute = 'batch') => {
+      const racingJobs = [];
+      let n = 0;
+      while (n++ < 6) {
+        const racingClient = await MongoClient.connect(mongoAddr, {
+          appname: `josk-test-suite-racing-extra-${prefix}-${n}`
+        });
+        racingClients.push(racingClient);
+        racingJobs.push(new JoSk({
+          adapter: new MongoAdapter({
+            db: racingClient.db(dbName),
+            prefix,
+            resetOnInit: n === 1,
+          }),
+          debug: DEBUG,
+          autoClear: true,
+          minRevolvingDelay: 512,
+          maxRevolvingDelay: 768,
+          execute
+        }));
+      }
+
+      return racingJobs;
+    };
+
+    it('setImmediate executes only once across equal instances', async function () {
+      const collection = db.collection('countRacingConditions');
+      const prefix = uniqueId('testCaseNPM-racing-immediate');
+      const racingJobs = await createRacingCluster(prefix);
+      const record = await collection.insertOne({
+        countRuns: 0
+      });
+
+      try {
+        await Promise.all(racingJobs.map((jobInstance) => {
+          return jobInstance.setImmediate(async (ready) => {
+            await collection.updateOne({
+              _id: record.insertedId
+            }, {
+              $inc: {
+                countRuns: 1
+              }
+            });
+            ready();
+          }, 'countRacingImmediate');
+        }));
+
+        await waitUntil(async () => {
+          const rec = await collection.findOne({ _id: record.insertedId });
+          return rec.countRuns >= 1 && rec;
+        }, {
+          timeout: 2500,
+          message: 'Mongo setImmediate cluster task did not run'
+        });
+        await wait(512);
+
+        const rec = await collection.findOne({ _id: record.insertedId });
+        assert.equal(rec.countRuns, 1, 'setImmediate task executed only once');
+      } finally {
+        destroyJobs(racingJobs);
+        await collection.deleteOne({ _id: record.insertedId });
+      }
+    });
+
+    it('setTimeout execute one runs only once across equal instances', async function () {
+      const collection = db.collection('countRacingConditions');
+      const prefix = uniqueId('testCaseNPM-racing-timeout-one');
+      const racingJobs = await createRacingCluster(prefix, 'one');
+      const record = await collection.insertOne({
+        countRuns: 0
+      });
+
+      try {
+        await Promise.all(racingJobs.map((jobInstance) => {
+          assert.equal(jobInstance.execute, 'one', 'cluster job uses execute one');
+          return jobInstance.setTimeout(async () => {
+            await collection.updateOne({
+              _id: record.insertedId
+            }, {
+              $inc: {
+                countRuns: 1
+              }
+            });
+          }, 128, 'countRacingTimeoutOne');
+        }));
+
+        await waitUntil(async () => {
+          const rec = await collection.findOne({ _id: record.insertedId });
+          return rec.countRuns >= 1 && rec;
+        }, {
+          timeout: 2500,
+          message: 'Mongo execute one cluster task did not run'
+        });
+        await wait(512);
+
+        const rec = await collection.findOne({ _id: record.insertedId });
+        assert.equal(rec.countRuns, 1, 'execute one timeout task executed only once');
+      } finally {
+        destroyJobs(racingJobs);
+        await collection.deleteOne({ _id: record.insertedId });
+      }
+    });
 
     it('setTimeout', function (endit) {
       const collection = db.collection('countRacingConditions');

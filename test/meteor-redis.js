@@ -3,6 +3,7 @@ import { createClient } from 'redis';
 
 import parser from 'cron-parser';
 import { assert } from 'chai';
+import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
 
 if (!process.env.REDIS_URL) {
   throw new Error('REDIS_URL env.var is not defined! Please run test with REDIS_URL, like `REDIS_URL=redis://127.0.0.1:6379 meteor test-packages ./`');
@@ -30,6 +31,13 @@ const revolutions = {};
 let client;
 let cron;
 let createCronTask;
+const racingClients = [];
+
+after(async function () {
+  destroyJobs(cron);
+  await Promise.all(racingClients.map(quitRedisClient));
+  await quitRedisClient(client);
+});
 
 describe('redis - Has JoSk Object', () => {
   it('JoSk is Constructor', () => {
@@ -302,6 +310,58 @@ describe('redis - CRON Usage', function () {
 
       return true;
     });
+  });
+});
+
+describe('redis - racing conditions', function () {
+  this.slow(5000);
+  this.timeout(7000);
+
+  it('setTimeout executes only once across equal instances', async function () {
+    const key = uniqueId('countRacingConditionsMeteor');
+    const prefix = uniqueId('testCaseMeteor-racing-timeout');
+    const racingJobs = [];
+
+    try {
+      await client.set(key, 0);
+      let n = 0;
+      while (n++ < 4) {
+        const racingClient = await createClient({ url: process.env.REDIS_URL }).connect();
+        racingClients.push(racingClient);
+        racingJobs.push(new JoSk({
+          adapter: new RedisAdapter({
+            client: racingClient,
+            prefix,
+            resetOnInit: n === 1,
+          }),
+          debug: DEBUG,
+          autoClear: true,
+          minRevolvingDelay: 32,
+          maxRevolvingDelay: 128,
+          execute: 'one'
+        }));
+      }
+
+      await Promise.all(racingJobs.map((jobInstance) => {
+        return jobInstance.setTimeout(async () => {
+          await client.incr(key);
+        }, 128, 'countRacingConditions');
+      }));
+
+      await waitUntil(async () => {
+        const rec = await client.get(key);
+        return Number(rec) >= 1 && rec;
+      }, {
+        timeout: 2500,
+        message: 'Meteor Redis cluster task did not run'
+      });
+      await wait(512);
+
+      assert.equal(await client.get(key), '1', 'task was executed only once');
+    } finally {
+      destroyJobs(racingJobs);
+      await client.del(key);
+    }
   });
 });
 
