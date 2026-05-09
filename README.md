@@ -696,7 +696,7 @@ Run Redis-related tests only
 
 ```shell
 # Before running Redis tests you need to have Redis server installed and running
-REDIS_URL="redis://127.0.0.1:6379" npm run test-redis
+REDIS_URL="redis://127.0.0.1:6379" npm run test:redis
 
 # Be patient, tests are taking around 3 mins
 ```
@@ -707,17 +707,17 @@ Run MongoDB-related tests only
 
 ```shell
 # Before running Mongo tests you need to have MongoDB server installed and running
-MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" npm run test-mongo
+MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test" npm run test:mongo
 
 # Be patient, tests are taking around 3 mins
 ```
 ### Run PostgreSQL tests only
 
 ```shell
-# Before running, have PostgreSQL server running and create DB, e.g. npm-josk-test-001
+# Before running, have PostgreSQL server running and create DB, e.g. npm-josk-test
 # PG_URL is required for PostgreSQL tests.
 # Install pg if not: npm install --save-dev pg
-PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm run test-postgres
+PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test" npm run test:postgres
 
 # Be patient, tests are taking around 3 mins
 ```
