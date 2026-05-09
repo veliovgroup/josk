@@ -21,3 +21,4 @@ docs
 test
 package.json
 package-lock.json
+/coverage
