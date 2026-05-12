@@ -72,7 +72,6 @@ const sayName = (name) => {
 - Errors: onError hook preferred over throw. ready() or returned Promise controls completion.
 - TS: JSDoc in source drives declarations. Adapter required in JoSkOption. Run `npm run prepublishOnly` after changes to `index.js`/adapters.
 - Never edit `index.cjs` or any `.d.ts`. Always edit source, regenerate before publish.
-- Yes, `index.cjs` in `.cursorignore`.
 - Follow terse response rule: drop articles/fillers. [subject] [verb] [reason]. [next].
 
 ## Testing
@@ -94,7 +93,6 @@ npm run test-postgres
 - Feature: update docs/TS/tests first. Maintain 2s min interval, jitter note.
 - Weak points: precision (±256ms+), no <2s tasks. Document. No ultra-precision.
 - PR: full test suite, lint clean, update CHANGELOG.
-- Further dev: built-in CRON, more adapters (Dynamo/KeyDB/SQLite), metrics/tracing, UI, tighter locks, serverless opt.
 - Use MongoDB skills only on query/index/schema. PG similar. Frontend skill never. Always read files first.
 
 ## Edit rules and flow
