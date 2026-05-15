@@ -155,7 +155,7 @@ Use JoSk to invoke synchronized tasks by CRON schedule, and [`cron-parser` packa
 ```js
 import { MongoInternals } from 'meteor/mongo';
 import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
-import parser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 
 const jobsCron = new JoSk({
   adapter: new MongoAdapter({
@@ -166,14 +166,15 @@ const jobsCron = new JoSk({
   maxRevolvingDelay: 1000, // as CRON schedule defined to seconds
 });
 
-// CREATE HELPER FUNCTION
+// CREATE HELPER FUNCTION (cron-parser@^5)
 const setCron = async (uniqueName, cronTask, task) => {
-  const nextTimestamp = +parser.parseExpression(cronTask).next().toDate();
+  const next = CronExpressionParser.parse(cronTask).next().toDate();
+  const initialDelay = Math.max(0, +next - Date.now());
 
   return await jobsCron.setInterval(function (ready) {
-    ready(parser.parseExpression(cronTask).next().toDate());
+    ready(CronExpressionParser.parse(cronTask).next().toDate());
     task();
-  }, nextTimestamp - Date.now(), uniqueName);
+  }, initialDelay, uniqueName);
 };
 
 // SCHEDULE A TASK
