@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { MongoAdapter } from './adapters/mongo.js';
 import { RedisAdapter } from './adapters/redis.js';
 import { PostgresAdapter } from './adapters/postgres.js';
@@ -5,7 +7,7 @@ import { PostgresAdapter } from './adapters/postgres.js';
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 const validExecuteModes = new Set(['batch', 'one']);
 
-const createRandomId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+const createRandomId = () => randomUUID();
 
 /**
  * @typedef {object} JoSkPingResult
@@ -56,14 +58,14 @@ const createRandomId = () => `${Date.now().toString(36)}-${Math.random().toStrin
  * @callback JoSkOnError
  * @param {string} title
  * @param {JoSkErrorDetails} details
- * @returns {void}
+ * @returns {void | Promise<void>}
  */
 
 /**
  * @callback JoSkOnExecuted
  * @param {string} uid
  * @param {JoSkExecutedDetails} details
- * @returns {void}
+ * @returns {void | Promise<void>}
  */
 
 /**
@@ -114,23 +116,25 @@ const createRandomId = () => `${Date.now().toString(36)}-${Math.random().toStrin
  * @property {number} [maxRevolvingDelay]
  * @property {JoSkExecuteMode} [execute]
  * @property {string} [lockOwnerId]
+ * @property {number} [concurrency]
  */
 
 const errors = {
   execute: '[josk] [execute] option must be either "batch" or "one"!',
+  concurrency: '[josk] [concurrency] option must be a positive integer or Infinity',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be positive Number!',
-    uid: '[josk] [setInterval] [uid - task id must be specified (3rd argument)]'
+    uid: '[josk] [setInterval] uid (3rd argument) must be a string'
   },
   setTimeout: {
     func: '[josk] [setTimeout] the first argument must be a function!',
     delay: '[josk] [setTimeout] delay must be positive Number!',
-    uid: '[josk] [setTimeout] [uid - task id must be specified (3rd argument)]'
+    uid: '[josk] [setTimeout] uid (3rd argument) must be a string'
   },
   setImmediate: {
     func: '[josk] [setImmediate] the first argument must be a function!',
-    uid: '[josk] [setImmediate] [uid - task id must be specified (2nd argument)]'
+    uid: '[josk] [setImmediate] uid (2nd argument) must be a string'
   }
 };
 
@@ -151,12 +155,26 @@ class JoSk {
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
     this.execute = opts.execute || 'batch';
     this.lockOwnerId = typeof opts.lockOwnerId === 'string' && opts.lockOwnerId.length > 0 ? opts.lockOwnerId : `josk-${createRandomId()}`;
+
+    if (opts.concurrency !== void 0) {
+      if (opts.concurrency !== Infinity && (!Number.isInteger(opts.concurrency) || opts.concurrency < 1)) {
+        throw new Error(errors.concurrency);
+      }
+      this.concurrency = opts.concurrency;
+    } else {
+      this.concurrency = Infinity;
+    }
+
     /** @internal */
     this.nextRevolutionTimeout = null;
     /** @internal */
     this.__lockLeaseCounter = 0;
     /** @internal */
     this.__adapterReadyPromise = null;
+    /** @internal */
+    this.__activeExecutions = 0;
+    /** @internal */
+    this.__pendingTasks = [];
 
     if (!validExecuteModes.has(this.execute)) {
       throw new Error(errors.execute);
@@ -164,11 +182,14 @@ class JoSk {
 
     if (!opts.adapter || typeof opts.adapter !== 'object') {
       throw new Error('{adapter} option is required for JoSk', {
-        description: 'JoSk requires MongoAdapter, RedisAdapter, or CustomAdapter to connect to an intermediate database'
+        description: 'JoSk requires MongoAdapter, RedisAdapter, PostgresAdapter, or CustomAdapter to connect to an intermediate database'
       });
     }
 
-    /** @type {Record<string, JoSkStoredTask>} */
+    /**
+     * @type {Record<string, JoSkStoredTask>}
+     * @internal
+     */
     this.tasks = {};
 
     /** @internal */
@@ -238,7 +259,9 @@ class JoSk {
   /**
    * @async
    * @memberOf JoSk
-   * Create delayed task
+   * Create delayed task. Executes at-most-once across the cluster: the task
+   * is removed from storage before the handler runs, so a crash between
+   * removal and completion drops the run.
    * @name setTimeout
    * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {number} delay - Delay before task execution in milliseconds
@@ -389,7 +412,11 @@ class JoSk {
     };
   }
 
-  /** @internal */
+  /**
+   * @internal
+   * @param {string} timerId
+   * @returns {Promise<boolean>}
+   */
   async __remove(timerId) {
     if (typeof timerId !== 'string') {
       return false;
@@ -398,13 +425,19 @@ class JoSk {
     await this.__adapterReady();
 
     const isRemoved = await this.adapter.remove(timerId);
-    if (isRemoved && this.tasks?.[timerId]) {
+    if (isRemoved && this.tasks[timerId]) {
       delete this.tasks[timerId];
     }
     return isRemoved;
   }
 
-  /** @internal */
+  /**
+   * @internal
+   * @param {string} uid
+   * @param {boolean} isInterval
+   * @param {number} delay
+   * @returns {Promise<void>}
+   */
   async __add(uid, isInterval, delay) {
     if (this.isDestroyed) {
       return;
@@ -415,11 +448,65 @@ class JoSk {
   }
 
   /**
+   * Entry point used by adapters. Respects the configured concurrency cap.
+   * Returns a Promise that resolves when the task finishes; adapters call
+   * this fire-and-forget for batched throughput.
    * @internal
    * @param {JoSkTask} task
    * @returns {Promise<void>}
    */
-  async __execute(task) {
+  __execute(task) {
+    if (this.concurrency === Infinity) {
+      const promise = this.__doExecute(task);
+      promise.catch((err) => {
+        this._debug(`[__execute] [${task?.uid || 'unknown'}] unhandled exception:`, err);
+      });
+      return promise;
+    }
+
+    return new Promise((resolve) => {
+      this.__pendingTasks.push({ task, resolve });
+      this.__drainPending();
+    });
+  }
+
+  /**
+   * Drains queued tasks under the configured `concurrency` cap.
+   *
+   * Pulls FIFO entries off `__pendingTasks` and starts `__doExecute` for each
+   * while `__activeExecutions < concurrency`. Every started task:
+   *   - increments `__activeExecutions` before it begins
+   *   - decrements it when it settles (success or failure)
+   *   - resolves the awaiter promise returned from `__execute(task)`
+   *   - re-invokes `__drainPending()` so the next queued task starts
+   *     immediately without waiting for another tick
+   *
+   * Only used when `concurrency !== Infinity`. When concurrency is unbounded,
+   * `__execute` runs tasks directly without queueing.
+   *
+   * @internal
+   * @returns {void}
+   */
+  __drainPending() {
+    while (this.__activeExecutions < this.concurrency && this.__pendingTasks.length > 0) {
+      const entry = this.__pendingTasks.shift();
+      this.__activeExecutions++;
+      this.__doExecute(entry.task).catch((err) => {
+        this._debug(`[__execute] [${entry.task?.uid || 'unknown'}] unhandled exception:`, err);
+      }).finally(() => {
+        this.__activeExecutions--;
+        entry.resolve();
+        this.__drainPending();
+      });
+    }
+  }
+
+  /**
+   * @internal
+   * @param {JoSkTask} task
+   * @returns {Promise<void>}
+   */
+  async __doExecute(task) {
     if (this.isDestroyed || task?.isDeleted === true) {
       return;
     }
@@ -485,11 +572,12 @@ class JoSk {
         return true;
       };
 
+      const taskFunc = this.tasks[task.uid];
+      const funcArity = taskFunc.length;
       let hasError = false;
       let returnedPromise;
       try {
         if (task.isInterval === false) {
-          const originalTask = this.tasks[task.uid];
           let isRemoved = false;
           try {
             isRemoved = await this.__remove(task.uid);
@@ -498,28 +586,32 @@ class JoSk {
           }
 
           if (isRemoved === true) {
-            returnedPromise = originalTask(ready);
+            returnedPromise = taskFunc(ready);
           }
         } else {
-          returnedPromise = this.tasks[task.uid](ready);
+          returnedPromise = taskFunc(ready);
         }
 
         if (returnedPromise && returnedPromise instanceof Promise) {
           await returnedPromise;
-        } else {
-          return;
         }
       } catch (taskExecError) {
         hasError = true;
         this.__errorHandler(taskExecError, 'Exception during task execution', 'An exception was thrown during task execution', task.uid);
       }
 
-      if ((returnedPromise && returnedPromise instanceof Promise) || (executionsQty === 0 && hasError)) {
+      const isPromise = returnedPromise && returnedPromise instanceof Promise;
+      const isCallbackStyle = funcArity === 0;
+      const needsAutoReady = executionsQty === 0 && (isPromise || hasError || isCallbackStyle);
+
+      if (needsAutoReady) {
         try {
           await ready();
         } catch (readyErr) {
           this._debug(`[${task.uid}] [__execute] [ready] has thrown an exception; readyErr:`, readyErr);
         }
+      } else if (executionsQty === 0 && !isPromise && !hasError) {
+        this._debug(`[${task.uid}] [__execute] handler returned synchronously without calling ready(); task will be retried after zombieTime`);
       }
       return;
     }
@@ -590,10 +682,18 @@ class JoSk {
       return;
     }
 
-    this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), Math.round((Math.random() * this.maxRevolvingDelay) + this.minRevolvingDelay));
+    const jitterRange = Math.max(0, this.maxRevolvingDelay - this.minRevolvingDelay);
+    this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), this.minRevolvingDelay + Math.round(Math.random() * jitterRange));
   }
 
-  /** @internal */
+  /**
+   * @internal
+   * @param {unknown} error
+   * @param {string} title
+   * @param {string} description
+   * @param {string | null} uid
+   * @returns {void}
+   */
   __errorHandler(error, title, description, uid) {
     if (error) {
       if (this.onError) {
