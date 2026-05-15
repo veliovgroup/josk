@@ -25,6 +25,7 @@ scripts/
 .npm
 .versions
 package.js
+package-types.json
 
 # Build-time TypeScript configs and temp output
 tsconfig.json
