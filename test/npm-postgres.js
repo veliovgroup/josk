@@ -1,6 +1,6 @@
 import { JoSk, PostgresAdapter } from '../index.js';
 import { Pool } from 'pg';
-import parser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
@@ -148,9 +148,9 @@ describePostgres('PostgresAdapter + JoSk', function () {
     let ran = 0;
 
     const setCron = async (name, cronStr, task) => {
-      const next = +parser.parseExpression(cronStr).next().toDate();
+      const next = +CronExpressionParser.parse(cronStr).next().toDate();
       return await jobs.setInterval((ready) => {
-        ready(parser.parseExpression(cronStr).next().toDate());
+        ready(CronExpressionParser.parse(cronStr).next().toDate());
         task();
       }, next - Date.now(), name);
     };

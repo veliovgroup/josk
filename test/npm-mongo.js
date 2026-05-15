@@ -1,7 +1,7 @@
 import { JoSk, MongoAdapter } from '../index.js';
 import { MongoClient } from 'mongodb';
 
-import parser  from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { closeMongoClient, destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
@@ -243,11 +243,11 @@ describe('Mongo - JoSk', function () {
     const createCronTask = async (uniqueName, cronTask, task, josk = jobCron) => {
       timers[uniqueName] = await josk.setInterval(function (ready) {
         if (task()) {
-          ready(parser.parseExpression(cronTask).next().toDate());
+          ready(CronExpressionParser.parse(cronTask).next().toDate());
         } else {
           josk.clearInterval(timers[uniqueName]);
         }
-      }, +parser.parseExpression(cronTask).next().toDate() - Date.now(), uniqueName);
+      }, +CronExpressionParser.parse(cronTask).next().toDate() - Date.now(), uniqueName);
 
       return timers[uniqueName];
     };
@@ -300,7 +300,7 @@ describe('Mongo - JoSk', function () {
         this.timeout((sec * 1000 * maxRuns) + 2000);
 
         const cronTask = `*/${sec} * * * * *`;
-        let expected = +parser.parseExpression(cronTask).next().toDate();
+        let expected = +CronExpressionParser.parse(cronTask).next().toDate();
         const uniqueName = `every ${sec} seconds CRON` + Math.random();
         runs[uniqueName] = 0;
 
@@ -309,7 +309,7 @@ describe('Mongo - JoSk', function () {
 
           const now = Date.now();
           const diff = expected - now;
-          expected = +parser.parseExpression(cronTask).next().toDate();
+          expected = +CronExpressionParser.parse(cronTask).next().toDate();
 
           assert.ok(diff < 512, `CRON task interval in correct time gaps (< 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
           assert.ok(diff > -512, `CRON task interval in correct time gaps (> 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);

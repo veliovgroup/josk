@@ -1,7 +1,7 @@
 import { JoSk, RedisAdapter } from '../index.js';
 import { createClient } from 'redis';
 
-import parser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { assert } from 'chai';
 import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
 
@@ -109,7 +109,7 @@ before(async function () {
   });
 
   createCronTask = async (uniqueName, cronTask, task) => {
-    const next = +parser.parseExpression(cronTask).next().toDate();
+    const next = +CronExpressionParser.parse(cronTask).next().toDate();
     const timeout = next - Date.now();
 
     return await cron.setTimeout(function (done) {

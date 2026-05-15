@@ -1,7 +1,7 @@
 import { JoSk, RedisAdapter } from '../index.js';
 import { createClient } from 'redis';
 
-import parser  from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
@@ -226,7 +226,7 @@ describe('Redis - JoSk', function () {
     const timers = {};
     const runs = {};
     const createCronTask = async (uniqueName, cronTask, task, josk = jobCron) => {
-      const next = +parser.parseExpression(cronTask).next().toDate();
+      const next = +CronExpressionParser.parse(cronTask).next().toDate();
       const timeout = next - Date.now();
 
       timers[uniqueName] = await josk.setTimeout(function (ready) {
@@ -290,7 +290,7 @@ describe('Redis - JoSk', function () {
         this.timeout((sec * 1000 * maxRuns) + 2000);
 
         const cronTask = `*/${sec} * * * * *`;
-        let expected = +parser.parseExpression(cronTask).next().toDate();
+        let expected = +CronExpressionParser.parse(cronTask).next().toDate();
         const uniqueName = `every ${sec} seconds CRON` + Math.random();
         runs[uniqueName] = 0;
 
@@ -299,7 +299,7 @@ describe('Redis - JoSk', function () {
 
           const now = Date.now();
           const diff = expected - now;
-          expected = +parser.parseExpression(cronTask).next().toDate();
+          expected = +CronExpressionParser.parse(cronTask).next().toDate();
 
           assert.ok(diff < 512, `CRON task interval in correct time gaps (< 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
           assert.ok(diff > -512, `CRON task interval in correct time gaps (> 512); diff: ${diff}; sec: ${sec}; run: ${runs[uniqueName]}`);
