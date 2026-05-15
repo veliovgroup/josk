@@ -1,25 +1,56 @@
+# Internal docs (README.md is force-included by npm regardless)
 *.md
+AGENTS.md
+
+# Editor / OS junk
 .DS_Store
+.cursor/
+.cursorignore
+
+# Lint / format configs (build-time only)
 .eslintcache
 .eslintrc
+
+# CI / dev infra
 .github
+scripts/
+
+# Meteor-only artifacts
 .meteor
-.npm
 .meteorignore
+.npm
 .versions
-.cursorignore
-AGENTS.md
-adapters/blank-example.js
-adapters/blank-example.d.ts
-jest.config.mjs
-cover.jpg
-cover.png
-node_modules
-npm-debug.log*
 package.js
-docs/
-docs/*
+
+# Build-time TypeScript configs and temp output
+tsconfig.json
+tsconfig.types.json
+.types-tmp/
+
+# CJS declaration source (compiled into index.d.cts at publish time)
+index.cts
+
+# Tests and coverage
 test/
 test/*
+jest.config.mjs
 /coverage
-.cursor/
+
+# Documentation site sources (README.md ships separately)
+docs/
+docs/*
+
+# Adapter authoring template (kept in repo for reference, not for consumers)
+adapters/blank-example.js
+adapters/blank-example.d.ts
+
+# Branding / assets
+cover.jpg
+cover.png
+
+# Build artifacts / logs / lockfiles that should never leak into a publish
+node_modules
+package-lock.json
+*.tgz
+*.log
+npm-debug.log*
