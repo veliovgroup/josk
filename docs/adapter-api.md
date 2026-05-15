@@ -12,6 +12,8 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 - Claim due tasks atomically in storage. Do not `find all due -> update later`.
 - `iterate()` should claim and execute `one` or `batch` depending on `executeMode`.
 - `ready()` optional but recommended. Use it to finish schema/index/init work before first storage op.
+- Prefer storage-server time over client time when comparing lease expirations. Mixed client clocks across a cluster will cause incorrect lock ownership otherwise. See `adapters/postgres.js` (`CURRENT_TIMESTAMP` in `acquireLock`) for a reference pattern.
+- Call `joskInstance.__execute(task)` fire-and-forget (do not `await`). JoSk handles internal concurrency and error wrapping.
 
 ## Adapter Class API
 
