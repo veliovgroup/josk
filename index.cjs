@@ -675,8 +675,8 @@ class RedisAdapter {
    */
   constructor(opts = {}) {
     this.name = 'redis';
-    this.prefix = typeof opts.prefix === 'string' ? opts.prefix : 'default';
-    this.uniqueName = `josk:{${this.prefix}}`;
+    this.prefix = typeof opts.prefix === 'string' && opts.prefix.length > 0 ? opts.prefix : 'default';
+    this.uniqueName = `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.scheduleKey = `${this.uniqueName}:schedule`;
     this.tasksKey = `${this.uniqueName}:tasks`;
