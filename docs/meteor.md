@@ -186,25 +186,30 @@ setCron('Run every two seconds cron', '*/2 * * * * *', function () {
 ## Running Tests
 
 1. Clone this package
-2. Make sure Redis Server is installed and running
+2. Make sure Redis, MongoDB, and PostgreSQL servers are installed and running
 3. In Terminal (*Console*) go to directory where package is cloned
 4. Then run:
 
 ```shell
 # Default Meteor package tests require REDIS_URL.
-REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha
+# Postgres tests are skipped when PG_URL is not provided.
+REDIS_URL="redis://127.0.0.1:6379" PG_URL="postgres://postgres:postgres@127.0.0.1:5432/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha
 
 # With custom port
-REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+REDIS_URL="redis://127.0.0.1:6379" PG_URL="postgres://postgres:postgres@127.0.0.1:5432/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
-# With local MongoDB, debug, and custom port
-DEBUG=true MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
-
-# With PostgreSQL tests enabled, PG_URL is required.
-DEBUG=true MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" PG_URL="postgres://postgres:postgres@localhost:5432/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
+# With local MongoDB, Postgres, debug, and custom port
+DEBUG=true MONGO_URL="mongodb://127.0.0.1:27017/meteor-josk-test-001" REDIS_URL="redis://127.0.0.1:6379" PG_URL="postgres://postgres:postgres@127.0.0.1:5432/meteor-josk-test-001" meteor test-packages ./ --driver-package=meteortesting:mocha --port 8888
 
 # Be patient, tests are taking around 4 mins
 ```
+
+Environment variables consumed by the Meteor test suite:
+
+- `REDIS_URL` — required, e.g. `redis://127.0.0.1:6379`
+- `MONGO_URL` — optional override; Meteor provisions a local MongoDB when omitted
+- `PG_URL` — required for the PostgreSQL adapter suite, e.g. `postgres://postgres:postgres@127.0.0.1:5432/meteor-josk-test-001`; Postgres tests are skipped when this is unset
+- `DEBUG=true` — enables verbose JoSk logging during the run
 
 ## Known Meteor Issues:
 
