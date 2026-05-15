@@ -32,13 +32,11 @@ index.cts
 
 # Tests and coverage
 test/
-test/*
 jest.config.mjs
 /coverage
 
 # Documentation site sources (README.md ships separately)
 docs/
-docs/*
 
 # Adapter authoring template (kept in repo for reference, not for consumers)
 adapters/blank-example.js

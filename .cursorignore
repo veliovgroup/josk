@@ -9,3 +9,8 @@ cover.jpg
 cover.png
 npm-debug.log*
 index.cjs
+coverage/
+package-lock.json
+.types-tmp/
+*.tgz
+*.log
