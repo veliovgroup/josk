@@ -6,7 +6,7 @@ Three built-in adapters plus the contract for writing custom ones. Pick by topol
 
 | Adapter | Best for | Prerequisite NPM | Server requirement | Lock mechanism | Notes |
 |---|---|---|---|---|---|
-| `RedisAdapter` | High-frequency scheduling, single-writer Redis/KeyDB | `redis@^4` | `redis-server@≥5.0.0` (Lua + sorted sets), or KeyDB / Valkey with same hash slot | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim, hash-tag-aware keys | Reject active-active / multi-master topologies for exactly-once |
+| `RedisAdapter` | High-frequency scheduling, single-writer Redis/KeyDB | `redis@^4 \|\| ^5` | `redis-server@≥5.0.0` (Lua + sorted sets), or KeyDB / Valkey routed to a single slot | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim | Reject active-active / multi-master topologies for exactly-once |
 | `MongoAdapter` | Apps that already run MongoDB (incl. Meteor) | `mongodb` (official driver) | `mongod@≥4.0.0` | TTL-indexed `.lock` collection, atomic `findOneAndUpdate` task claim | Tested only against official driver. Other Mongo-compatible stores unverified |
 | `PostgresAdapter` | Multi-region / strict exactly-once, mixed clocks | `pg` | `postgres@≥12` | `josk_locks` row with `CURRENT_TIMESTAMP`-compared expiry, `FOR UPDATE SKIP LOCKED` claim | Strongest clock-skew resistance. Auto-migrates schema on init |
 
@@ -35,8 +35,8 @@ const jobs = new JoSk({
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` client. Either `RedisClientType` or `RedisClusterType`. |
-| `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
+| `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` or `redis@^5` client. Either `RedisClientType` or `RedisClusterType`. |
+| `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+$/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
 | `resetOnInit` | `boolean` | `false` | Deletes all keys under this prefix on init. Local-dev / single-instance recovery only. Disastrous in clustered prod. |
 
 ### Keys created (for `prefix: 'app'`)

@@ -5,7 +5,7 @@ Every public surface of the `josk` NPM package, with options, return shapes, and
 ## Imports
 
 ```js
-// ESM (Node ≥14.20, Bun)
+// ESM (Node ≥20.9.0, Bun ≥1.1.0)
 import {
   JoSk,
   RedisAdapter,

@@ -129,7 +129,7 @@ Detailed signatures, options, and types live in `references/api.md`. Quick map:
 
 Adapter constructors:
 
-- `new RedisAdapter({ client, prefix?, resetOnInit? })` — `client` is an already-connected `redis` client (v4+).
+- `new RedisAdapter({ client, prefix?, resetOnInit? })` — `client` is an already-connected `redis` client (`^4` or `^5`).
 - `new MongoAdapter({ db, prefix?, lockCollectionName?, resetOnInit? })` — `db` is a Mongo `Db` from the official `mongodb` driver.
 - `new PostgresAdapter({ client, prefix?, resetOnInit? })` — `client` is a `pg.Pool` (recommended) or `pg.Client`.
 
@@ -162,4 +162,4 @@ bun add josk
 
 Meteor / Atmosphere users: `meteor add ostrio:cron-jobs` — same API, different import path. See `references/meteor.md`.
 
-JoSk requires Node ≥ 14.20.0 or Bun ≥ 1.1.0. It is server-only — never recommend importing it in client/browser code.
+JoSk v6 requires Node ≥ 20.9.0 or Bun ≥ 1.1.0. (Users still on older Node should stay on `josk@^5`.) It is server-only — never recommend importing it in client/browser code.
