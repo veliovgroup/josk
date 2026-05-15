@@ -262,8 +262,11 @@ class RedisAdapter {
         COUNT: 9999
       });
 
-      for await (const key of cursor) {
-        await this.client.del(key);
+      for await (const batch of cursor) {
+        const keys = Array.isArray(batch) ? batch : [batch];
+        if (keys.length) {
+          await this.client.del(keys);
+        }
       }
     }
   }
