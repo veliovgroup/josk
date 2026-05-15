@@ -1,4 +1,4 @@
-export type RedisClient = import("redis").RedisClientType;
+export type RedisClient = import("redis").RedisClientType | import("redis").RedisClusterType;
 export type JoSk = import("../index.js").JoSk;
 export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
 export type JoSkLock = import("../index.js").JoSkLock;
@@ -36,13 +36,10 @@ export class RedisAdapter {
     resetOnInit: boolean;
     /** @type {RedisClient} */
     client: RedisClient;
-    __readyPromise: Promise<void>;
     /**
      * @returns {Promise<void>}
      */
     ready(): Promise<void>;
-    /** @internal */
-    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf RedisAdapter
@@ -88,35 +85,4 @@ export class RedisAdapter {
      * @returns {Promise<number>}
      */
     iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode): Promise<number>;
-    /**
-     * @param {Date} nextExecuteAt
-     * @param {JoSkLock} lock
-     * @returns {Promise<RedisTask | null>}
-     */
-    __claimNextTask(nextExecuteAt: Date, lock: JoSkLock): Promise<RedisTask | null>;
-    /**
-     * @param {Date} nextExecuteAt
-     * @param {JoSkLock} lock
-     * @param {number} limit
-     * @returns {Promise<RedisTask[]>}
-     */
-    __claimNextTasks(nextExecuteAt: Date, lock: JoSkLock, limit: number): Promise<RedisTask[]>;
-    /**
-     * @internal
-     * @param {Record<string, unknown>} task
-     * @returns {RedisTask | null}
-     */
-    __normalizeTask(task: Record<string, unknown>): RedisTask | null;
-    /**
-     * @internal
-     * @param {JoSkLock} lock
-     * @returns {string}
-     */
-    __serializeLock(lock: JoSkLock): string;
-    /**
-     * @internal
-     * @param {string} uid
-     * @returns {string}
-     */
-    __getTaskKey(uid: string): string;
 }

@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
+
 /**
- * @typedef {import('redis').RedisClientType} RedisClient
+ * @typedef {import('redis').RedisClientType | import('redis').RedisClusterType} RedisClient
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
  * @typedef {import('../index.js').JoSkLock} JoSkLock
@@ -28,6 +30,8 @@
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
  */
+
+const VALID_PREFIX = /^[A-Za-z0-9_\-:.]+$/;
 
 const ACQUIRE_LOCK_SCRIPT = `
   return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX')
@@ -93,15 +97,14 @@ const UPDATE_TASK_SCRIPT = `
 const CLAIM_ONE_TASK_SCRIPT = `
   local now = tonumber(ARGV[1])
   local nextExecuteAt = tonumber(ARGV[2])
-  local scanned = 0
+  local scanLimit = tonumber(ARGV[5]) or 1000
 
-  while scanned < 100 do
+  for i = 1, scanLimit do
     local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, 1)
     if #due == 0 then
       return nil
     end
 
-    scanned = scanned + 1
     local uid = due[1]
     local payload = redis.call('HGET', KEYS[2], uid)
     if not payload then
@@ -132,12 +135,12 @@ const CLAIM_BATCH_TASKS_SCRIPT = `
   local now = tonumber(ARGV[1])
   local nextExecuteAt = tonumber(ARGV[2])
   local limit = tonumber(ARGV[5])
-  local maxScanned = limit * 4
+  local scanLimit = tonumber(ARGV[6]) or (limit * 20)
   local scanned = 0
   local claimed = {}
 
-  while #claimed < limit and scanned < maxScanned do
-    local remaining = math.min(limit - #claimed, maxScanned - scanned)
+  while #claimed < limit and scanned < scanLimit do
+    local remaining = math.min(limit - #claimed, scanLimit - scanned)
     local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, remaining)
     if #due == 0 then
       break
@@ -176,6 +179,17 @@ const CLAIM_BATCH_TASKS_SCRIPT = `
 `;
 
 const REDIS_BATCH_CLAIM_LIMIT = 100;
+const REDIS_SCAN_LIMIT = 2000;
+
+const sha1Hex = (str) => createHash('sha1').update(str).digest('hex');
+
+const isNoScriptError = (error) => {
+  if (!error) {
+    return false;
+  }
+  const message = typeof error.message === 'string' ? error.message : '';
+  return message.indexOf('NOSCRIPT') !== -1 || error.code === 'NOSCRIPT';
+};
 
 /** Class representing Redis adapter for JoSk */
 class RedisAdapter {
@@ -185,7 +199,11 @@ class RedisAdapter {
    */
   constructor(opts = {}) {
     this.name = 'redis';
-    this.prefix = typeof opts.prefix === 'string' && opts.prefix.length > 0 ? opts.prefix : 'default';
+    const rawPrefix = typeof opts.prefix === 'string' && opts.prefix.length > 0 ? opts.prefix : 'default';
+    if (!VALID_PREFIX.test(rawPrefix)) {
+      throw new Error(`{prefix} option for RedisAdapter must match ${VALID_PREFIX} (received: "${rawPrefix}"). Curly braces and other special characters break Redis Cluster hash-tag routing.`);
+    }
+    this.prefix = rawPrefix;
     this.uniqueName = `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.scheduleKey = `${this.uniqueName}:schedule`;
@@ -202,6 +220,29 @@ class RedisAdapter {
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    /** @internal */
+    this.__scriptShas = {
+      acquireLock: sha1Hex(ACQUIRE_LOCK_SCRIPT),
+      releaseLock: sha1Hex(RELEASE_LOCK_SCRIPT),
+      addTask: sha1Hex(ADD_TASK_SCRIPT),
+      removeTask: sha1Hex(REMOVE_TASK_SCRIPT),
+      updateTask: sha1Hex(UPDATE_TASK_SCRIPT),
+      claimOne: sha1Hex(CLAIM_ONE_TASK_SCRIPT),
+      claimBatch: sha1Hex(CLAIM_BATCH_TASKS_SCRIPT)
+    };
+    /** @internal */
+    this.__scriptSources = {
+      acquireLock: ACQUIRE_LOCK_SCRIPT,
+      releaseLock: RELEASE_LOCK_SCRIPT,
+      addTask: ADD_TASK_SCRIPT,
+      removeTask: REMOVE_TASK_SCRIPT,
+      updateTask: UPDATE_TASK_SCRIPT,
+      claimOne: CLAIM_ONE_TASK_SCRIPT,
+      claimBatch: CLAIM_BATCH_TASKS_SCRIPT
+    };
+    /** @internal */
+    this.__loadedShas = new Set();
+    /** @internal */
     this.__readyPromise = this.__setup();
   }
 
@@ -225,6 +266,42 @@ class RedisAdapter {
         await this.client.del(key);
       }
     }
+  }
+
+  /**
+   * @internal
+   * @param {keyof RedisAdapter['__scriptShas']} scriptKey
+   * @param {{ keys: string[], arguments: string[] }} options
+   * @returns {Promise<unknown>}
+   */
+  async __runScript(scriptKey, options) {
+    const sha = this.__scriptShas[scriptKey];
+    const source = this.__scriptSources[scriptKey];
+
+    if (this.__loadedShas.has(sha) && typeof this.client.evalSha === 'function') {
+      try {
+        return await this.client.evalSha(sha, options);
+      } catch (error) {
+        if (!isNoScriptError(error)) {
+          throw error;
+        }
+        this.__loadedShas.delete(sha);
+      }
+    }
+
+    if (typeof this.client.scriptLoad === 'function' && typeof this.client.evalSha === 'function') {
+      try {
+        await this.client.scriptLoad(source);
+        this.__loadedShas.add(sha);
+        return await this.client.evalSha(sha, options);
+      } catch (error) {
+        if (!isNoScriptError(error)) {
+          // Fall back to EVAL on cluster nodes that haven't seen the script yet
+        }
+      }
+    }
+
+    return await this.client.eval(source, options);
   }
 
   /**
@@ -274,7 +351,7 @@ class RedisAdapter {
   async acquireLock(lock) {
     await this.ready();
 
-    const res = await this.client.eval(ACQUIRE_LOCK_SCRIPT, {
+    const res = await this.__runScript('acquireLock', {
       keys: [this.lockKey],
       arguments: [this.__serializeLock(lock), `${this.joskInstance.zombieTime}`]
     });
@@ -288,7 +365,7 @@ class RedisAdapter {
    */
   async releaseLock(lock) {
     await this.ready();
-    await this.client.eval(RELEASE_LOCK_SCRIPT, {
+    await this.__runScript('releaseLock', {
       keys: [this.lockKey],
       arguments: [this.__serializeLock(lock)]
     });
@@ -302,7 +379,7 @@ class RedisAdapter {
     await this.ready();
 
     try {
-      const removed = await this.client.eval(REMOVE_TASK_SCRIPT, {
+      const removed = await this.__runScript('removeTask', {
         keys: [this.scheduleKey, this.tasksKey],
         arguments: [uid]
       });
@@ -324,7 +401,7 @@ class RedisAdapter {
 
     try {
       const next = Date.now() + delay;
-      const result = await this.client.eval(ADD_TASK_SCRIPT, {
+      const result = await this.__runScript('addTask', {
         keys: [this.scheduleKey, this.tasksKey],
         arguments: [uid, `${delay}`, `${next}`, isInterval ? '1' : '0']
       });
@@ -354,7 +431,7 @@ class RedisAdapter {
     await this.ready();
 
     try {
-      const exists = await this.client.eval(UPDATE_TASK_SCRIPT, {
+      const exists = await this.__runScript('updateTask', {
         keys: [this.scheduleKey, this.tasksKey],
         arguments: [task.uid, `${+nextExecuteAt}`]
       });
@@ -405,15 +482,16 @@ class RedisAdapter {
   }
 
   /**
+   * @internal
    * @param {Date} nextExecuteAt
    * @param {JoSkLock} lock
    * @returns {Promise<RedisTask | null>}
    */
   async __claimNextTask(nextExecuteAt, lock) {
     try {
-      const claimed = await this.client.eval(CLAIM_ONE_TASK_SCRIPT, {
+      const claimed = await this.__runScript('claimOne', {
         keys: [this.scheduleKey, this.tasksKey],
-        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId]
+        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId, `${REDIS_SCAN_LIMIT}`]
       });
 
       if (!claimed) {
@@ -429,6 +507,7 @@ class RedisAdapter {
   }
 
   /**
+   * @internal
    * @param {Date} nextExecuteAt
    * @param {JoSkLock} lock
    * @param {number} limit
@@ -436,9 +515,9 @@ class RedisAdapter {
    */
   async __claimNextTasks(nextExecuteAt, lock, limit) {
     try {
-      const claimed = await this.client.eval(CLAIM_BATCH_TASKS_SCRIPT, {
+      const claimed = await this.__runScript('claimBatch', {
         keys: [this.scheduleKey, this.tasksKey],
-        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId, `${limit}`]
+        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId, `${limit}`, `${REDIS_SCAN_LIMIT}`]
       });
 
       if (!claimed) {
