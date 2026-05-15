@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+const testApi = typeof globalThis.Bun === 'undefined'
+  ? await import('@jest/globals')
+  : await import('bun:test');
+const { afterEach, beforeEach, describe, expect, it, jest } = testApi;
 
 import { JoSk } from '../../index.js';
 

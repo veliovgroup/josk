@@ -25,6 +25,7 @@
     "test:jest": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs",
     "test:jest:core": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand test/jest/core.test.js",
     "test:jest:adapters": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand test/jest/adapters.test.js",
+    "test:bun": "bun test ./test/jest/",
     "test:coverage": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs --coverage",
     "test:types": "tsc -p ./tsconfig.types.json",
     "test:redis": "mocha ./test/npm-redis.js",

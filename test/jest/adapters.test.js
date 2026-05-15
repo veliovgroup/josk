@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+const testApi = typeof globalThis.Bun === 'undefined'
+  ? await import('@jest/globals')
+  : await import('bun:test');
+const { afterEach, describe, expect, it, jest } = testApi;
+
 import { MongoClient } from 'mongodb';
 import { Pool } from 'pg';
 import { createClient } from 'redis';

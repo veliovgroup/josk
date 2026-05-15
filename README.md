@@ -20,6 +20,7 @@ __Note: JoSk is the server-only package.__
 - [Main features](https://github.com/veliovgroup/josk?tab=readme-ov-file#main-features)
 - [Prerequisites](https://github.com/veliovgroup/josk?tab=readme-ov-file#prerequisites)
 - [Install](https://github.com/veliovgroup/josk?tab=readme-ov-file#install) as [NPM package](https://www.npmjs.com/package/josk)
+  - [Bun runtime](https://github.com/veliovgroup/josk?tab=readme-ov-file#bun-runtime)
 - [API](https://github.com/veliovgroup/josk?tab=readme-ov-file#api)
   - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#initialization)
     - [`RedisAdapter`](https://github.com/veliovgroup/josk?tab=readme-ov-file#redis-adapter)
@@ -62,6 +63,7 @@ __Note: JoSk is the server-only package.__
 - `mongod@>=4.0.0` — for MongoAdapter (requires the official `mongodb` NPM package; the adapter is tested only against the official driver)
 - `postgres@>=12` — for PostgresAdapter (requires `pg` NPM package)
 - `node@>=14.20.0` — Node.js version
+- `bun@>=1.1.0` — optional, runs the same package and the same Jest suite under [Bun](https://bun.sh) via `bun:test` (see [Bun runtime](#bun-runtime) section)
 
 ### Older releases compatibility
 
@@ -82,6 +84,24 @@ import { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } from 'josk';
 // CommonJS
 const { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } = require('josk');
 ```
+
+### Bun runtime
+
+*Since* `v6.0.0`
+
+JoSk runs unmodified on [Bun](https://bun.sh) `>=1.1.0`. The package is pure ESM, has no Node-only globals beyond `node:crypto.randomUUID()` (which Bun ships natively), and the official `mongodb`, `pg`, and `redis` drivers all work under Bun. Install with `bun add josk` and import the same way:
+
+```js
+import { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } from 'josk';
+```
+
+The full Jest test suite (`test/jest/`) doubles as the Bun test suite — `bun test ./test/jest/` runs every core and adapter test under Bun's `bun:test` runner. See [Running Tests](#running-tests).
+
+Notes:
+
+- Use the same adapter packages as on Node (`mongodb`, `pg`, `redis`).
+- Schedulers running across mixed Node and Bun processes coexist under the same prefix; lease acquisition and task claiming are storage-level operations and runtime-agnostic.
+- Bun's standalone executables (`bun build --compile`) bundle JoSk like any ESM library.
 
 ## API:
 
@@ -783,6 +803,9 @@ REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk
 
 # Run Jest suite for core plus live adapter contract tests
 REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://localhost:5432/josk-tests" npm run test:jest
+
+# Run the same Jest suite under Bun (bun:test)
+REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://localhost:5432/josk-tests" npm run test:bun
 
 # Coverage report (Jest only — Mocha suites add to coverage when run separately)
 npm run test:coverage
