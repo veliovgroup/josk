@@ -4,6 +4,7 @@ AGENTS.md
 
 # Editor / OS junk
 .DS_Store
+.claude/
 .cursor/
 .cursorignore
 

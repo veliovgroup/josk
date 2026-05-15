@@ -21,6 +21,7 @@ __Note: JoSk is the server-only package.__
 - [Prerequisites](https://github.com/veliovgroup/josk?tab=readme-ov-file#prerequisites)
 - [Install](https://github.com/veliovgroup/josk?tab=readme-ov-file#install) as [NPM package](https://www.npmjs.com/package/josk)
   - [Bun runtime](https://github.com/veliovgroup/josk?tab=readme-ov-file#bun-runtime)
+  - [Claude Code skill](https://github.com/veliovgroup/josk?tab=readme-ov-file#claude-code-skill)
 - [API](https://github.com/veliovgroup/josk?tab=readme-ov-file#api)
   - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#initialization)
     - [`RedisAdapter`](https://github.com/veliovgroup/josk?tab=readme-ov-file#redis-adapter)
@@ -102,6 +103,24 @@ Notes:
 - Use the same adapter packages as on Node (`mongodb`, `pg`, `redis`).
 - Schedulers running across mixed Node and Bun processes coexist under the same prefix; lease acquisition and task claiming are storage-level operations and runtime-agnostic.
 - Bun's standalone executables (`bun build --compile`) bundle JoSk like any ESM library.
+
+### Claude Code skill
+
+A [Claude Code](https://claude.com/claude-code) skill is bundled with this repo at [`.claude/skills/josk/`](.claude/skills/josk/) and pre-packaged at [`.claude/skills/josk.skill`](.claude/skills/josk.skill). When installed, Claude Code automatically loads the full public API, adapter setup, execution-semantics, CRON / handler patterns, Meteor integration, and the operational FAQ as context whenever you write or review JoSk-related code.
+
+Install from a clone of this repo:
+
+```shell
+nxp skills add .claude/skills/josk.skill
+```
+
+Or from a downloaded artifact:
+
+```shell
+nxp skills add path/to/josk.skill
+```
+
+The skill triggers on any request mentioning JoSk, scheduled / recurring jobs, cron-style tasks, `setInterval` / `setTimeout` work in clustered Node.js or Bun deployments, the `RedisAdapter` / `MongoAdapter` / `PostgresAdapter`, the Meteor `ostrio:cron-jobs` package, exactly-once / at-most-once execution, zombie-task recovery, or scheduler tuning (`zombieTime`, `execute`, `concurrency`). Source files live under `.claude/skills/josk/`; edit `SKILL.md` or `references/*.md` and re-package with the [skill-creator](https://github.com/anthropics/skills) packager to roll a new `.skill`.
 
 ## API:
 

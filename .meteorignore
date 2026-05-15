@@ -1,5 +1,6 @@
 .cursor
 .cursorignore
+.claude
 .github
 .gitignore
 .npmignore
