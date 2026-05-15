@@ -2,6 +2,11 @@ export type PostgresQueryResult = {
     rowCount?: number | null | undefined;
     rows?: unknown[] | undefined;
 };
+/**
+ * Minimal client surface used by PostgresAdapter. The official `pg`
+ * package's `Pool` and `Client` both satisfy this shape. Pool is the
+ * recommended choice for long-running applications.
+ */
 export type PostgresClient = {
     query: (queryText: string, values?: unknown[]) => Promise<PostgresQueryResult>;
 };
@@ -26,41 +31,6 @@ export type PostgresTask = {
     is_interval: boolean;
     is_deleted: boolean;
 };
-/**
- * @typedef {object} PostgresQueryResult
- * @property {number | null | undefined} [rowCount]
- * @property {unknown[]} [rows]
- */
-/**
- * @typedef {object} PostgresClient
- * @property {(queryText: string, values?: unknown[]) => Promise<PostgresQueryResult>} query
- */
-/**
- * @typedef {import('../index.js').JoSk} JoSk
- * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
- * @typedef {import('../index.js').JoSkLock} JoSkLock
- */
-/**
- * @typedef {object} AdapterPingResult
- * @property {string} status
- * @property {number} code
- * @property {number} statusCode
- * @property {unknown} [error]
- */
-/**
- * @typedef {object} PostgresAdapterOption
- * @property {PostgresClient} client
- * @property {string} [prefix]
- * @property {boolean} [resetOnInit]
- */
-/**
- * @typedef {object} PostgresTask
- * @property {string} uid
- * @property {string | number} delay
- * @property {string | number} execute_at
- * @property {boolean} is_interval
- * @property {boolean} is_deleted
- */
 /** Class representing PostgreSQL adapter for JoSk */
 export class PostgresAdapter {
     /**
@@ -75,13 +45,10 @@ export class PostgresAdapter {
     resetOnInit: boolean;
     /** @type {PostgresClient} */
     client: PostgresClient;
-    __readyPromise: Promise<void>;
     /**
      * @returns {Promise<void>}
      */
     ready(): Promise<void>;
-    /** @internal */
-    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf PostgresAdapter
@@ -91,6 +58,8 @@ export class PostgresAdapter {
      */
     ping(): Promise<AdapterPingResult>;
     /**
+     * Acquire scheduler lease using PostgreSQL server time so the lock is
+     * resistant to client-side clock skew between distributed nodes.
      * @param {JoSkLock} lock
      * @returns {Promise<boolean>}
      */
@@ -127,19 +96,4 @@ export class PostgresAdapter {
      * @returns {Promise<number>}
      */
     iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode): Promise<number>;
-    /**
-     * @param {Date} nextExecuteAt
-     * @param {JoSkLock} lock
-     * @returns {Promise<PostgresTask | null>}
-     */
-    __claimNextTask(nextExecuteAt: Date, lock: JoSkLock): Promise<PostgresTask | null>;
-    /**
-     * @param {Date} nextExecuteAt
-     * @param {JoSkLock} lock
-     * @param {number} limit
-     * @returns {Promise<PostgresTask[]>}
-     */
-    __claimNextTasks(nextExecuteAt: Date, lock: JoSkLock, limit: number): Promise<PostgresTask[]>;
-    /** @internal */
-    __customPrivateMethod(): boolean;
 }
