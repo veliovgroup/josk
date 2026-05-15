@@ -30,8 +30,8 @@ export type JoSkLock = {
     expireAt: Date;
     expiresAtMs: number;
 };
-export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void;
-export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void;
+export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void | Promise<void>;
+export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | Promise<void>;
 export type JoSkReadyCallback = (error: Error | undefined, success: boolean) => void;
 export type JoSkReady = (nextExecuteAt?: number | Date | JoSkReadyCallback | undefined) => Promise<boolean>;
 export type JoSkTaskHandler = (ready: JoSkReady) => void | Promise<void>;
@@ -60,6 +60,7 @@ export type JoSkOption = {
     maxRevolvingDelay?: number | undefined;
     execute?: JoSkExecuteMode | undefined;
     lockOwnerId?: string | undefined;
+    concurrency?: number | undefined;
 };
 /** Class representing a JoSk task runner (cron). */
 export class JoSk {
@@ -78,16 +79,7 @@ export class JoSk {
     maxRevolvingDelay: number;
     execute: JoSkExecuteMode;
     lockOwnerId: string;
-    /** @internal */
-    nextRevolutionTimeout: NodeJS.Timeout | null;
-    /** @internal */
-    __lockLeaseCounter: number;
-    /** @internal */
-    __adapterReadyPromise: Promise<void> | null;
-    /** @type {Record<string, JoSkStoredTask>} */
-    tasks: Record<string, JoSkStoredTask>;
-    /** @internal */
-    _debug: (...args: any[]) => void;
+    concurrency: number;
     /** @type {JoSkAdapter} */
     adapter: JoSkAdapter;
     /**
@@ -112,7 +104,9 @@ export class JoSk {
     /**
      * @async
      * @memberOf JoSk
-     * Create delayed task
+     * Create delayed task. Executes at-most-once across the cluster: the task
+     * is removed from storage before the handler runs, so a crash between
+     * removal and completion drops the run.
      * @name setTimeout
      * @param {JoSkTaskHandler} func - Function (task) to execute
      * @param {number} delay - Delay before task execution in milliseconds
@@ -157,33 +151,6 @@ export class JoSk {
      * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
      */
     destroy(): boolean;
-    /** @internal */
-    __checkState(): boolean;
-    /** @internal */
-    __adapterReady(): Promise<void>;
-    /** @internal */
-    __getLock(): {
-        ownerId: string;
-        leaseId: string;
-        expireAt: Date;
-        expiresAtMs: number;
-    };
-    /** @internal */
-    __remove(timerId: any): Promise<boolean>;
-    /** @internal */
-    __add(uid: any, isInterval: any, delay: any): Promise<void>;
-    /**
-     * @internal
-     * @param {JoSkTask} task
-     * @returns {Promise<void>}
-     */
-    __execute(task: JoSkTask): Promise<void>;
-    /** @internal */
-    __iterate(): Promise<void>;
-    /** @internal */
-    __tick(): void;
-    /** @internal */
-    __errorHandler(error: any, title: any, description: any, uid: any): void;
 }
 import { MongoAdapter } from './adapters/mongo.js';
 import { RedisAdapter } from './adapters/redis.js';

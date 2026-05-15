@@ -18,6 +18,7 @@
   },
   "include": [
     "index.js",
+    "index.cts",
     "adapters/*.js"
   ],
   "exclude": [
