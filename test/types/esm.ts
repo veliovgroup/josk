@@ -1,4 +1,5 @@
 import { JoSk, MongoAdapter, PostgresAdapter, RedisAdapter } from 'josk';
+import type { JoSkAdapter, JoSkOnError, JoSkOnExecuted } from 'josk';
 
 const adapter = {
   async acquireLock(_lock: { ownerId: string; leaseId: string; expireAt: Date; expiresAtMs: number }) {
@@ -40,6 +41,24 @@ const jobs = new JoSk({
 void MongoAdapter;
 void PostgresAdapter;
 void RedisAdapter;
+
+// Positive test: built-in adapters conform to JoSkAdapter
+type _RedisAdapterIsAssignableToJoSkAdapter = RedisAdapter extends JoSkAdapter ? true : never;
+type _MongoAdapterIsAssignableToJoSkAdapter = MongoAdapter extends JoSkAdapter ? true : never;
+type _PostgresAdapterIsAssignableToJoSkAdapter = PostgresAdapter extends JoSkAdapter ? true : never;
+
+const _redisOk: _RedisAdapterIsAssignableToJoSkAdapter = true;
+const _mongoOk: _MongoAdapterIsAssignableToJoSkAdapter = true;
+const _postgresOk: _PostgresAdapterIsAssignableToJoSkAdapter = true;
+void _redisOk;
+void _mongoOk;
+void _postgresOk;
+
+// Hooks support async signatures
+const _asyncErrorHook: JoSkOnError = async (_title, _details) => {};
+const _asyncExecutedHook: JoSkOnExecuted = async (_uid, _details) => {};
+void _asyncErrorHook;
+void _asyncExecutedHook;
 
 jobs.setInterval(async () => {}, 2048, 'interval-task');
 jobs.setTimeout((ready: (nextExecuteAt?: Date | number | ((error?: Error, success?: boolean) => void)) => Promise<boolean>) => {
