@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "6.0.0-beta.0",
+  "version": "6.0.0",
   "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications. Supports Redis, MongoDB, PostgreSQL adapters.",
   "main": "index.js",
   "type": "module",
@@ -19,7 +19,7 @@
   },
   "scripts": {
     "build:types": "rm -rf ./.types-tmp && tsc -p tsconfig.json --outDir ./.types-tmp && node scripts/strip-internal.mjs ./.types-tmp/index.d.ts ./.types-tmp/index.d.cts ./.types-tmp/adapters/redis.d.ts ./.types-tmp/adapters/mongo.d.ts ./.types-tmp/adapters/postgres.d.ts ./.types-tmp/adapters/blank-example.d.ts && cp ./.types-tmp/index.d.ts ./index.d.ts && cp ./.types-tmp/index.d.cts ./index.d.cts && cp ./.types-tmp/adapters/*.d.ts ./adapters/ && rm -rf ./.types-tmp",
-    "prepublishOnly": "rollup index.js --file index.cjs --format cjs && npm run build:types",
+    "prepublishOnly": "rollup index.js --file index.cjs --format cjs --external node:crypto && npm run build:types",
     "test": "mocha ./test/npm.js && npm run test:jest && npm run test:types",
     "test:adapter-guards": "mocha ./test/adapter-guards.js",
     "test:jest": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs",
@@ -89,18 +89,17 @@
   "author": "dr.dimitru (https://veliovgroup.com)",
   "license": "BSD-3-Clause",
   "engines": {
-    "node": ">=14.20.0"
+    "node": ">=20.9.0",
+    "bun": ">=1.1.0"
   },
   "devDependencies": {
-    "bson": "^6.6.0",
-    "bson-ext": "^4.0.3",
-    "chai": "^5.1.0",
+    "chai": "^6.2.2",
     "cron-parser": "^5.5.0",
-    "jest": "^29.7.0",
-    "mocha": "^10.4.0",
-    "mongodb": "^6.5.0",
-    "pg": "^8.13.1",
-    "redis": "^4.6.13",
-    "typescript": "^5.8.2"
+    "jest": "^30.4.2",
+    "mocha": "^11.7.5",
+    "mongodb": "^7.2.0",
+    "pg": "^8.20.0",
+    "redis": "^5.12.1",
+    "typescript": "^6.0.3"
   }
 }

@@ -1,0 +1,172 @@
+name: Test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} / redis@${{ matrix.redis }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+        redis: ['4', '5']
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      mongo:
+        image: mongo:6
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: josk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Pin redis driver to ${{ matrix.redis }}.x
+        run: |
+          npm install --no-save redis@${{ matrix.redis }}
+          node -e "console.log('redis driver:', require('redis/package.json').version)"
+
+      - name: Type test
+        run: npm run test:types
+
+      - name: Adapter guards
+        run: npm run test:adapter-guards
+
+      - name: Jest unit + live adapter tests
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+          MONGO_URL: mongodb://127.0.0.1:27017/josk-jest-test
+          PG_URL: postgres://postgres:postgres@127.0.0.1:5432/josk_test
+        run: npm run test:coverage
+
+      - name: Mocha live tests (Redis)
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:redis
+
+      - name: Mocha live tests (MongoDB)
+        env:
+          MONGO_URL: mongodb://127.0.0.1:27017/josk-mocha-test
+        run: npm run test:mongo
+
+      - name: Mocha live tests (PostgreSQL)
+        env:
+          PG_URL: postgres://postgres:postgres@127.0.0.1:5432/josk_test
+        run: npm run test:postgres
+
+      - name: Upload coverage
+        if: matrix.node == '22' && matrix.redis == '5'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+
+  test-bun:
+    name: Bun ${{ matrix.bun }} / redis@${{ matrix.redis }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ['latest']
+        redis: ['4', '5']
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      mongo:
+        image: mongo:6
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: josk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Pin redis driver to ${{ matrix.redis }}.x
+        run: |
+          bun add --no-save redis@${{ matrix.redis }}
+          bun -e "console.log('redis driver:', require('redis/package.json').version)"
+
+      - name: Jest suite under bun:test
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+          MONGO_URL: mongodb://127.0.0.1:27017/josk-bun-test
+          PG_URL: postgres://postgres:postgres@127.0.0.1:5432/josk_test
+        run: npm run test:bun
