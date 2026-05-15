@@ -7,8 +7,11 @@
 .npm
 .meteorignore
 .versions
+.cursorignore
 AGENTS.md
 adapters/blank-example.js
+adapters/blank-example.d.ts
+jest.config.mjs
 cover.jpg
 cover.png
 node_modules
@@ -19,3 +22,4 @@ docs/*
 test/
 test/*
 /coverage
+.cursor/
