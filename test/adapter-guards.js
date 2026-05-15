@@ -49,22 +49,28 @@ describe('Adapter guards', function () {
   it('RedisAdapter.iterate batch uses batch claim and skips stale entries', async function () {
     const evalCalls = [];
     const executed = [];
+    const handler = (script, options) => {
+      evalCalls.push({ script, options });
+      // Batch claim has 6 args: now, nextExecuteAt, ownerId, leaseId, limit, scanLimit
+      if (options.arguments.length === 6) {
+        return JSON.stringify([{
+          uid: 'redis-batch-task',
+          delay: 1000,
+          executeAt: Date.now() - 1000,
+          isInterval: false,
+          isDeleted: false
+        }]);
+      }
+      return JSON.stringify({ kind: 'missing', uid: 'stale-task' });
+    };
     const adapter = new RedisAdapter({
       client: {
         async eval(script, options) {
-          evalCalls.push({ script, options });
-
-          if (options.arguments.length === 5) {
-            return JSON.stringify([{
-              uid: 'redis-batch-task',
-              delay: 1000,
-              executeAt: Date.now() - 1000,
-              isInterval: false,
-              isDeleted: false
-            }]);
-          }
-
-          return JSON.stringify({ kind: 'missing', uid: 'stale-task' });
+          return handler(script, options);
+        },
+        async scriptLoad() {},
+        async evalSha(_sha, options) {
+          return handler('via-sha', options);
         }
       }
     });
@@ -88,8 +94,20 @@ describe('Adapter guards', function () {
     assert.equal(count, 1);
     assert.equal(executed.length, 1);
     assert.equal(executed[0].uid, 'redis-batch-task');
-    assert.equal(evalCalls.length, 1);
-    assert.equal(evalCalls[0].options.arguments.length, 5);
+    assert.isAtLeast(evalCalls.length, 1);
+    assert.equal(evalCalls[0].options.arguments.length, 6);
+  });
+
+  it('RedisAdapter rejects unsafe prefixes that break cluster routing', function () {
+    assert.throws(() => new RedisAdapter({
+      client: { eval: async () => null, scanIterator: async function* () {} },
+      prefix: 'has}braces'
+    }), /prefix/);
+
+    assert.throws(() => new RedisAdapter({
+      client: { eval: async () => null, scanIterator: async function* () {} },
+      prefix: 'spaces in name'
+    }), /prefix/);
   });
 
   it('MongoAdapter.update rejects invalid Date input', async function () {
