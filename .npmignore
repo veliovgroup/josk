@@ -8,6 +8,9 @@ AGENTS.md
 .cursor/
 .cursorignore
 
+# Agent Skills source — distributed cross-tool via `npx skills add veliovgroup/josk` from GitHub, not in the npm tarball
+skills/
+
 # Lint / format configs (build-time only)
 .eslintcache
 .eslintrc

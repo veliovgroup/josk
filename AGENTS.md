@@ -12,7 +12,7 @@ Ensure exactly-once task execution in horizontally scaled Node.js. Bulletproof. 
 - `test/`: npm-*.js (mocha+chai), meteor-*.js.
 - `*.d.ts`: Generated from JSDoc in `index.js` + adapters via `tsc --emitDeclarationOnly` on `prepublishOnly`. Do not edit manually.
 - `docs/adapter-api.md`: full adapter contract.
-- `.claude/skills/josk/`: Claude Code skill source — `SKILL.md` + `references/{api,adapters,patterns,meteor,troubleshooting}.md`. Distributable artifact: `.claude/skills/josk.skill` (zip). Install: `nxp skills add .claude/skills/josk.skill`. Keep in sync with public API: when adding/changing options, methods, adapter constructors, execution semantics, or migration notes, update the matching reference file and re-package.
+- `skills/josk/`: Agent Skill source (open cross-tool standard) — `SKILL.md` + `references/{api,adapters,patterns,meteor,troubleshooting}.md`. Installed cross-tool via `npx skills add veliovgroup/josk` (Claude Code, Codex, Cursor, Copilot, Windsurf, Cline, Continue, Goose, Aider, +50 more). Excluded from npm tarball via `.npmignore`. Keep in sync with public API: when adding/changing options, methods, adapter constructors, execution semantics, or migration notes, update the matching reference file. `description` frontmatter in `SKILL.md` must stay ≤ 1024 chars.
 - README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
 
 ## Code Style

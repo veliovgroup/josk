@@ -31,6 +31,7 @@ tsconfig.json
 tsconfig.types.json
 .types-tmp/
 coverage
+skills
 scripts
 *.tgz
 *.log
