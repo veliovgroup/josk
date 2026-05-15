@@ -45,6 +45,7 @@ __Note: JoSk is the server-only package.__
 - [Prefix mapping per adapter](https://github.com/veliovgroup/josk?tab=readme-ov-file#prefix-mapping)
 - [Operational FAQ](https://github.com/veliovgroup/josk?tab=readme-ov-file#operational-faq)
 - [Migration guide (v4 → v5)](https://github.com/veliovgroup/josk?tab=readme-ov-file#migration-guide-v4--v5)
+- [Migration guide (v5 → v6)](https://github.com/veliovgroup/josk?tab=readme-ov-file#migration-guide-v5--v6)
 - [Important notes](https://github.com/veliovgroup/josk?tab=readme-ov-file#notes)
 - [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 - [Why it's named "JoSk"](https://github.com/veliovgroup/josk?tab=readme-ov-file#why-josk)
@@ -60,14 +61,15 @@ __Note: JoSk is the server-only package.__
 
 ## Prerequisites
 
-- `redis-server@>=5.0.0` or KeyDB — for RedisAdapter (requires `redis` NPM package). KeyDB and Valkey are supported with the same hash-tag-aware single-writer topology.
+- `redis-server@>=5.0.0` or KeyDB — for RedisAdapter (requires `redis` NPM package, both `redis@^4` and `redis@^5` are supported). KeyDB and Valkey are supported with the same single-writer topology.
 - `mongod@>=4.0.0` — for MongoAdapter (requires the official `mongodb` NPM package; the adapter is tested only against the official driver)
 - `postgres@>=12` — for PostgresAdapter (requires `pg` NPM package)
-- `node@>=14.20.0` — Node.js version
+- `node@>=20.9.0` — Node.js version
 - `bun@>=1.1.0` — optional, runs the same package and the same Jest suite under [Bun](https://bun.sh) via `bun:test` (see [Bun runtime](#bun-runtime) section)
 
 ### Older releases compatibility
 
+- `node@<20.9.0` — use `josk@^5`
 - `mongod@<4.0.0` — use `josk@=1.1.0`
 - `node@<14.20.0` — use `josk@=3.0.2`
 - `node@<8.9.0` — use `josk@=1.1.0`
@@ -794,11 +796,13 @@ Lease tokens use storage-server time where possible (Redis `PX` TTL, Postgres `C
 
 ## Migration guide (v5 → v6)
 
-`v6.0.0` reworked storage adapters around owner-bound lease tokens and added atomic due-task claiming.
+`v6.0.0` reworked storage adapters around owner-bound lease tokens, added atomic due-task claiming, and raised the runtime floor.
 
+- **Breaking:** minimum runtime is now `node@>=20.9.0` (LTS) or `bun@>=1.1.0`. Stay on `josk@^5` if you cannot upgrade Node yet.
+- `RedisAdapter` accepts both `redis@^4` and `redis@^5` clients.
 - New adapter: `PostgresAdapter`.
 - `PostgresAdapter` uses composite `(prefix, uid)` primary key. The adapter auto-migrates the table on startup, but the migration runs DDL — use a low-traffic deployment window.
-- `MongoAdapter` previously defaulted the prefix to `''`, producing the collection `__JobTasks__`. v5 defaults to `'default'`, producing `__JobTasks__default`. If you used the implicit empty prefix in v4, pass `prefix: ''` explicitly to preserve the collection name, or migrate data: `db.__JobTasks__.renameCollection('__JobTasks__default')`.
+- `MongoAdapter` previously defaulted the prefix to `''`, producing the collection `__JobTasks__`. v6 defaults to `'default'`, producing `__JobTasks__default`. If you used the implicit empty prefix in v4/v5, pass `prefix: ''` explicitly to preserve the collection name, or migrate data: `db.__JobTasks__.renameCollection('__JobTasks__default')`.
 - Lock release now checks lease ownership; a JoSk instance can no longer release a foreign lease. __If you have custom adapters, follow the [adapter API contract](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)__.
 - If you use `cron-parser` — bump to `^5` and switch from `parser.parseExpression(...)` to `CronExpressionParser.parse(...)`.
 
