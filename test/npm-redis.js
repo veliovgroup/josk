@@ -219,6 +219,139 @@ describe('Redis - JoSk', function () {
     });
   });
 
+  describe('Redis - Adapter direct', function () {
+    this.slow(4000);
+    this.timeout(8000);
+
+    const makeLock = (ownerId, ttl = 10000) => {
+      const expireAt = new Date(Date.now() + ttl);
+      return {
+        ownerId,
+        leaseId: uniqueId(`${ownerId}-lease`),
+        expireAt,
+        expiresAtMs: +expireAt
+      };
+    };
+
+    const buildAdapter = async (opts = {}) => {
+      const adapter = new RedisAdapter({
+        client,
+        prefix: uniqueId('testCaseNPM-direct'),
+        ...opts
+      });
+      adapter.joskInstance = {
+        zombieTime: ZOMBIE_TIME,
+        __execute: () => {},
+        __errorHandler: () => {},
+        _debug: () => {}
+      };
+      await adapter.ready();
+      return adapter;
+    };
+
+    const cleanup = async (adapter) => {
+      await client.del([adapter.scheduleKey, adapter.tasksKey, adapter.lockKey]).catch(() => {});
+    };
+
+    it('releaseLock frees the lock only when called with the holding owner', async function () {
+      const adapter = await buildAdapter();
+      const owner = makeLock('redis-direct-owner-a');
+      const intruder = makeLock('redis-direct-owner-b');
+
+      try {
+        assert.isTrue(await adapter.acquireLock(owner), 'first owner acquires lock');
+        assert.isFalse(await adapter.acquireLock(intruder), 'second owner is blocked while active');
+        await adapter.releaseLock(intruder);
+        assert.isFalse(await adapter.acquireLock(intruder), 'intruder releaseLock does not free the lock');
+        await adapter.releaseLock(owner);
+        assert.isTrue(await adapter.acquireLock(intruder), 'after holder releases, the next owner acquires');
+      } finally {
+        await adapter.releaseLock(owner);
+        await adapter.releaseLock(intruder);
+        await cleanup(adapter);
+      }
+    });
+
+    it('resetOnInit clears previously stored tasks and locks scoped to the prefix', async function () {
+      const prefix = uniqueId('testCaseNPM-direct-reset');
+      const seed = await buildAdapter({ prefix });
+      const lock = makeLock('redis-direct-reset-owner');
+      try {
+        assert.isTrue(await seed.add('reset-leftover-a', false, 60000), 'seeded one-shot task accepted');
+        assert.isTrue(await seed.add('reset-leftover-b', true, 60000), 'seeded interval task accepted');
+        assert.isTrue(await seed.acquireLock(lock), 'seeded scheduler lock acquired');
+
+        assert.equal(await client.hLen(seed.tasksKey), 2, 'seeded tasks visible before reset');
+        assert.equal(await client.exists(seed.lockKey), 1, 'seeded lock visible before reset');
+
+        const fresh = new RedisAdapter({ client, prefix, resetOnInit: true });
+        fresh.joskInstance = {
+          zombieTime: ZOMBIE_TIME,
+          __execute: () => {},
+          __errorHandler: () => {},
+          _debug: () => {}
+        };
+        try {
+          await fresh.ready();
+          assert.equal(await client.hLen(fresh.tasksKey), 0, 'resetOnInit cleared the tasks hash');
+          assert.equal(await client.zCard(fresh.scheduleKey), 0, 'resetOnInit cleared the schedule index');
+          assert.equal(await client.exists(fresh.lockKey), 0, 'resetOnInit cleared the lock key');
+        } finally {
+          await cleanup(fresh);
+        }
+      } finally {
+        await cleanup(seed);
+      }
+    });
+
+    it('iterate(batch) claims and dispatches every due task in a single cycle', async function () {
+      const dispatched = [];
+      const adapter = await buildAdapter();
+      adapter.joskInstance.__execute = (task) => dispatched.push(task);
+
+      try {
+        for (let i = 0; i < 3; i++) {
+          assert.isTrue(await adapter.add(`redis-batch-direct-${i}`, i % 2 === 0, -1000 - i), `seeded task ${i}`);
+        }
+
+        const claimed = await adapter.iterate(new Date(Date.now() + ZOMBIE_TIME), makeLock('redis-batch-direct'), 'batch');
+        assert.equal(claimed, 3, 'iterate(batch) reports all 3 tasks dispatched');
+        assert.equal(dispatched.length, 3, '__execute called once for each task');
+        assert.deepEqual(
+          dispatched.map((task) => task.uid).sort(),
+          ['redis-batch-direct-0', 'redis-batch-direct-1', 'redis-batch-direct-2'],
+          'dispatched uids match the seeded set'
+        );
+
+        const replay = await adapter.iterate(new Date(Date.now() + ZOMBIE_TIME), makeLock('redis-batch-direct-2'), 'batch');
+        assert.equal(replay, 0, 'iterating again returns 0 because tasks were rescheduled into the future');
+      } finally {
+        await cleanup(adapter);
+      }
+    });
+
+    it('iterate(one) dispatches exactly one task even when several are due', async function () {
+      const dispatched = [];
+      const adapter = await buildAdapter();
+      adapter.joskInstance.__execute = (task) => dispatched.push(task);
+
+      try {
+        assert.isTrue(await adapter.add('redis-one-direct-a', false, -1000));
+        assert.isTrue(await adapter.add('redis-one-direct-b', false, -500));
+        assert.isTrue(await adapter.add('redis-one-direct-c', true, -250));
+
+        const claimed = await adapter.iterate(new Date(Date.now() + ZOMBIE_TIME), makeLock('redis-one-direct'), 'one');
+        assert.equal(claimed, 1, 'iterate(one) reports exactly one dispatched task');
+        assert.equal(dispatched.length, 1, '__execute called only once');
+
+        const stillDue = await client.zRangeByScore(adapter.scheduleKey, '-inf', String(Date.now()));
+        assert.equal(stillDue.length, 2, 'two due tasks remain after a single one-mode pass');
+      } finally {
+        await cleanup(adapter);
+      }
+    });
+  });
+
   describe('Redis - CRON usage', function () {
     this.slow(50000);
     this.timeout(60000);
