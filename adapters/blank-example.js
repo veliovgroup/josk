@@ -20,6 +20,7 @@ class BlankAdapter {
     }
 
     this.requiredOption = opts.requiredOption;
+    /** @internal */
     this.__readyPromise = this.__setup();
   }
 
@@ -222,7 +223,13 @@ class BlankAdapter {
     return executed;
   }
 
-  /** @internal */
+  /**
+   * @internal
+   * Example placeholder for adapter-private helpers. Real adapters (Redis,
+   * MongoDB, PostgreSQL) define their own `__`-prefixed helpers when they
+   * need storage-specific utilities (e.g. `__claimNextTask`, `__serializeLock`).
+   * Use the same naming convention for any private methods you add.
+   */
   __customPrivateMethod() {
     return true;
   }

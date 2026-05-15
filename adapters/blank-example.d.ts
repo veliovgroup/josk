@@ -17,13 +17,10 @@ export class BlankAdapter {
     uniqueName: string;
     lockKey: string;
     requiredOption: object;
-    __readyPromise: Promise<void>;
     /**
      * @returns {Promise<void>}
      */
     ready(): Promise<void>;
-    /** @internal */
-    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf BlankAdapter
@@ -101,6 +98,4 @@ export class BlankAdapter {
         ownerId: string;
         leaseId: string;
     }, executeMode: "batch" | "one"): Promise<number>;
-    /** @internal */
-    __customPrivateMethod(): boolean;
 }
