@@ -257,6 +257,229 @@ describe('RedisAdapter unit coverage', () => {
     expect(harness.__execute).not.toHaveBeenCalled();
     expect(harness.__errorHandler).toHaveBeenCalledTimes(2);
   });
+
+  it('rejects prefixes containing characters outside the allowed set', () => {
+    const dummyClient = createRedisClient();
+    const make = (prefix) => () => new RedisAdapter({ client: dummyClient, prefix });
+
+    expect(make('bad{prefix}')).toThrow(/\{prefix\} option for RedisAdapter/);
+    expect(make('}braced{')).toThrow(/Curly braces and other special characters/);
+    expect(make('has space')).toThrow();
+    expect(make('foo/bar')).toThrow();
+    expect(make('foo*bar')).toThrow();
+    expect(make('foo()')).toThrow();
+    expect(make('héllo')).toThrow();
+  });
+
+  it('accepts prefixes composed of letters, digits, and allowed separators', async () => {
+    const adapter = new RedisAdapter({
+      client: createRedisClient(),
+      prefix: 'app-v2:tasks.queue_1'
+    });
+
+    expect(adapter.prefix).toBe('app-v2:tasks.queue_1');
+    expect(adapter.uniqueName).toBe('josk:app-v2:tasks.queue_1');
+    expect(adapter.scheduleKey).toBe('josk:app-v2:tasks.queue_1:schedule');
+    await adapter.ready();
+  });
+
+  it('falls back to the default prefix when none is provided or the value is empty', async () => {
+    const a = new RedisAdapter({ client: createRedisClient() });
+    const b = new RedisAdapter({ client: createRedisClient(), prefix: '' });
+    const c = new RedisAdapter({ client: createRedisClient(), prefix: 42 });
+
+    expect(a.prefix).toBe('default');
+    expect(b.prefix).toBe('default');
+    expect(c.prefix).toBe('default');
+  });
+
+  it('treats NOSCRIPT replies from evalSha as cache invalidation and reloads via scriptLoad', async () => {
+    const noScriptByMessage = new Error('NOSCRIPT No matching script. Please use EVAL.');
+    const noScriptByCode = Object.assign(new Error('script missing on this shard'), { code: 'NOSCRIPT' });
+    const fatalError = new Error('connection lost');
+
+    let evalShaCalls = 0;
+    const scriptLoad = jest.fn(async () => 'sha-loaded');
+    const evalSha = jest.fn(async () => {
+      evalShaCalls++;
+      switch (evalShaCalls) {
+        case 1: return 1;
+        case 2: throw noScriptByMessage;
+        case 3: return 1;
+        case 4: throw noScriptByCode;
+        case 5: return 1;
+        case 6: throw fatalError;
+        default: return 1;
+      }
+    });
+
+    const client = {
+      del: jest.fn(async () => 1),
+      scanIterator: jest.fn(() => (async function* () {})()),
+      ping: jest.fn(async () => 'PONG'),
+      eval: jest.fn(async () => null),
+      scriptLoad,
+      evalSha
+    };
+
+    const adapter = new RedisAdapter({
+      client,
+      prefix: uniquePrefix('redis-noscript')
+    });
+    const harness = createHarness();
+    adapter.joskInstance = harness;
+    await adapter.ready();
+
+    await expect(adapter.remove('prime')).resolves.toBe(true);
+    expect(scriptLoad).toHaveBeenCalledTimes(1);
+    expect(evalSha).toHaveBeenCalledTimes(1);
+
+    await expect(adapter.remove('noscript-message')).resolves.toBe(true);
+    expect(scriptLoad).toHaveBeenCalledTimes(2);
+    expect(evalSha).toHaveBeenCalledTimes(3);
+
+    await expect(adapter.remove('noscript-code')).resolves.toBe(true);
+    expect(scriptLoad).toHaveBeenCalledTimes(3);
+    expect(evalSha).toHaveBeenCalledTimes(5);
+
+    await expect(adapter.remove('fatal')).resolves.toBe(false);
+    expect(scriptLoad).toHaveBeenCalledTimes(3);
+    expect(evalSha).toHaveBeenCalledTimes(6);
+    expect(client.eval).not.toHaveBeenCalled();
+    expect(harness.__errorHandler).toHaveBeenCalledTimes(1);
+    expect(harness.__errorHandler.mock.calls[0][0]).toBe(fatalError);
+  });
+
+  it('ignores null/undefined and message-less errors when classifying NOSCRIPT responses', async () => {
+    const scriptLoad = jest.fn(async () => 'sha');
+    const evalSha = jest.fn()
+      .mockResolvedValueOnce(1)
+      .mockRejectedValueOnce(null)
+      .mockRejectedValueOnce({ code: 'OTHER' });
+
+    const client = {
+      del: jest.fn(async () => 1),
+      scanIterator: jest.fn(() => (async function* () {})()),
+      ping: jest.fn(async () => 'PONG'),
+      eval: jest.fn(async () => null),
+      scriptLoad,
+      evalSha
+    };
+
+    const adapter = new RedisAdapter({
+      client,
+      prefix: uniquePrefix('redis-noscript-edge')
+    });
+    const harness = createHarness();
+    adapter.joskInstance = harness;
+    await adapter.ready();
+
+    await expect(adapter.remove('prime')).resolves.toBe(true);
+    await expect(adapter.remove('null-error')).resolves.toBe(false);
+    await expect(adapter.remove('no-message')).resolves.toBe(false);
+
+    expect(scriptLoad).toHaveBeenCalledTimes(1);
+    expect(evalSha).toHaveBeenCalledTimes(3);
+    expect(harness.__errorHandler).toHaveBeenCalledTimes(2);
+  });
+
+  it('releaseLock runs the release script against the lock key with serialized owner payload', async () => {
+    const { adapter, client } = await setupRedisAdapter();
+    const lock = createLock('redis-release');
+
+    await adapter.releaseLock(lock);
+
+    expect(client.eval).toHaveBeenCalledTimes(1);
+    const call = client.eval.mock.calls[0];
+    const source = call[0];
+    const options = call[1];
+    expect(source).toContain("redis.call('GET', KEYS[1])");
+    expect(source).toContain("redis.call('DEL', KEYS[1])");
+    expect(options.keys).toEqual([adapter.lockKey]);
+    expect(options.arguments).toHaveLength(1);
+    const payload = JSON.parse(options.arguments[0]);
+    expect(payload).toMatchObject({
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId,
+      expiresAtMs: lock.expiresAtMs
+    });
+  });
+
+  it('skips resetOnInit cleanup when option is left disabled', async () => {
+    const client = createRedisClient({
+      scanKeys: ['josk:noreset:task:a']
+    });
+    const adapter = new RedisAdapter({
+      client,
+      prefix: uniquePrefix('redis-noreset')
+    });
+    await adapter.ready();
+
+    expect(client.del).not.toHaveBeenCalled();
+    expect(client.scanIterator).not.toHaveBeenCalled();
+    expect(adapter.resetOnInit).toBe(false);
+  });
+
+  it('claims a single due task in one execute mode and dispatches it once', async () => {
+    const task = {
+      uid: 'redis-one-due',
+      delay: 1,
+      executeAt: Date.now() - 1000,
+      isInterval: false,
+      isDeleted: false
+    };
+    const { adapter, harness } = await setupRedisAdapter({
+      evalResults: [JSON.stringify(task)]
+    });
+    const lock = createLock('redis-one');
+    const nextExecuteAt = new Date(Date.now() + 60000);
+
+    await expect(adapter.iterate(nextExecuteAt, lock, 'one')).resolves.toBe(1);
+
+    expect(harness.__execute).toHaveBeenCalledTimes(1);
+    expect(harness.__execute.mock.calls[0][0]).toMatchObject({
+      uid: task.uid,
+      delay: task.delay,
+      executeAt: task.executeAt,
+      isInterval: task.isInterval,
+      isDeleted: task.isDeleted
+    });
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
+
+  it('claims and dispatches every due task in batch mode until the queue drains', async () => {
+    const tasks = [{
+      uid: 'redis-batch-a',
+      delay: 1,
+      executeAt: Date.now() - 1000,
+      isInterval: false,
+      isDeleted: false
+    }, {
+      uid: 'redis-batch-b',
+      delay: 1,
+      executeAt: Date.now() - 500,
+      isInterval: true,
+      isDeleted: false
+    }];
+    const { adapter, harness, client } = await setupRedisAdapter({
+      evalResults: [JSON.stringify(tasks), JSON.stringify([])]
+    });
+    const lock = createLock('redis-batch');
+    const nextExecuteAt = new Date(Date.now() + 60000);
+
+    await expect(adapter.iterate(nextExecuteAt, lock, 'batch')).resolves.toBe(2);
+
+    expect(harness.__execute).toHaveBeenCalledTimes(2);
+    expect(harness.__execute.mock.calls.map(([dispatched]) => dispatched.uid).sort())
+      .toEqual(['redis-batch-a', 'redis-batch-b']);
+    expect(client.eval).toHaveBeenCalledTimes(1);
+    const batchCall = client.eval.mock.calls[0][1];
+    expect(batchCall.keys).toEqual([adapter.scheduleKey, adapter.tasksKey]);
+    expect(batchCall.arguments).toHaveLength(6);
+    expect(batchCall.arguments[2]).toBe(lock.ownerId);
+    expect(batchCall.arguments[3]).toBe(lock.leaseId);
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
 });
 
 describe('MongoAdapter unit coverage', () => {
@@ -513,6 +736,116 @@ describe('MongoAdapter unit coverage', () => {
     expect(harness.__errorHandler).toHaveBeenCalledTimes(1);
     expect(failing.harness.__errorHandler).toHaveBeenCalledWith(batchError, '[MongoAdapter] [iterate] [batchClaim]', 'Exception inside MongoAdapter#__claimNextTasks() method', null);
   });
+
+  it('clears tasks and lock entries scoped to uniqueName when resetOnInit is enabled', async () => {
+    const { adapter, collection, lockCollection } = await setupMongoAdapter({}, {
+      resetOnInit: true
+    });
+
+    expect(adapter.resetOnInit).toBe(true);
+    expect(collection.deleteMany).toHaveBeenCalledWith({});
+    expect(lockCollection.deleteMany).toHaveBeenCalledWith({
+      uniqueName: adapter.uniqueName
+    });
+  });
+
+  it('does not call deleteMany during setup when resetOnInit is left disabled', async () => {
+    const { adapter, collection, lockCollection } = await setupMongoAdapter();
+
+    expect(adapter.resetOnInit).toBe(false);
+    expect(collection.deleteMany).not.toHaveBeenCalled();
+    expect(lockCollection.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('releaseLock deletes the lock row scoped to uniqueName and owner credentials', async () => {
+    const { adapter, lockCollection, harness } = await setupMongoAdapter();
+    const lock = createLock('mongo-release');
+
+    await adapter.releaseLock(lock);
+
+    expect(lockCollection.deleteOne).toHaveBeenCalledWith({
+      uniqueName: adapter.uniqueName,
+      ownerId: lock.ownerId,
+      leaseId: lock.leaseId
+    });
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
+
+  it('reports releaseLock failures via the error handler without rejecting', async () => {
+    const releaseError = new Error('delete failed');
+    const lockCollection = createMongoCollection({
+      deleteOne: jest.fn(async () => {
+        throw releaseError;
+      })
+    });
+    const { adapter, harness } = await setupMongoAdapter({
+      lockCollection
+    });
+    const lock = createLock('mongo-release-fail');
+
+    await expect(adapter.releaseLock(lock)).resolves.toBeUndefined();
+    expect(harness.__errorHandler).toHaveBeenCalledWith(releaseError, '[MongoAdapter] [releaseLock]', 'Exception inside MongoAdapter#releaseLock() method', null);
+  });
+
+  it('iterate(one) dispatches a single claimed task and reports a count of 1', async () => {
+    const claimed = {
+      _id: 'mongo-one-due',
+      uid: 'mongo-one-due',
+      delay: 1,
+      executeAt: new Date(Date.now() - 1000),
+      isInterval: false,
+      isDeleted: false
+    };
+    const taskCollection = createMongoCollection({
+      findOneAndUpdate: jest.fn(async () => claimed)
+    });
+    const { adapter, harness } = await setupMongoAdapter({
+      taskCollection
+    });
+    const lock = createLock('mongo-one-happy');
+    const nextExecuteAt = new Date(Date.now() + 60000);
+
+    await expect(adapter.iterate(nextExecuteAt, lock, 'one')).resolves.toBe(1);
+
+    expect(taskCollection.findOneAndUpdate).toHaveBeenCalledTimes(1);
+    expect(harness.__execute).toHaveBeenCalledTimes(1);
+    expect(harness.__execute.mock.calls[0][0]).toBe(claimed);
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
+
+  it('iterate(batch) loops through __claimNextTasks until the page is short and dispatches every task', async () => {
+    const buildTask = (id) => ({
+      _id: id,
+      uid: id,
+      delay: 1,
+      executeAt: new Date(Date.now() - 1000),
+      isInterval: false,
+      isDeleted: false
+    });
+    const tasks = [buildTask('mongo-batch-a'), buildTask('mongo-batch-b'), buildTask('mongo-batch-c')];
+    const taskCollection = createMongoCollection({
+      find: jest.fn(() => ({
+        toArray: async () => tasks
+      })),
+      bulkWrite: jest.fn(async () => ({
+        modifiedCount: tasks.length
+      }))
+    });
+    const { adapter, harness } = await setupMongoAdapter({
+      taskCollection
+    });
+    const lock = createLock('mongo-batch-happy');
+    const nextExecuteAt = new Date(Date.now() + 60000);
+
+    await expect(adapter.iterate(nextExecuteAt, lock, 'batch')).resolves.toBe(3);
+
+    expect(taskCollection.find).toHaveBeenCalledTimes(1);
+    expect(taskCollection.bulkWrite).toHaveBeenCalledTimes(1);
+    expect(harness.__execute).toHaveBeenCalledTimes(3);
+    expect(harness.__execute.mock.calls.map(([dispatched]) => dispatched.uid).sort())
+      .toEqual(['mongo-batch-a', 'mongo-batch-b', 'mongo-batch-c']);
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
 });
 
 describe('PostgresAdapter unit coverage', () => {
@@ -717,6 +1050,109 @@ describe('PostgresAdapter unit coverage', () => {
     await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toBeNull();
     await expect(adapter.__claimNextTasks(nextExecuteAt, lock, 2)).resolves.toEqual([]);
     expect(harness.__errorHandler).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips reset queries when resetOnInit is left disabled', async () => {
+    const { adapter, client } = await setupPostgresAdapter();
+
+    expect(adapter.resetOnInit).toBe(false);
+    const issuedSql = client.query.mock.calls.map(([sql]) => sql);
+    expect(issuedSql.some((sql) => sql === 'DELETE FROM josk_tasks WHERE prefix = $1')).toBe(false);
+    expect(issuedSql.some((sql) => sql === 'DELETE FROM josk_locks WHERE lock_key = $1')).toBe(false);
+  });
+
+  it('releaseLock deletes only the row that matches lock_key, owner_id, and lease_id', async () => {
+    const releaseCalls = [];
+    const { adapter, harness } = await setupPostgresAdapter((sql, values) => {
+      if (sql.includes('DELETE FROM josk_locks')) {
+        releaseCalls.push({ sql, values });
+        return { rowCount: 1, rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const lock = createLock('postgres-release-happy');
+
+    await expect(adapter.releaseLock(lock)).resolves.toBeUndefined();
+
+    expect(releaseCalls).toHaveLength(1);
+    expect(releaseCalls[0].sql).toContain('DELETE FROM josk_locks');
+    expect(releaseCalls[0].sql).toContain('WHERE lock_key = $1');
+    expect(releaseCalls[0].sql).toContain('AND owner_id = $2');
+    expect(releaseCalls[0].sql).toContain('AND lease_id = $3');
+    expect(releaseCalls[0].values).toEqual([adapter.lockKey, lock.ownerId, lock.leaseId]);
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
+
+  it('iterate(one) claims a due row via SQL and dispatches a normalized task once', async () => {
+    const dueRow = {
+      uid: 'postgres-one-happy',
+      delay: '1500',
+      execute_at: `${Date.now() - 1000}`,
+      is_interval: false,
+      is_deleted: false
+    };
+    const claimQueries = [];
+    const { adapter, harness } = await setupPostgresAdapter((sql, values) => {
+      if (sql.includes('WITH due AS') && sql.includes('LIMIT 1')) {
+        claimQueries.push({ sql, values });
+        return { rowCount: 1, rows: [dueRow] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const lock = createLock('postgres-one-happy');
+    const nextExecuteAt = new Date(Date.now() + 60000);
+
+    await expect(adapter.iterate(nextExecuteAt, lock, 'one')).resolves.toBe(1);
+
+    expect(claimQueries).toHaveLength(1);
+    expect(claimQueries[0].values[0]).toBe(adapter.prefix);
+    expect(claimQueries[0].values[3]).toBe(lock.ownerId);
+    expect(claimQueries[0].values[4]).toBe(lock.leaseId);
+    expect(harness.__execute).toHaveBeenCalledTimes(1);
+    expect(harness.__execute.mock.calls[0][0]).toEqual({
+      uid: dueRow.uid,
+      delay: 1500,
+      executeAt: Number(dueRow.execute_at),
+      isInterval: dueRow.is_interval,
+      isDeleted: dueRow.is_deleted
+    });
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
+  });
+
+  it('iterate(batch) claims a partial page via SQL and dispatches each row', async () => {
+    const dueRows = [{
+      uid: 'postgres-batch-a',
+      delay: '1000',
+      execute_at: `${Date.now() - 1500}`,
+      is_interval: false,
+      is_deleted: false
+    }, {
+      uid: 'postgres-batch-b',
+      delay: '2000',
+      execute_at: `${Date.now() - 500}`,
+      is_interval: true,
+      is_deleted: false
+    }];
+    let batchCalls = 0;
+    const { adapter, harness } = await setupPostgresAdapter((sql) => {
+      if (sql.includes('WITH due AS') && sql.includes('LIMIT $6')) {
+        batchCalls++;
+        return { rowCount: dueRows.length, rows: dueRows };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const lock = createLock('postgres-batch-happy');
+    const nextExecuteAt = new Date(Date.now() + 60000);
+
+    await expect(adapter.iterate(nextExecuteAt, lock, 'batch')).resolves.toBe(2);
+
+    expect(batchCalls).toBe(1);
+    expect(harness.__execute).toHaveBeenCalledTimes(2);
+    expect(harness.__execute.mock.calls.map(([dispatched]) => dispatched.uid).sort())
+      .toEqual(['postgres-batch-a', 'postgres-batch-b']);
+    expect(harness.__execute.mock.calls[0][0].delay).toBe(1000);
+    expect(harness.__execute.mock.calls[1][0].delay).toBe(2000);
+    expect(harness.__errorHandler).not.toHaveBeenCalled();
   });
 });
 
