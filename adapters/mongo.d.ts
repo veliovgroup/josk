@@ -41,13 +41,10 @@ export class MongoAdapter {
     collection: Collection;
     /** @type {Collection} */
     lockCollection: Collection;
-    __readyPromise: Promise<void>;
     /**
      * @returns {Promise<void>}
      */
     ready(): Promise<void>;
-    /** @internal */
-    __setup(): Promise<void>;
     /**
      * @async
      * @memberOf MongoAdapter
@@ -93,17 +90,4 @@ export class MongoAdapter {
      * @returns {Promise<number>}
      */
     iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode): Promise<number>;
-    /**
-     * @param {Date} nextExecuteAt
-     * @param {JoSkLock} lock
-     * @returns {Promise<MongoTask | null>}
-     */
-    __claimNextTask(nextExecuteAt: Date, lock: JoSkLock): Promise<MongoTask | null>;
-    /**
-     * @param {Date} nextExecuteAt
-     * @param {JoSkLock} lock
-     * @param {number} limit
-     * @returns {Promise<MongoTask[]>}
-     */
-    __claimNextTasks(nextExecuteAt: Date, lock: JoSkLock, limit: number): Promise<MongoTask[]>;
 }

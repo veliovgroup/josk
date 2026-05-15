@@ -1,3 +1,10 @@
+// MongoDB Storage Adapter for JoSk.
+//
+// IMPORTANT: This adapter is designed for and tested against the official
+// `mongodb` driver only. Other Mongo-compatible clients (Mongoose, custom
+// wrappers) may work if they expose the same `Db.collection()`,
+// `Db.command()`, and `Collection` APIs, but are not officially supported.
+
 /**
  * @typedef {import('mongodb').Collection} Collection
  * @typedef {import('mongodb').Db} Db
@@ -86,7 +93,7 @@ class MongoAdapter {
    */
   constructor(opts = {}) {
     this.name = 'mongo';
-    this.prefix = typeof opts.prefix === 'string' ? opts.prefix : '';
+    this.prefix = typeof opts.prefix === 'string' && opts.prefix.length > 0 ? opts.prefix : 'default';
     this.lockCollectionName = opts.lockCollectionName || '__JobTasks__.lock';
     this.resetOnInit = !!opts.resetOnInit;
 
@@ -105,6 +112,7 @@ class MongoAdapter {
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    /** @internal */
     this.__readyPromise = this.__setup();
   }
 
@@ -232,11 +240,15 @@ class MongoAdapter {
    */
   async releaseLock(lock) {
     await this.ready();
-    await this.lockCollection.deleteOne({
-      uniqueName: this.uniqueName,
-      ownerId: lock.ownerId,
-      leaseId: lock.leaseId
-    });
+    try {
+      await this.lockCollection.deleteOne({
+        uniqueName: this.uniqueName,
+        ownerId: lock.ownerId,
+        leaseId: lock.leaseId
+      });
+    } catch (releaseError) {
+      this.joskInstance.__errorHandler(releaseError, '[MongoAdapter] [releaseLock]', 'Exception inside MongoAdapter#releaseLock() method', null);
+    }
   }
 
   /**
@@ -321,7 +333,7 @@ class MongoAdapter {
           executeAt: nextExecuteAt
         }
       });
-      return updateResult?.modifiedCount >= 1;
+      return (updateResult?.matchedCount || 0) >= 1;
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[MongoAdapter] [update] [opError]', 'Exception inside MongoAdapter#update() method', task.uid);
       return false;
@@ -348,8 +360,9 @@ class MongoAdapter {
       return executed + 1;
     }
 
+    const batchLimit = 100;
     while (true) {
-      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, 100);
+      const tasks = await this.__claimNextTasks(nextExecuteAt, lock, batchLimit);
       if (tasks.length === 0) {
         break;
       }
@@ -358,12 +371,17 @@ class MongoAdapter {
       for (const task of tasks) {
         this.joskInstance.__execute(task);
       }
+
+      if (tasks.length < batchLimit) {
+        break;
+      }
     }
 
     return executed;
   }
 
   /**
+   * @internal
    * @param {Date} nextExecuteAt
    * @param {JoSkLock} lock
    * @returns {Promise<MongoTask | null>}
@@ -405,6 +423,7 @@ class MongoAdapter {
   }
 
   /**
+   * @internal
    * @param {Date} nextExecuteAt
    * @param {JoSkLock} lock
    * @param {number} limit
