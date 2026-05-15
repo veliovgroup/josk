@@ -100,6 +100,8 @@ describe('JoSk core', () => {
   it('validates constructor adapter and execute mode', () => {
     expect(() => new JoSk()).toThrow('{adapter} option is required for JoSk');
     expect(() => new JoSk({ adapter: new FakeAdapter(), execute: 'bad' })).toThrow('[josk] [execute] option must be either "batch" or "one"!');
+    expect(() => new JoSk({ adapter: new FakeAdapter(), concurrency: 0 })).toThrow('[josk] [concurrency] option must be a positive integer or Infinity');
+    expect(() => new JoSk({ adapter: new FakeAdapter(), concurrency: 1.5 })).toThrow('[josk] [concurrency] option must be a positive integer or Infinity');
     expect(() => new JoSk({
       adapter: {
         acquireLock: async () => true,
@@ -112,17 +114,109 @@ describe('JoSk core', () => {
     })).toThrow('{adapter} instance is missing {ping} method that is required!');
   });
 
+  it('uses crypto.randomUUID for lockOwnerId and lease tokens', () => {
+    const { job } = createJob();
+    expect(job.lockOwnerId).toMatch(/^josk-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const lock = job.__getLock();
+    expect(lock.leaseId).toContain(job.lockOwnerId);
+    expect(lock.leaseId).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('auto-calls ready() for sync handlers with zero arity', async () => {
+    const { job, adapter } = createJob();
+    const task = {
+      uid: 'sync-no-readysetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+    let invoked = false;
+    job.tasks[task.uid] = () => {
+      invoked = true;
+    };
+
+    await job.__doExecute(task);
+
+    expect(invoked).toBe(true);
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThanOrEqual(Date.now() + task.delay - 5);
+  });
+
+  it('skips auto-ready when handler declares ready param but never calls it', async () => {
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job, adapter } = createJob({ debug: true });
+    const task = {
+      uid: 'sync-with-readysetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+    job.tasks[task.uid] = (_ready) => {
+      // declared ready but never invoked it
+    };
+
+    await job.__doExecute(task);
+
+    expect(adapter.updateCalls).toHaveLength(0);
+    expect(info).toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('throttles concurrent executions when concurrency is set', async () => {
+    const { job } = createJob({ concurrency: 2 });
+    let active = 0;
+    let peak = 0;
+    const finishers = [];
+    const handler = () => new Promise((resolve) => {
+      active++;
+      peak = Math.max(peak, active);
+      finishers.push(() => {
+        active--;
+        resolve();
+      });
+    });
+
+    const tasks = ['a', 'b', 'c', 'd', 'e'].map((id) => ({
+      uid: `${id}setInterval`,
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    }));
+
+    const pending = [];
+    for (const task of tasks) {
+      job.tasks[task.uid] = handler;
+      pending.push(job.__execute(task));
+    }
+
+    // Allow microtasks to settle so the first two handlers attach
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    expect(active).toBe(2);
+
+    while (finishers.length > 0) {
+      finishers.shift()();
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    await Promise.all(pending);
+    expect(peak).toBe(2);
+  });
+
   it('validates scheduler method arguments', async () => {
     const { job } = createJob();
 
     await expect(job.setTimeout(null, 1, 'x')).rejects.toThrow('[josk] [setTimeout] the first argument must be a function!');
     await expect(job.setTimeout(() => {}, -1, 'x')).rejects.toThrow('[josk] [setTimeout] delay must be positive Number!');
-    await expect(job.setTimeout(() => {}, 1)).rejects.toThrow('[josk] [setTimeout] [uid - task id must be specified (3rd argument)]');
+    await expect(job.setTimeout(() => {}, 1)).rejects.toThrow('[josk] [setTimeout] uid (3rd argument) must be a string');
     await expect(job.setInterval(null, 1, 'x')).rejects.toThrow('[josk] [setInterval] the first argument must be a function!');
     await expect(job.setInterval(() => {}, -1, 'x')).rejects.toThrow('[josk] [setInterval] delay must be positive Number!');
-    await expect(job.setInterval(() => {}, 1)).rejects.toThrow('[josk] [setInterval] [uid - task id must be specified (3rd argument)]');
+    await expect(job.setInterval(() => {}, 1)).rejects.toThrow('[josk] [setInterval] uid (3rd argument) must be a string');
     await expect(job.setImmediate(null, 'x')).rejects.toThrow('[josk] [setImmediate] the first argument must be a function!');
-    await expect(job.setImmediate(() => {})).rejects.toThrow('[josk] [setImmediate] [uid - task id must be specified (2nd argument)]');
+    await expect(job.setImmediate(() => {})).rejects.toThrow('[josk] [setImmediate] uid (2nd argument) must be a string');
   });
 
   it('adds timeout, interval, and immediate tasks with stable ids', async () => {
@@ -632,5 +726,57 @@ describe('JoSk core', () => {
       uid: 'internal-id'
     });
     errorSpy.mockRestore();
+  });
+
+  it('recovers across ticks when acquireLock transiently fails', async () => {
+    let failureCount = 2;
+    const adapter = new FakeAdapter();
+    adapter.acquireLock = jest.fn(async (lock) => {
+      adapter.acquireCalls.push(lock);
+      if (failureCount > 0) {
+        failureCount--;
+        throw new Error('transient connection loss');
+      }
+      return true;
+    });
+    const errors = [];
+    const { job } = createJob({
+      onError(title, details) {
+        errors.push({ title, details });
+      }
+    }, adapter);
+
+    await job.__iterate();
+    await job.__iterate();
+    await job.__iterate();
+
+    expect(adapter.acquireCalls.length).toBe(3);
+    expect(adapter.iterateCalls.length).toBe(1);
+    expect(errors.length).toBe(2);
+  });
+
+  it('keeps lock owner stable across ticks within the same instance', () => {
+    const { job } = createJob({ lockOwnerId: 'fixed-owner' });
+    const first = job.__getLock();
+    const second = job.__getLock();
+    expect(first.ownerId).toBe('fixed-owner');
+    expect(second.ownerId).toBe('fixed-owner');
+    expect(first.leaseId).not.toBe(second.leaseId);
+  });
+
+  it('clears placeholder when missing task is later removed via autoClear', async () => {
+    const { job, adapter } = createJob({ autoClear: true });
+    const task = {
+      uid: 'placeholder-evictsetInterval',
+      delay: 100,
+      isInterval: true,
+      isDeleted: false
+    };
+    adapter.stored.set(task.uid, task);
+
+    await job.__doExecute(task);
+
+    expect(job.tasks[task.uid]).toBeUndefined();
+    expect(adapter.removeCalls).toContain(task.uid);
   });
 });
