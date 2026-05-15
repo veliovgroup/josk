@@ -78,9 +78,12 @@ const sayName = (name) => {
 ```sh
 # Full (Redis+Mongo+PG)
 REDIS_URL=redis://127.0.0.1:6379 MONGO_URL=mongodb://127.0.0.1:27017/test PG_URL=postgres://... npm test
-npm run test-redis
-npm run test-mongo
-npm run test-postgres
+npm run test:redis
+npm run test:mongo
+npm run test:postgres
+npm run test:jest
+npm run test:types
+npm run test:coverage
 ```
 - ~3-6min. Requires running DBs.
 - Cover: set*/clear*, zombie (zombieTime), onError/onExecuted, autoClear, destroy mid-run, CRON helper, promise vs cb ready(), malformed, short delays, concurrent.
