@@ -63,8 +63,14 @@ const createRedisClient = (opts = {}) => {
   return {
     del: jest.fn(async () => 1),
     scanIterator: jest.fn(() => (async function* () {
-      for (const key of opts.scanKeys || []) {
-        yield key;
+      if (opts.scanBatches) {
+        for (const batch of opts.scanBatches) {
+          yield batch;
+        }
+      } else if (opts.scanKeys) {
+        for (const key of opts.scanKeys) {
+          yield key;
+        }
       }
     })()),
     ping: jest.fn(async () => opts.pingResult ?? 'PONG'),
@@ -179,7 +185,7 @@ describe('Adapter constructor guards', () => {
 });
 
 describe('RedisAdapter unit coverage', () => {
-  it('deletes scanned task keys on reset', async () => {
+  it('deletes scanned task keys on reset (redis v4 client: yields individual keys)', async () => {
     const client = createRedisClient({
       scanKeys: ['josk:reset:task:a', 'josk:reset:task:b']
     });
@@ -192,8 +198,24 @@ describe('RedisAdapter unit coverage', () => {
     await adapter.ready();
 
     expect(client.del).toHaveBeenCalledWith([adapter.scheduleKey, adapter.tasksKey, adapter.lockKey]);
-    expect(client.del).toHaveBeenCalledWith('josk:reset:task:a');
-    expect(client.del).toHaveBeenCalledWith('josk:reset:task:b');
+    expect(client.del).toHaveBeenCalledWith(['josk:reset:task:a']);
+    expect(client.del).toHaveBeenCalledWith(['josk:reset:task:b']);
+  });
+
+  it('deletes scanned task keys on reset (redis v5 client: yields batches)', async () => {
+    const client = createRedisClient({
+      scanBatches: [['josk:reset-v5:task:a', 'josk:reset-v5:task:b']]
+    });
+    const adapter = new RedisAdapter({
+      client,
+      prefix: 'reset-v5',
+      resetOnInit: true
+    });
+
+    await adapter.ready();
+
+    expect(client.del).toHaveBeenCalledWith([adapter.scheduleKey, adapter.tasksKey, adapter.lockKey]);
+    expect(client.del).toHaveBeenCalledWith(['josk:reset-v5:task:a', 'josk:reset-v5:task:b']);
   });
 
   it('reports ping states before assignment and on unexpected replies', async () => {
