@@ -61,7 +61,7 @@ Read `references/` lazily — do not guess v4/v5/v6 semantics from memory.
 | Adapter | Choose when |
 |---|---|
 | **PostgreSQL** | Multi-DC, clock skew, strict single-claim; `SKIP LOCKED` |
-| **Redis / KeyDB / Valkey** | Single-region, high frequency; single writable primary only |
+| **Redis / KeyDB / Valkey** | Single-region, high frequency; single writable primary only; Cluster needs `useHashTags: true` |
 | **MongoDB** | App already on Mongo (Meteor: `MongoInternals…mongo.db`); official `mongodb` driver |
 
 ## Pick the scheduling method
@@ -90,6 +90,7 @@ Call out proactively when reviewing JoSk usage:
 - Default `zombieTime` with handlers >15 min
 - `resetOnInit: true` in production cluster
 - Replica reads / multi-writer Redis
+- Redis Cluster without `useHashTags: true`
 - Intervals <~2s (storage + jitter overlap)
 - MongoAdapter on CosmosDB/DocumentDB/Mongoose without warning
 - KeyDB active-replication / multi-master

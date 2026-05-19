@@ -74,6 +74,7 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'cluster-scheduler',
+    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
   }),
 });
 ```
@@ -102,12 +103,12 @@ const jobs = new JoSk({
 
 - **Server-only.** Put JoSk code in `server/` or behind `Meteor.isServer`. Never import it on the client.
 - **Replica set guidance still applies.** Use `writeConcern: { j: true, w: 'majority' }` / `readConcern: { level: 'majority' }` / `readPreference: 'primary'` on the Mongo URL when configuring Meteor against a replica set. JoSk depends on primary-visibility for lease ownership.
-- **Galaxy / autoscale.** When Galaxy scales the app horizontally, every container shares the same MongoDB. That's exactly what JoSk's `MongoAdapter` is for — each scheduled task fires once across all containers.
+- **Galaxy / autoscale.** When Galaxy scales the app horizontally, every container shares the same MongoDB. That's what JoSk's `MongoAdapter` is for — each due tick is claimed by one container; method guarantees still apply.
 - **`destroy()` on shutdown.** Hook into `process.on('SIGTERM', …)` to call `jobs.destroy()` before Galaxy stops the container, so the scheduler releases its lease cleanly.
 
 ## Same options, same methods
 
-Every option from the NPM API (`execute`, `concurrency`, `zombieTime`, `lockOwnerId`, `minRevolvingDelay`, `maxRevolvingDelay`, `autoClear`, `onError`, `onExecuted`, `debug`) and every method (`setInterval`, `setTimeout`, `setImmediate`, `clearInterval`, `clearTimeout`, `destroy`, `ping`) work identically here. Refer to `api.md` for signatures and to `patterns.md` for handler styles, CRON via `cron-parser`, and graceful shutdown.
+Every option from the NPM API (`execute`, `concurrency`, `zombieTime`, `lockOwnerId`, `minRevolvingDelay`, `maxRevolvingDelay`, `autoClear`, `onError`, `onExecuted`, `debug`) and every adapter option (`RedisAdapter.useHashTags`, etc.) work identically here. Every method (`setInterval`, `setTimeout`, `setImmediate`, `clearInterval`, `clearTimeout`, `destroy`, `ping`) works identically too. Refer to `api.md` for signatures and to `patterns.md` for handler styles, CRON via `cron-parser`, and graceful shutdown.
 
 ## Migration to Meteor 3 / async
 

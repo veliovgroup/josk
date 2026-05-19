@@ -85,7 +85,7 @@ The constructor throws synchronously for:
 | `details.uid` | `string \| null` | Internal task id (with `setInterval`/`setTimeout`/`setImmediate` suffix). `null` when the error isn't tied to a specific task. Suitable for `clearInterval` / `clearTimeout`. |
 | `details.task` | `unknown` | Present when the offending task object itself was malformed. |
 
-The hook may be async — JoSk doesn't await it.
+The hook may be async — JoSk doesn't await it. Sync throws and async rejections are logged and isolated from scheduler flow.
 
 ### `onExecuted(uid, details)`
 
@@ -104,7 +104,7 @@ The hook may be async — JoSk doesn't await it.
 Schedules a recurring task. The returned string is the internal timer id (the `uid` with `setInterval` appended). Subsequent calls with the same effective id update or no-op — pick distinct `uid`s for distinct tasks.
 
 - `handler`: `(ready?: JoSkReady) => void | Promise<void>`. See "Handler shape" below.
-- `delay`: integer milliseconds. `0` is allowed (run as fast as the storage / revolving delay permits).
+- `delay`: finite non-negative number of milliseconds. `0` is allowed (run as fast as the storage / revolving delay permits).
 - `uid`: app-wide unique string. Required.
 
 **Execution guarantee:** at-least-once per scheduled tick. The storage row for the task stays during execution; if the handler does not signal completion within `zombieTime`, the task is re-claimed and may run again. Make recurring handlers idempotent.
@@ -119,7 +119,7 @@ Schedules a one-shot task after `delay` ms. Returns the internal timer id (`uid`
 
 Schedules a one-shot task to run as soon as the next revolving tick claims it. No delay argument. Internal timer id is `uid` + `setImmediate`.
 
-**Execution guarantee:** exactly-once across the cluster.
+**Execution guarantee:** at-most-once across the cluster. JoSk **removes the task from storage before invoking the handler**. If the process crashes between removal and handler completion, the run is lost.
 
 ### `clearInterval(timerId)` → `Promise<boolean>`
 
@@ -152,7 +152,7 @@ Healthcheck. Returns `{ status, code, statusCode }` on success (status `'OK'`, c
 
 The handler can be:
 
-1. **Async / Promise-returning.** JoSk awaits the returned Promise and auto-calls `ready()` when it resolves. Errors caught by JoSk go to `onError`.
+1. **Async / Promise-returning / thenable-returning.** JoSk awaits the returned Promise-like value and auto-calls `ready()` when it resolves. Errors caught by JoSk go to `onError`.
 2. **Zero-arg sync.** JoSk auto-calls `ready()` after the function returns (matches the `func.length === 0` shortcut added in v6).
 3. **Callback-style.** Declared `(ready) => { … ready(); }`. Required when async work completes after the function returns via callbacks rather than Promises.
 

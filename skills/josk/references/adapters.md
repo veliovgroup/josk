@@ -6,9 +6,9 @@ Three built-in adapters plus the contract for writing custom ones. Pick by topol
 
 | Adapter | Best for | Prerequisite NPM | Server requirement | Lock mechanism | Notes |
 |---|---|---|---|---|---|
-| `RedisAdapter` | High-frequency scheduling, single-writer Redis/KeyDB | `redis@^4 \|\| ^5` | `redis-server@≥5.0.0` (Lua + sorted sets), or KeyDB / Valkey routed to a single slot | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim | Reject active-active / multi-master topologies for exactly-once |
+| `RedisAdapter` | High-frequency scheduling, single-writer Redis/KeyDB | `redis@^4 \|\| ^5` | `redis-server@≥5.0.0` (Lua + sorted sets), or KeyDB / Valkey. Cluster mode requires `useHashTags: true` | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim | Reject active-active / multi-master topologies |
 | `MongoAdapter` | Apps that already run MongoDB (incl. Meteor) | `mongodb` (official driver) | `mongod@≥4.0.0` | TTL-indexed `.lock` collection, atomic `findOneAndUpdate` task claim | Tested only against official driver. Other Mongo-compatible stores unverified |
-| `PostgresAdapter` | Multi-region / strict exactly-once, mixed clocks | `pg` | `postgres@≥12` | `josk_locks` row with `CURRENT_TIMESTAMP`-compared expiry, `FOR UPDATE SKIP LOCKED` claim | Strongest clock-skew resistance. Auto-migrates schema on init |
+| `PostgresAdapter` | Multi-region / strict single-claim, mixed clocks | `pg` | `postgres@≥12` | `josk_locks` row with `CURRENT_TIMESTAMP`-compared expiry, `FOR UPDATE SKIP LOCKED` claim | Strongest clock-skew resistance. Auto-migrates schema on init |
 
 ## `RedisAdapter`
 
@@ -24,6 +24,7 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'app-scheduler',
+    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
   }),
   onError(reason, details) {
     console.error('[josk]', reason, details.error);
@@ -38,21 +39,30 @@ const jobs = new JoSk({
 | `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` or `redis@^5` client. Either `RedisClientType` or `RedisClusterType`. |
 | `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+$/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
 | `resetOnInit` | `boolean` | `false` | Deletes all keys under this prefix on init. Local-dev / single-instance recovery only. Disastrous in clustered prod. |
+| `useHashTags` | `boolean` | `false` | Use Redis Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps existing standalone keys (`josk:prefix:*`). |
 
 ### Keys created (for `prefix: 'app'`)
 
-- `josk:{app}:schedule` — sorted set of due timestamps
-- `josk:{app}:tasks` — hash of task payloads
-- `josk:{app}:lock` — scheduler lease key
+Default (`useHashTags: false`):
 
-The `{app}` braces are Redis hash tags that keep all keys on the same Cluster slot.
+- `josk:app:schedule` — sorted set of due timestamps
+- `josk:app:tasks` — hash of task payloads
+- `josk:app:lock` — scheduler lease key
+
+With `useHashTags: true`:
+
+- `josk:{app}:schedule`
+- `josk:{app}:tasks`
+- `josk:{app}:lock`
+
+The `{app}` braces are Redis hash tags that keep all adapter keys on the same Cluster slot.
 
 ### Redis / KeyDB topology guidelines
 
-- One writable primary endpoint, or a KeyDB Cluster endpoint where the prefix maps to a single hash slot.
+- One writable primary endpoint. For Redis Cluster or KeyDB Cluster, set `useHashTags: true`.
 - **Do not** route reads or writes to replicas. Lease writes must be immediately visible.
-- **Do not** use Redis active-active / multi-master or KeyDB active-replication for exactly-once correctness. Conflict resolution can allow duplicate task claims across writers.
-- For multi-DC exactly-once requirements, prefer `PostgresAdapter`.
+- **Do not** use Redis active-active / multi-master or KeyDB active-replication for scheduler correctness. Conflict resolution can allow duplicate task claims across writers.
+- For multi-DC strict single-claim requirements, prefer `PostgresAdapter`.
 
 ## `MongoAdapter`
 
@@ -157,7 +167,7 @@ Migrations run DDL on startup; schedule deploys during a low-traffic window when
 
 | Adapter | Storage layout (for `prefix: 'app'`) |
 |---|---|
-| Redis | Keys `josk:{app}:schedule`, `josk:{app}:tasks`, `josk:{app}:lock`. Braces are Cluster hash tags. |
+| Redis | Default keys `josk:app:schedule`, `josk:app:tasks`, `josk:app:lock`. With `useHashTags: true`: `josk:{app}:schedule`, `josk:{app}:tasks`, `josk:{app}:lock`. |
 | MongoDB | Collection `__JobTasks__app`; lock collection `__JobTasks__.lock` (shared, scoped by `uniqueName` field). |
 | PostgreSQL | Rows in `josk_tasks` filtered by `prefix='app'`; lock row in `josk_locks` with `lock_key='josk-app.lock'`. |
 
@@ -168,6 +178,10 @@ Use different prefixes for tenants, environments, or test suites.
 ### Redis
 
 ```sh
+redis-cli --no-auth-warning --scan --pattern "josk:default:*" \
+  | xargs redis-cli --raw --no-auth-warning DEL
+
+# If useHashTags is true:
 redis-cli --no-auth-warning --scan --pattern "josk:{default}:*" \
   | xargs redis-cli --raw --no-auth-warning DEL
 ```
@@ -189,7 +203,7 @@ DELETE FROM josk_locks WHERE lock_key = 'josk-default.lock';
 
 ## Custom adapter
 
-Custom adapters implement the `JoSkAdapter` interface and follow design rules tied to exactly-once correctness. Start from `adapters/blank-example.js` in the source tree.
+Custom adapters implement the `JoSkAdapter` interface and follow design rules tied to single-claim correctness. Start from `adapters/blank-example.js` in the source tree.
 
 ### Interface
 
@@ -235,4 +249,4 @@ interface JoSkAdapter {
 4. Call `this.joskInstance.__execute(task)` (no `await`).
 5. Release the lease only if the owner token still matches.
 
-Global lock alone is **not** enough for exactly-once. The atomic per-task claim is what prevents two instances from running the same tick.
+Global lock alone is **not** enough for duplicate prevention. The atomic per-task claim is what prevents two instances from running the same tick.

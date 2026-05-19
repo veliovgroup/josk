@@ -6,11 +6,11 @@ The behaviors that surprise people, the migration notes that bite, and the queri
 
 | Method | Guarantee | What happens on crash mid-handler |
 |---|---|---|
-| `setImmediate(fn, uid)` | Exactly-once across the cluster | One claim per task, no retry once claimed. |
+| `setImmediate(fn, uid)` | At-most-once across the cluster | Task is removed *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setTimeout(fn, delay, uid)` | At-most-once across the cluster | Task is removed *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setInterval(fn, delay, uid)` | At-least-once per scheduled tick (until cleared) | Storage row stays during execution. If `ready()` isn't called within `zombieTime`, the task is re-claimed and may run again. Make handlers idempotent. |
 
-If you see "this ran twice", that's `setInterval` + a handler that exceeded `zombieTime` or didn't call `ready()`. If you see "this didn't run", that's almost always `setTimeout` + a process crash, or a missing `setInterval` registration on the instance that holds the lease.
+If you see "this ran twice", that's `setInterval` + a handler that exceeded `zombieTime` or didn't call `ready()`. If you see "this didn't run", that's almost always `setTimeout` / `setImmediate` + a process crash, or a missing `setInterval` registration on the instance that holds the lease.
 
 ## "Zombie task" recovery — what actually happens
 
@@ -35,6 +35,10 @@ JoSk surfaces stuck tasks two ways:
 ### Redis
 
 ```
+HLEN josk:prefix:tasks
+ZRANGEBYSCORE josk:prefix:schedule -inf <now-ms>
+
+# If RedisAdapter({ useHashTags: true })
 HLEN josk:{prefix}:tasks
 ZRANGEBYSCORE josk:{prefix}:schedule -inf <now-ms>
 ```
@@ -109,7 +113,7 @@ In order of likelihood:
 
 1. **The `uid` collides with another `setInterval` / `setTimeout` registration.** Internal timer ids include a suffix, so `setInterval(_, _, 'x')` and `setTimeout(_, _, 'x')` don't collide — but two `setInterval` calls with `uid: 'x'` do, and the second overwrites the first.
 2. **It was registered on an instance that has since shut down**, and no other instance has the handler in memory. Result: `onError('One of your tasks is missing', …)`. Register the handler on every instance, or enable `autoClear: true` if the task is genuinely obsolete.
-3. **`setTimeout` crashed before completing.** That's the at-most-once guarantee. If "miss" is unacceptable, use `setInterval` with idempotent semantics.
+3. **`setTimeout` / `setImmediate` crashed before completing.** That's the at-most-once guarantee. If "miss" is unacceptable, use `setInterval` with idempotent semantics.
 
 ## Replicas / Cluster topologies — what breaks
 
@@ -118,35 +122,21 @@ In order of likelihood:
 - **MongoDB without `w: 'majority'`.** A claim that's only on the primary can vanish on failover. Use majority writes and `readConcern: 'majority'`.
 - **Postgres read replicas.** Same rule — no scheduler reads on replicas.
 
-## Migration: v4 → v5
+## Migrations
 
-The v4 → v5 boundary changed how adapters are constructed. Before:
+Full upgrade guides live in the repo under `docs/`:
 
-```js
-// v4
-new JoSk({ db, prefix: 'app' });
-```
+| Upgrade | Guide |
+|---|---|
+| v4 → v5 | [docs/migration-v4-v5.md](https://github.com/veliovgroup/josk/blob/master/docs/migration-v4-v5.md) |
+| v5 → v6 | [docs/migration-v5-v6.md](https://github.com/veliovgroup/josk/blob/master/docs/migration-v5-v6.md) |
+| v6 → v6.1 | [docs/migration-v6-v6.1.md](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6-v6.1.md) |
 
-After:
+Quick hits:
 
-```js
-// v5+
-new JoSk({ adapter: new MongoAdapter({ db, prefix: 'app' }) });
-```
-
-Notes:
-
-- `RedisAdapter` stores tasks in a sorted set (`josk:{prefix}:schedule`) plus a hash (`josk:{prefix}:tasks`). Legacy `josk:{prefix}:task:*` keys are scanned and removed only when `resetOnInit: true`. To migrate a live cluster: stop all instances, run one with `resetOnInit: true`, then redeploy.
-
-## Migration: v5 → v6
-
-v6 reworked storage adapters around owner-bound lease tokens and added atomic due-task claiming. New: `PostgresAdapter`.
-
-- **`PostgresAdapter`** uses composite `(prefix, uid)` primary key. The adapter auto-migrates the table on startup, but that runs DDL — schedule the upgrade for a low-traffic window.
-- **`MongoAdapter` default prefix** changed from `''` (v4) → `'default'` (v5+). If you used the implicit empty prefix in v4, pass `prefix: ''` explicitly to keep `__JobTasks__`, or migrate: `db.__JobTasks__.renameCollection('__JobTasks__default')`.
-- **Lock release** now checks lease ownership. A JoSk instance can no longer release a foreign lease. Custom adapters must follow the contract in `adapters.md`.
-- **`cron-parser` users** — bump to `^5` and switch from `parser.parseExpression(...)` to `CronExpressionParser.parse(...)`.
-- **v6 also added `concurrency`** option (default `Infinity`), Bun runtime support (≥1.1.0), and auto-`ready()` for sync handlers declared with `func.length === 0`.
+- **v4 → v5:** `new JoSk({ adapter: new MongoAdapter({ db, prefix }) })` instead of `new JoSk({ db, prefix })`.
+- **v5 → v6:** Node ≥20.9 or Bun ≥1.1; `PostgresAdapter`; Mongo default prefix `'default'`; lease ownership on lock release.
+- **v6 → v6.1:** `RedisAdapter({ useHashTags: true })` for Redis Cluster only — default keys unchanged.
 
 ## When NOT to use JoSk
 
