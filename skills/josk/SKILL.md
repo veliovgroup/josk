@@ -1,66 +1,91 @@
 ---
 name: josk
-description: "JoSk task/CRON scheduler for horizontally scaled Node.js and Bun apps — synchronizes scheduled work so each tick runs once across the cluster. Trigger when the user is writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout` work, or periodic background jobs (email queues, SMS sends, sync, polling, cleanup) in a multi-instance / cluster / Kubernetes / PM2 / Meteor.js topology, the `josk` NPM package, or the Meteor `ostrio:cron-jobs` Atmosphere package. Also trigger when the user mentions JoSk by name, asks about `RedisAdapter` / `MongoAdapter` / `PostgresAdapter`, talks about exactly-once / at-most-once execution, zombie-task recovery, scheduler leases, `zombieTime` / `execute` / `concurrency`, or compares JoSk to Agenda, Bree, node-cron, Bull, or BullMQ. Covers the full public API (`new JoSk`, `setInterval`, `setTimeout`, `setImmediate`, `clearInterval`, `clearTimeout`, `destroy`, `ping`, the three built-in adapters, and the custom-adapter contract)."
+description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `execute`, `concurrency`, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
 ---
 
-# JoSk — distributed task scheduler for Node.js & Bun
+# JoSk
 
-JoSk runs one copy of each scheduled task across a cluster. Schedule lives in Redis, MongoDB, or PostgreSQL; lease + atomic claim prevents two instances running the same tick.
+Distributed `setInterval` / `setTimeout` / `setImmediate` for Node ≥20.9 and Bun ≥1.1.
+Server-only. Schedule in Redis, MongoDB, or PostgreSQL; lease + atomic claim limit duplicate ticks.
 
-Use when: multi-process/pod deployment, scaled Meteor/K8s/PM2, user mentions JoSk/adapters/zombie leases, or compares to agenda/bree/node-cron/bull.
+## Quick start
 
-## Source of truth
+1. Connect storage client (JoSk does not open connections).
+2. Read the matching file under [references/](references/) — do not guess v4/v5/v6 semantics.
+3. Wire `onError`, unique per-task `uid`, and `destroy()` on shutdown.
 
-Read `references/` lazily — do not guess v4/v5/v6 semantics from memory:
+```js
+import { JoSk, RedisAdapter } from 'josk';
+import { createClient } from 'redis';
 
-- `references/api.md` — constructor options, methods, hooks, types
-- `references/adapters.md` — adapter setup, cluster rules, custom-adapter contract
-- `references/patterns.md` — handler styles, CRON, concurrency, shutdown
-- `references/meteor.md` — `ostrio:cron-jobs` / Meteor imports
-- `references/troubleshooting.md` — zombies, jitter, migrations, KeyDB/replica caveats
+const client = createClient({ url: process.env.REDIS_URL });
+await client.connect();
+
+const jobs = new JoSk({
+  adapter: new RedisAdapter({ client }),
+  onError: (title, { error, uid }) => console.error(title, uid, error),
+});
+
+await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m');
+// shutdown: await jobs.destroy();
+```
+
+## Reference map
+
+Read `references/` lazily — do not guess v4/v5/v6 semantics from memory.
+
+| Question | Read |
+|---|---|
+| Options, methods, hooks, types | [references/api.md](references/api.md) |
+| Adapter setup, cluster rules, custom adapter | [references/adapters.md](references/adapters.md) |
+| Handlers, CRON, concurrency, shutdown | [references/patterns.md](references/patterns.md) |
+| Meteor / `ostrio:cron-jobs` | [references/meteor.md](references/meteor.md) |
+| Zombies, jitter, migrations, KeyDB | [references/troubleshooting.md](references/troubleshooting.md) |
 
 ## Mental model
 
-```
-new JoSk({ adapter: new <Redis|Mongo|Postgres>Adapter({ ... }), onError, ... })
-  .setInterval | setTimeout | setImmediate (handler, [delay], uid)
-```
-
-- **`adapter`** required. **`uid`** app-wide unique string per task.
-- **Handler:** async/Promise (preferred), zero-arg sync, or `(ready) =>` callback — see `references/patterns.md`.
-- **Timer id:** `set*` returns `Promise<string>`; pass string or that Promise to `clear*`.
+- **`adapter`** required — `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, or custom ([adapters.md](references/adapters.md)).
+- **`uid`** — app-wide unique string per logical task; reuse collides in storage.
+- **Handler** — async/Promise preferred; sync zero-arg; or `(ready) =>` for callback APIs ([patterns.md](references/patterns.md)).
+- **`set*` → `Promise<string>`** — pass string or that Promise to `clear*`.
 
 ## New integration checklist
 
-1. Storage + connected client (JoSk does not manage connections)
-2. `onError` hook (strongly recommended)
-3. `jobs.destroy()` on shutdown — see `references/patterns.md`
-4. Pick adapter — see below + `references/adapters.md`
+- [ ] Storage + connected client
+- [ ] `onError` hook
+- [ ] `jobs.destroy()` on shutdown ([patterns.md](references/patterns.md))
+- [ ] Adapter choice (below)
 
 ## Pick the adapter
 
-- **PostgreSQL** — multi-DC, clock skew; server-time locks, `SKIP LOCKED`. Default when strict single-claim matters.
-- **Redis/KeyDB/Valkey** — single-region, high frequency. Reject active-active / multi-master.
-- **MongoDB** — app already on Mongo (Meteor: `MongoInternals…mongo.db`). Official `mongodb` driver only.
+| Adapter | Choose when |
+|---|---|
+| **PostgreSQL** | Multi-DC, clock skew, strict single-claim; `SKIP LOCKED` |
+| **Redis / KeyDB / Valkey** | Single-region, high frequency; single writable primary only |
+| **MongoDB** | App already on Mongo (Meteor: `MongoInternals…mongo.db`); official `mongodb` driver |
 
-## Scheduling method
+## Pick the scheduling method
 
 | Method | Guarantee | Use when |
 |---|---|---|
-| `setInterval(fn, delay, uid)` | At-least-once per tick | Idempotent recurring work; handler safe if run twice |
-| `setTimeout(fn, delay, uid)` | At-most-once | One-shot deferred; duplicate worse than miss; removed before handler |
-| `setImmediate(fn, uid)` | At-most-once | One-shot fire-now; same guarantee as `setTimeout` with delay 0 |
+| `setInterval(fn, delay, uid)` | At-least-once per tick | Idempotent recurring work |
+| `setTimeout(fn, delay, uid)` | At-most-once | One-shot; duplicate worse than miss; removed before handler |
+| `setImmediate(fn, uid)` | At-most-once | One-shot fire-now; same as `setTimeout` with delay 0 |
 
-Duplicate vs miss worse? Map to table. `zombieTime` (default 15 min): max handler runtime before re-claim on intervals; keep ≥ slowest handler + margin, not below 60s.
+If unsure: ask whether duplicate or missed run is worse, then map to the table.
 
-## Throughput tuning
+`zombieTime` (default 15 min): max interval handler runtime before re-claim. Keep ≥ slowest handler + margin; not below 60s.
 
-- `execute: 'batch'` (default) — all due tasks per lease; `one` — one task per lease
-- `concurrency: Infinity` (default) — parallel handlers; set integer to cap pool/API/CPU use
+## Throughput
+
+- `execute: 'batch'` (default) — all due tasks per lease; `'one'` — one task per lease
+- `concurrency: Infinity` (default) — parallel handlers; set integer to cap pool/API/CPU
 
 ## Red flags
 
-- No `onError` hook
+Call out proactively when reviewing JoSk usage:
+
+- Missing `onError`
 - Reused `uid` across different tasks
 - Default `zombieTime` with handlers >15 min
 - `resetOnInit: true` in production cluster
@@ -69,14 +94,10 @@ Duplicate vs miss worse? Map to table. `zombieTime` (default 15 min): max handle
 - MongoAdapter on CosmosDB/DocumentDB/Mongoose without warning
 - KeyDB active-replication / multi-master
 
-Full API, adapter ctors, handler recipes: `references/api.md`, `references/adapters.md`, `references/patterns.md`.
-
 ## Install
 
 ```sh
 npm install josk redis   # or mongodb / pg
 bun add josk
-meteor add ostrio:cron-jobs   # Meteor; see references/meteor.md
+meteor add ostrio:cron-jobs   # see references/meteor.md
 ```
-
-Node ≥ 20.9.0 or Bun ≥ 1.1.0. Server-only — never client/browser.
