@@ -12,6 +12,10 @@ export type RedisAdapterOption = {
     client: RedisClient;
     prefix?: string | undefined;
     resetOnInit?: boolean | undefined;
+    /**
+     * - Use Redis Cluster hash-tag keys (`josk:{prefix}:*`). Default keeps existing `josk:prefix:*` keys.
+     */
+    useHashTags?: boolean | undefined;
 };
 export type RedisTask = {
     uid: string;
@@ -29,6 +33,7 @@ export class RedisAdapter {
     constructor(opts?: RedisAdapterOption);
     name: string;
     prefix: string;
+    useHashTags: boolean;
     uniqueName: string;
     lockKey: string;
     scheduleKey: string;

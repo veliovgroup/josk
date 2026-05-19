@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
  * @property {RedisClient} client
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
+ * @property {boolean} [useHashTags] - Use Redis Cluster hash-tag keys (`josk:{prefix}:*`). Default keeps existing `josk:prefix:*` keys.
  */
 
 /**
@@ -204,7 +205,8 @@ class RedisAdapter {
       throw new Error(`{prefix} option for RedisAdapter must match ${VALID_PREFIX} (received: "${rawPrefix}"). Curly braces and other special characters break Redis Cluster hash-tag routing.`);
     }
     this.prefix = rawPrefix;
-    this.uniqueName = `josk:${this.prefix}`;
+    this.useHashTags = !!opts.useHashTags;
+    this.uniqueName = this.useHashTags ? `josk:{${this.prefix}}` : `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.scheduleKey = `${this.uniqueName}:schedule`;
     this.tasksKey = `${this.uniqueName}:tasks`;
