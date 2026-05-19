@@ -205,7 +205,10 @@ class RedisAdapter {
       throw new Error(`{prefix} option for RedisAdapter must match ${VALID_PREFIX} (received: "${rawPrefix}"). Curly braces and other special characters break Redis Cluster hash-tag routing.`);
     }
     this.prefix = rawPrefix;
-    this.useHashTags = !!opts.useHashTags;
+    if (opts.useHashTags !== undefined && typeof opts.useHashTags !== 'boolean') {
+      throw new Error(`{useHashTags} option for RedisAdapter must be a boolean (received: ${typeof opts.useHashTags}).`);
+    }
+    this.useHashTags = opts.useHashTags === true;
     this.uniqueName = this.useHashTags ? `josk:{${this.prefix}}` : `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.scheduleKey = `${this.uniqueName}:schedule`;
