@@ -3,7 +3,7 @@
 JoSk. Node task scheduler. Single execution across scaled instances (clusters, multi-server, multi-DC). Mimics setTimeout/setInterval. CRON via helper. Sync via Redis/Mongo/Postgres/custom adapter. Read locks, zombie recovery, autoClear. Zero core deps. ~99% test cov.
 
 ## Mission
-Ensure exactly-once task execution in horizontally scaled Node.js. Bulletproof. High perf. Storage agnostic. Easy adapters.
+Single cluster-wide claim per scheduled tick in horizontally scaled Node.js/Bun.js. Guarantees vary by method: `setInterval` at-least-once, `setTimeout`/`setImmediate` at-most-once (removed before handler). Bulletproof. High perf. Storage agnostic. Easy adapters.
 
 ## Structure
 - `index.js`: core ESM (JoSk + adapters). Edit this.
@@ -16,14 +16,13 @@ Ensure exactly-once task execution in horizontally scaled Node.js. Bulletproof. 
 - README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
 
 ## Code Style
-- **Indentation:** 2 spaces.
-- Use **single quotes** for strings.
+- 2-space indentation. Single quotes. Semicolons.
 - **Prefer simple ES classes** for cohesive state/services when they clarify lifecycle (e.g. a small data service with start/stop).
 - Use **small pure functions** for transforms, formatting, and validation.
-- **Performance**: favor O(n) single passes, avoid repeated work and heavy loops, cache derived values when dependencies are narrow.
-- Always end line with semicolon `;`.
-- Prefer `void 0` to `undefined` where applicable, like `return void 0`.
-- Prefer functions defined as variable to "named functions" where applicable.
+- Prefer O(n) single-pass loops; cache derived values.
+- Public methods get JSDoc. Internal helpers prefixed with `__` or `___`.
+- Prefer `void 0` to `undefined` where applicable.
+- Prefer arrow functions assigned to `const` over named `function`.
 
 ### JS Style Example
 
@@ -65,15 +64,16 @@ const sayName = (name) => {
 ```
 
 ## Standards
-- ESM primary. JSDoc on public API.
-- Strict validation in ctors. Throw on missing adapter/client/db.
-- Private: __ prefix. Use joskInstance.__errorHandler, __execute.
 - Terse. No obvious comments. Exact adapter API compliance.
+- ESM primary; JSDoc on public API; CJS generated. Node ≥ 20.9.0, Bun ≥ 1.1.0.
+- Strict validation in ctors. Throw on missing adapter/client/db.
 - Update: README (examples/prereqs), all .d.ts, tests, CHANGELOG.md, package version on change.
+- **Don't add deps** without strong reason — the package's selling points are "tiny, no fluff".
 - Errors: onError hook preferred over throw. ready() or returned Promise controls completion.
 - TS: JSDoc in source drives declarations. Adapter required in JoSkOption. Run `npm run prepublishOnly` after changes to `index.js`/adapters.
 - Never edit `index.cjs` or any `.d.ts`. Always edit source, regenerate before publish.
 - Follow terse response rule: drop articles/fillers. [subject] [verb] [reason]. [next].
+
 
 ## Testing
 ```sh
@@ -86,6 +86,7 @@ npm run test:jest
 npm run test:types
 npm run test:coverage
 ```
+
 - ~3-6min. Requires running DBs.
 - Cover: set*/clear*, zombie (zombieTime), onError/onExecuted, autoClear, destroy mid-run, CRON helper, promise vs cb ready(), malformed, short delays, concurrent.
 - Add test for any change. Target 99%+.
