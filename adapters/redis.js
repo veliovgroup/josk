@@ -303,8 +303,11 @@ class RedisAdapter {
         this.__loadedShas.add(sha);
         return await this.client.evalSha(sha, options);
       } catch (error) {
-        if (!isNoScriptError(error)) {
-          // Fall back to EVAL on cluster nodes that haven't seen the script yet
+        if (!isNoScriptError(error) && this.joskInstance) {
+          // EVAL fallback below will likely re-surface this; emit a debug
+          // breadcrumb so operators can correlate cluster-node script-cache
+          // problems with the eventual error.
+          this.joskInstance._debug(`[RedisAdapter] [__runScript] [${scriptKey}] scriptLoad/evalSha failed, falling back to EVAL:`, error);
         }
       }
     }
