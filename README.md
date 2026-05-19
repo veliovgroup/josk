@@ -1,3 +1,12 @@
+[![npm version](https://img.shields.io/npm/v/josk.svg)](https://www.npmjs.com/package/josk)
+[![npm downloads](https://img.shields.io/npm/dm/josk.svg)](https://www.npmjs.com/package/josk)
+[![Test](https://github.com/veliovgroup/josk/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/veliovgroup/josk/actions/workflows/test.yml)
+[![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen)](#running-tests)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![Node.js](https://img.shields.io/node/v/josk)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-ready-blue)](https://github.com/veliovgroup/josk#typescript)
+[![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1.0-black?logo=bun)](https://github.com/veliovgroup/josk#bun-runtime)
+[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://www.npmjs.com/package/josk)
 [![support](https://img.shields.io/badge/support-GitHub-white)](https://github.com/sponsors/dr-dimitru)
 [![support](https://img.shields.io/badge/support-PayPal-white)](https://paypal.me/veliovgroup)
 <a href="https://ostr.io/info/built-by-developers-for-developers?ref=github-josk-repo-top"><img src="https://ostr.io/apple-touch-icon-60x60.png" height="20"></a>
@@ -99,7 +108,7 @@ JoSk runs unmodified on [Bun](https://bun.sh) `>=1.1.0`. The package is pure ESM
 import { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } from 'josk';
 ```
 
-The full Jest test suite (`test/jest/`) doubles as the Bun test suite — `bun test ./test/jest/` runs every core and adapter test under Bun's `bun:test` runner. See [Running Tests](#running-tests).
+The full Jest test suite (`test/jest/`) doubles as the Bun test suite — `npm run test:bun` runs every core and adapter test under Bun's `bun:test` runner. See [Running Tests](#running-tests).
 
 Notes:
 
@@ -423,6 +432,33 @@ jobs.setInterval(function (ready) {
     }
   });
 }, 0, 'longRunningAsyncTask'); // run in a loop as soon as previous run is finished
+```
+
+#### `ready()` — argument forms
+
+`ready` is the function passed as the first argument to every task handler. It is a `Promise<boolean>`-returning function and accepts several optional argument shapes:
+
+- `ready()` — schedule the next interval run at `now + delay` (default).
+- `ready(date)` — `Date` instance; schedule the next interval run at that exact wall-clock moment. Only honored for `setInterval`; `setTimeout`/`setImmediate` are at-most-once and have already been removed before the handler ran. This is the building block for CRON expressions — pair with [`cron-parser`](https://www.npmjs.com/package/cron-parser).
+- `ready(timestamp)` — numeric ms-epoch; same as above.
+- `ready(callback)` — Node-style callback `(error, success) => void`. Useful for non-async handlers that prefer not to use the returned `Promise`.
+
+Calling `ready()` twice throws (or invokes the callback with `error`) — *"Resolution method is overspecified"*. Either return a `Promise` from the handler **or** call `ready()` once, never both.
+
+For zero-arity handlers (`async function () { … }` or `() => doSomething()`), JoSk auto-calls `ready()` for you when the returned Promise settles. You only need to call `ready()` manually when the handler accepts it as an argument.
+
+```js
+import parser from 'cron-parser';
+
+const intervalCron = (job, cronExpr, uid) => {
+  const next = () => parser.parseExpression(cronExpr).next().toDate();
+  return jobs.setInterval(function (ready) {
+    job();
+    ready(next()); // schedule the next run at the cron's next fire time
+  }, +next() - Date.now(), uid);
+};
+
+intervalCron(() => sendReport(), '0 9 * * *', 'daily-report-9am');
 ```
 
 ### `setTimeout(func, delay, uid)`
