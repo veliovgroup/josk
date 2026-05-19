@@ -1,5 +1,6 @@
 import { JoSk, MongoAdapter, PostgresAdapter, RedisAdapter } from 'josk';
 import type { JoSkAdapter, JoSkOnError, JoSkOnExecuted } from 'josk';
+import type { RedisClientType } from 'redis';
 
 const adapter = {
   async acquireLock(_lock: { ownerId: string; leaseId: string; expireAt: Date; expiresAtMs: number }) {
@@ -53,6 +54,16 @@ const _postgresOk: _PostgresAdapterIsAssignableToJoSkAdapter = true;
 void _redisOk;
 void _mongoOk;
 void _postgresOk;
+void new RedisAdapter({
+  client: {} as RedisClientType,
+  prefix: 'cluster',
+  useHashTags: true
+});
+const thenable: PromiseLike<void> = {
+  then(onfulfilled) {
+    return Promise.resolve().then(onfulfilled);
+  }
+};
 
 // Hooks support async signatures
 const _asyncErrorHook: JoSkOnError = async (_title, _details) => {};
@@ -61,6 +72,7 @@ void _asyncErrorHook;
 void _asyncExecutedHook;
 
 jobs.setInterval(async () => {}, 2048, 'interval-task');
+jobs.setInterval(() => thenable, 2048, 'thenable-task');
 jobs.setTimeout((ready: (nextExecuteAt?: Date | number | ((error?: Error, success?: boolean) => void)) => Promise<boolean>) => {
   void ready();
 }, 2048, 'timeout-task');

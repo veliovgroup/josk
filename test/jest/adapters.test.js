@@ -305,6 +305,29 @@ describe('RedisAdapter unit coverage', () => {
     await adapter.ready();
   });
 
+  it('uses Redis Cluster hash-tag keys only when requested', async () => {
+    const defaultAdapter = new RedisAdapter({
+      client: createRedisClient(),
+      prefix: 'cluster'
+    });
+    const clusterAdapter = new RedisAdapter({
+      client: createRedisClient(),
+      prefix: 'cluster',
+      useHashTags: true
+    });
+
+    expect(defaultAdapter.uniqueName).toBe('josk:cluster');
+    expect(defaultAdapter.scheduleKey).toBe('josk:cluster:schedule');
+    expect(clusterAdapter.uniqueName).toBe('josk:{cluster}');
+    expect(clusterAdapter.scheduleKey).toBe('josk:{cluster}:schedule');
+    expect(clusterAdapter.tasksKey).toBe('josk:{cluster}:tasks');
+    expect(clusterAdapter.lockKey).toBe('josk:{cluster}:lock');
+    expect(clusterAdapter.__getTaskKey('abc')).toBe('josk:{cluster}:task:abc');
+
+    await defaultAdapter.ready();
+    await clusterAdapter.ready();
+  });
+
   it('falls back to the default prefix when none is provided or the value is empty', async () => {
     const a = new RedisAdapter({ client: createRedisClient() });
     const b = new RedisAdapter({ client: createRedisClient(), prefix: '' });

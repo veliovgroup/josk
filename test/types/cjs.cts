@@ -1,4 +1,5 @@
 import josk = require('josk');
+import type { RedisClientType } from 'redis';
 import type {
   JoSkAdapter,
   JoSkOption,
@@ -52,6 +53,18 @@ const _postgresOk: _PostgresOk = true;
 void _redisOk;
 void _mongoOk;
 void _postgresOk;
+void new josk.RedisAdapter({
+  client: {} as RedisClientType,
+  prefix: 'cluster',
+  useHashTags: true
+});
+
+const thenable: PromiseLike<void> = {
+  then(onfulfilled) {
+    return Promise.resolve().then(onfulfilled);
+  }
+};
+jobs.setInterval(() => thenable, 2048, 'thenable-cjs-task');
 
 // Type-only imports resolve correctly through the .d.cts shim
 const execute: JoSkExecuteMode = 'one';

@@ -214,9 +214,15 @@ describe('JoSk core', () => {
 
     await expect(job.setTimeout(null, 1, 'x')).rejects.toThrow('[josk] [setTimeout] the first argument must be a function!');
     await expect(job.setTimeout(() => {}, -1, 'x')).rejects.toThrow('[josk] [setTimeout] delay must be positive Number!');
+    await expect(job.setTimeout(() => {}, NaN, 'x')).rejects.toThrow('[josk] [setTimeout] delay must be positive Number!');
+    await expect(job.setTimeout(() => {}, Infinity, 'x')).rejects.toThrow('[josk] [setTimeout] delay must be positive Number!');
+    await expect(job.setTimeout(() => {}, '1', 'x')).rejects.toThrow('[josk] [setTimeout] delay must be positive Number!');
     await expect(job.setTimeout(() => {}, 1)).rejects.toThrow('[josk] [setTimeout] uid (3rd argument) must be a string');
     await expect(job.setInterval(null, 1, 'x')).rejects.toThrow('[josk] [setInterval] the first argument must be a function!');
     await expect(job.setInterval(() => {}, -1, 'x')).rejects.toThrow('[josk] [setInterval] delay must be positive Number!');
+    await expect(job.setInterval(() => {}, NaN, 'x')).rejects.toThrow('[josk] [setInterval] delay must be positive Number!');
+    await expect(job.setInterval(() => {}, Infinity, 'x')).rejects.toThrow('[josk] [setInterval] delay must be positive Number!');
+    await expect(job.setInterval(() => {}, '1', 'x')).rejects.toThrow('[josk] [setInterval] delay must be positive Number!');
     await expect(job.setInterval(() => {}, 1)).rejects.toThrow('[josk] [setInterval] uid (3rd argument) must be a string');
     await expect(job.setImmediate(null, 'x')).rejects.toThrow('[josk] [setImmediate] the first argument must be a function!');
     await expect(job.setImmediate(() => {})).rejects.toThrow('[josk] [setImmediate] uid (2nd argument) must be a string');
@@ -555,6 +561,64 @@ describe('JoSk core', () => {
 
     expect(adapter.updateCalls).toHaveLength(1);
     expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThanOrEqual(Date.now() + task.delay);
+  });
+
+  it('waits for returned thenables before implicit ready()', async () => {
+    const { job, adapter } = createJob();
+    const task = {
+      uid: 'thenablesetInterval',
+      delay: 250,
+      isInterval: true,
+      isDeleted: false
+    };
+    let thenableResolved = false;
+    let updateSawResolved = false;
+    adapter.update = async (...args) => {
+      updateSawResolved = thenableResolved;
+      return await FakeAdapter.prototype.update.call(adapter, ...args);
+    };
+    job.tasks[task.uid] = () => ({
+      then(resolve) {
+        Promise.resolve().then(() => {
+          thenableResolved = true;
+          resolve();
+        });
+      }
+    });
+
+    await job.__execute(task);
+
+    expect(thenableResolved).toBe(true);
+    expect(updateSawResolved).toBe(true);
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('isolates hook failures from task completion flow', async () => {
+    const hookError = new Error('hook failed');
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { job, adapter } = createJob({
+      onError() {
+        return Promise.reject(hookError);
+      },
+      onExecuted() {
+        throw hookError;
+      }
+    });
+    const task = {
+      uid: 'hooksetInterval',
+      delay: 250,
+      isInterval: true,
+      isDeleted: false
+    };
+    job.tasks[task.uid] = () => {};
+
+    await expect(job.__execute(task)).resolves.toBeUndefined();
+    job.__errorHandler(new Error('internal'), 'Internal title', 'Internal description', task.uid);
+    await Promise.resolve();
+
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('handles task exceptions through onError and reschedules interval zombies', async () => {
