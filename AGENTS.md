@@ -12,6 +12,7 @@ Single cluster-wide claim per scheduled tick in horizontally scaled Node.js/Bun.
 - `test/`: npm-*.js (mocha+chai), meteor-*.js.
 - `*.d.ts`: Generated from JSDoc in `index.js` + adapters via `tsc --emitDeclarationOnly` on `prepublishOnly`. Do not edit manually.
 - `docs/adapter-api.md`: full adapter contract.
+- `docs/migration-v{4-v5,v5-v6,v6-v6.1}.md`: version upgrade guides (linked from README).
 - `skills/josk/`: Agent Skill source (open cross-tool standard) — `SKILL.md` + `references/{api,adapters,patterns,meteor,troubleshooting}.md`. Installed cross-tool via `npx skills add veliovgroup/josk` (Claude Code, Codex, Cursor, Copilot, Windsurf, Cline, Continue, Goose, Aider, +50 more). Excluded from npm tarball via `.npmignore`. Keep in sync with public API: when adding/changing options, methods, adapter constructors, execution semantics, or migration notes, update the matching reference file. `description` frontmatter in `SKILL.md` must stay ≤ 1024 chars.
 - README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
 
@@ -107,3 +108,17 @@ npm run test:coverage
 - In case of major updates — Add migration instructions to package documentation.
 
 Update this AGENTS.md on major refactors.
+
+## Learned User Preferences
+
+- Refactor only when change has clear, real impact; skip cosmetic-only edits
+- Keep `skills/josk/` terse: router + lazy `references/`; avoid duplicating tables/examples in `SKILL.md`
+- Skill frontmatter `description` must be one inline quoted string (not YAML folded blocks) for cross-tool installers
+- Skill frontmatter description: third-person ("Guides… Use when…"), not imperative "Trigger when"
+
+## Learned Workspace Facts
+
+- GitHub Actions: `env` context is not allowed in `services.*.image`; use literals or `matrix` for image tags
+- `index.d.cts` is a copy of `index.d.ts` for the `require` export `types` path; identical content is intentional
+- `adapters/*.d.ts` declare adapter classes; required for TypeScript resolution behind `index.d.ts` re-exports
+- Redis Cluster / KeyDB Cluster: `RedisAdapter({ useHashTags: true })`; standalone default key layout unchanged
