@@ -30,11 +30,11 @@ export type JoSkLock = {
     expireAt: Date;
     expiresAtMs: number;
 };
-export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void | Promise<void>;
-export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | Promise<void>;
+export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void | PromiseLike<void>;
+export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | PromiseLike<void>;
 export type JoSkReadyCallback = (error: Error | undefined, success: boolean) => void;
 export type JoSkReady = (nextExecuteAt?: number | Date | JoSkReadyCallback | undefined) => Promise<boolean>;
-export type JoSkTaskHandler = (ready: JoSkReady) => void | Promise<void>;
+export type JoSkTaskHandler = (ready: JoSkReady) => void | PromiseLike<void>;
 export type JoSkStoredTask = JoSkTaskHandler & {
     isMissing?: boolean;
 };
@@ -117,7 +117,9 @@ export class JoSk {
     /**
      * @async
      * @memberOf JoSk
-     * Create task, which would get executed immediately and only once across multi-server setup
+     * Create one-shot task that runs as soon as the next scheduler tick claims it.
+     * Executes at-most-once across the cluster: the task is removed from storage
+     * before the handler runs, so a crash between removal and completion drops the run.
      * @name setImmediate
      * @param {JoSkTaskHandler} func - Function (task) to execute
      * @param {string} uid - Unique function (task) identification as a string

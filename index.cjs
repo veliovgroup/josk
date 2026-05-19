@@ -529,6 +529,7 @@ class MongoAdapter {
  * @property {RedisClient} client
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
+ * @property {boolean} [useHashTags] - Use Redis Cluster hash-tag keys (`josk:{prefix}:*`). Default keeps existing `josk:prefix:*` keys.
  */
 
 /**
@@ -713,7 +714,8 @@ class RedisAdapter {
       throw new Error(`{prefix} option for RedisAdapter must match ${VALID_PREFIX} (received: "${rawPrefix}"). Curly braces and other special characters break Redis Cluster hash-tag routing.`);
     }
     this.prefix = rawPrefix;
-    this.uniqueName = `josk:${this.prefix}`;
+    this.useHashTags = !!opts.useHashTags;
+    this.uniqueName = this.useHashTags ? `josk:{${this.prefix}}` : `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.scheduleKey = `${this.uniqueName}:schedule`;
     this.tasksKey = `${this.uniqueName}:tasks`;
@@ -1606,6 +1608,10 @@ const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 const validExecuteModes = new Set(['batch', 'one']);
 
 const createRandomId = () => node_crypto.randomUUID();
+const isPromiseLike = (value) => {
+  return value !== null && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function';
+};
+const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(delay) && delay >= 0;
 
 /**
  * @typedef {object} JoSkPingResult
@@ -1656,14 +1662,14 @@ const createRandomId = () => node_crypto.randomUUID();
  * @callback JoSkOnError
  * @param {string} title
  * @param {JoSkErrorDetails} details
- * @returns {void | Promise<void>}
+ * @returns {void | PromiseLike<void>}
  */
 
 /**
  * @callback JoSkOnExecuted
  * @param {string} uid
  * @param {JoSkExecutedDetails} details
- * @returns {void | Promise<void>}
+ * @returns {void | PromiseLike<void>}
  */
 
 /**
@@ -1682,7 +1688,7 @@ const createRandomId = () => node_crypto.randomUUID();
 /**
  * @callback JoSkTaskHandler
  * @param {JoSkReady} ready
- * @returns {void | Promise<void>}
+ * @returns {void | PromiseLike<void>}
  */
 
 /**
@@ -1840,7 +1846,7 @@ class JoSk {
       throw new Error(errors.setInterval.func);
     }
 
-    if (delay < 0) {
+    if (!isValidDelay(delay)) {
       throw new Error(errors.setInterval.delay);
     }
 
@@ -1875,7 +1881,7 @@ class JoSk {
       throw new Error(errors.setTimeout.func);
     }
 
-    if (delay < 0) {
+    if (!isValidDelay(delay)) {
       throw new Error(errors.setTimeout.delay);
     }
 
@@ -1892,7 +1898,9 @@ class JoSk {
   /**
    * @async
    * @memberOf JoSk
-   * Create task, which would get executed immediately and only once across multi-server setup
+   * Create one-shot task that runs as soon as the next scheduler tick claims it.
+   * Executes at-most-once across the cluster: the task is removed from storage
+   * before the handler runs, so a crash between removal and completion drops the run.
    * @name setImmediate
    * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {string} uid - Unique function (task) identification as a string
@@ -1972,11 +1980,11 @@ class JoSk {
     if (this.isDestroyed) {
       if (this.onError) {
         const reason = 'JoSk instance destroyed';
-        this.onError(reason, {
+        this.__callHook('onError', this.onError, [reason, {
           description: 'invoking methods of destroyed JoSk instance',
           error: new Error(reason),
           uid: null
-        });
+        }]);
       } else {
         this._debug('[__checkState] [warn] invoking methods of destroyed JoSk instance, call cause no action');
       }
@@ -2111,12 +2119,12 @@ class JoSk {
 
     if (!task || typeof task !== 'object' || typeof task.uid !== 'string') {
       if (this.onError) {
-        this.onError('JoSk#__execute received malformed task', {
+        this.__callHook('onError', this.onError, ['JoSk#__execute received malformed task', {
           description: 'Something went wrong with one of your tasks - malformed or undefined',
           error: null,
           task,
           uid: null
-        });
+        }]);
       } else {
         this._debug('[__execute] received malformed task', task);
       }
@@ -2159,12 +2167,12 @@ class JoSk {
         }
 
         if (this.onExecuted) {
-          this.onExecuted(task.uid.replace(prefixRegex, ''), {
+          this.__callHook('onExecuted', this.onExecuted, [task.uid.replace(prefixRegex, ''), {
             uid: task.uid,
             date,
             delay: task.delay,
             timestamp
-          });
+          }]);
         }
 
         return true;
@@ -2190,15 +2198,15 @@ class JoSk {
           returnedPromise = taskFunc(ready);
         }
 
-        if (returnedPromise && returnedPromise instanceof Promise) {
-          await returnedPromise;
+        if (isPromiseLike(returnedPromise)) {
+          await Promise.resolve(returnedPromise);
         }
       } catch (taskExecError) {
         hasError = true;
         this.__errorHandler(taskExecError, 'Exception during task execution', 'An exception was thrown during task execution', task.uid);
       }
 
-      const isPromise = returnedPromise && returnedPromise instanceof Promise;
+      const isPromise = isPromiseLike(returnedPromise);
       const isCallbackStyle = funcArity === 0;
       const needsAutoReady = executionsQty === 0 && (isPromise || hasError || isCallbackStyle);
 
@@ -2226,7 +2234,7 @@ class JoSk {
         this._debug(`[${task.uid}] [__execute] [this.autoClear] [__remove] has thrown an exception; removeError:`, removeError);
       }
     } else if (this.onError) {
-      this.onError('One of your tasks is missing', {
+      this.__callHook('onError', this.onError, ['One of your tasks is missing', {
         description: `Something went wrong with one of your tasks - is missing.
           Try to use different instances.
           It's safe to ignore this message.
@@ -2234,7 +2242,7 @@ class JoSk {
           or enable autoClear with \`new JoSk({autoClear: true})\``,
         error: null,
         uid: task.uid
-      });
+      }]);
     } else {
       this._debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
         Try to use different instances.
@@ -2286,6 +2294,26 @@ class JoSk {
 
   /**
    * @internal
+   * @param {string} hookName
+   * @param {Function} hook
+   * @param {unknown[]} args
+   * @returns {void}
+   */
+  __callHook(hookName, hook, args) {
+    try {
+      const result = hook(...args);
+      if (isPromiseLike(result)) {
+        Promise.resolve(result).catch((hookError) => {
+          console.error(`[josk] [${hookName}] hook rejected`, hookError);
+        });
+      }
+    } catch (hookError) {
+      console.error(`[josk] [${hookName}] hook failed`, hookError);
+    }
+  }
+
+  /**
+   * @internal
    * @param {unknown} error
    * @param {string} title
    * @param {string} description
@@ -2295,7 +2323,7 @@ class JoSk {
   __errorHandler(error, title, description, uid) {
     if (error) {
       if (this.onError) {
-        this.onError(title, { description, error, uid });
+        this.__callHook('onError', this.onError, [title, { description, error, uid }]);
       } else {
         console.error(title, { description, error, uid });
       }
