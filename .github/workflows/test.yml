@@ -12,7 +12,7 @@ env:
   LATEST_REDIS_DRIVER: '5'
   # pg@7 breaks on Node 14+ (readyState === 'open' before connect); engines require Node >= 20.9
   LATEST_PG_DRIVER: '8'
-  # Latest server images — literals in services.*.image (env not allowed there)
+  # Latest server images — literals in services.*.image and job name (env not allowed there)
   # redis:8-alpine  mongo:8  postgres:18-alpine
 
 jobs:
@@ -222,7 +222,7 @@ jobs:
 
   # Official driver major lines on latest server images (Node 22)
   test-drivers:
-    name: Drivers mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@${{ env.LATEST_PG_DRIVER }}
+    name: Drivers mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@8
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -395,7 +395,7 @@ jobs:
 
   # Bun (latest) × official driver majors on latest server images
   test-bun-drivers:
-    name: Bun latest / mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@${{ env.LATEST_PG_DRIVER }}
+    name: Bun latest / mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@8
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
