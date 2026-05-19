@@ -128,12 +128,12 @@ const errors = {
   concurrency: '[josk] [concurrency] option must be a positive integer or Infinity',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
-    delay: '[josk] [setInterval] delay must be positive Number!',
+    delay: '[josk] [setInterval] delay must be a finite non-negative Number!',
     uid: '[josk] [setInterval] uid (3rd argument) must be a string'
   },
   setTimeout: {
     func: '[josk] [setTimeout] the first argument must be a function!',
-    delay: '[josk] [setTimeout] delay must be positive Number!',
+    delay: '[josk] [setTimeout] delay must be a finite non-negative Number!',
     uid: '[josk] [setTimeout] uid (3rd argument) must be a string'
   },
   setImmediate: {

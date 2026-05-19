@@ -714,7 +714,10 @@ class RedisAdapter {
       throw new Error(`{prefix} option for RedisAdapter must match ${VALID_PREFIX} (received: "${rawPrefix}"). Curly braces and other special characters break Redis Cluster hash-tag routing.`);
     }
     this.prefix = rawPrefix;
-    this.useHashTags = !!opts.useHashTags;
+    if (opts.useHashTags !== undefined && typeof opts.useHashTags !== 'boolean') {
+      throw new Error(`{useHashTags} option for RedisAdapter must be a boolean (received: ${typeof opts.useHashTags}).`);
+    }
+    this.useHashTags = opts.useHashTags === true;
     this.uniqueName = this.useHashTags ? `josk:{${this.prefix}}` : `josk:${this.prefix}`;
     this.lockKey = `${this.uniqueName}:lock`;
     this.scheduleKey = `${this.uniqueName}:schedule`;
@@ -1728,12 +1731,12 @@ const errors = {
   concurrency: '[josk] [concurrency] option must be a positive integer or Infinity',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
-    delay: '[josk] [setInterval] delay must be positive Number!',
+    delay: '[josk] [setInterval] delay must be a finite non-negative Number!',
     uid: '[josk] [setInterval] uid (3rd argument) must be a string'
   },
   setTimeout: {
     func: '[josk] [setTimeout] the first argument must be a function!',
-    delay: '[josk] [setTimeout] delay must be positive Number!',
+    delay: '[josk] [setTimeout] delay must be a finite non-negative Number!',
     uid: '[josk] [setTimeout] uid (3rd argument) must be a string'
   },
   setImmediate: {
