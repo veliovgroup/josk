@@ -122,6 +122,10 @@ In order of likelihood:
 - **MongoDB without `w: 'majority'`.** A claim that's only on the primary can vanish on failover. Use majority writes and `readConcern: 'majority'`.
 - **Postgres read replicas.** Same rule — no scheduler reads on replicas.
 
+## PostgresAdapter: `Connection terminated due to connection timeout`
+
+On Node 14+, `net.Socket` reports `readyState === 'open'` before TCP connect. **`pg@7` never calls `stream.connect()`** and hangs until timeout; fixed in **`pg@>=8.0.3`**. JoSk 6.x requires Node `>=20.9`, so use `pg@8` (or newer). The `Cannot find module 'pg-native'` console line is harmless optional native bindings.
+
 ## Migrations
 
 Full upgrade guides live in the repo under `docs/`:

@@ -64,7 +64,7 @@ __Note: JoSk is the server-only package.__
 
 - `redis-server@>=5.0.0` or KeyDB — for RedisAdapter (requires `redis` NPM package, both `redis@^4` and `redis@^5` are supported). KeyDB and Valkey are supported with the same single-writer topology.
 - `mongod@>=4.0.0` — for MongoAdapter (requires the official `mongodb` NPM package; the adapter is tested only against the official driver)
-- `postgres@>=12` — for PostgresAdapter (requires `pg` NPM package)
+- `postgres@>=12` — for PostgresAdapter (requires `pg@>=8.0.3` NPM package; `pg@7` does not connect on Node 14+)
 - `node@>=20.9.0` — Node.js version
 - `bun@>=1.1.0` — optional, runs the same package and the same Jest suite under [Bun](https://bun.sh) via `bun:test` (see [Bun runtime](#bun-runtime) section)
 
