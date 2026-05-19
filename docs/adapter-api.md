@@ -68,4 +68,4 @@ Inside `Adapter#iterate()` call `this.joskInstance.__execute(task)` with:
 4. Call `this.joskInstance.__execute(task)`.
 5. Release scheduler lease only if owner token still matches.
 
-Global lock alone is not enough for exactly-once behavior. Atomic task claim is required.
+Global lock alone is not enough for duplicate prevention. Atomic task claim is required.

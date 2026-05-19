@@ -69,7 +69,7 @@ Same JoSk options from NPM package are available in Meteor:
 Adapter options:
 
 - `MongoAdapter`: `db`, `prefix`, `lockCollectionName`, `resetOnInit`
-- `RedisAdapter`: `client`, `prefix`, `resetOnInit`
+- `RedisAdapter`: `client`, `prefix`, `resetOnInit`, `useHashTags`
 - `PostgresAdapter`: `client`, `prefix`, `resetOnInit`
 
 Keep `resetOnInit: false` in clustered production. It deletes current-prefix adapter state during initialization.
@@ -94,11 +94,12 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'cluster-scheduler',
+    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
   }),
 });
 ```
 
-Use one writable Redis/KeyDB primary. Do not route JoSk traffic to replicas.
+Use one writable Redis/KeyDB primary. Do not route JoSk traffic to replicas. For Redis Cluster / KeyDB Cluster, set `useHashTags: true`.
 
 ### PostgreSQL Adapter
 
@@ -134,7 +135,7 @@ Use one writable PostgreSQL primary. Adapter creates `josk_tasks` and `josk_lock
 - Always use unique `uid` per logical task. Do not reuse same `uid` for different schedules.
 - Always call `ready()` for callback-style or long-running async tasks. Promise-returning handlers are also supported.
 - Prefer `execute: 'batch'` for normal production throughput. Use `execute: 'one'` when smaller execution bursts or instance fairness is preferred.
-- For multi-DC exactly-once scheduling, use strongly consistent storage with one write authority.
+- For multi-DC strict single-claim scheduling, use strongly consistent storage with one write authority.
 
 Note: This library relies on job ID. Always use different `uid`, even for the same task:
 

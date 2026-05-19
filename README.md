@@ -9,7 +9,7 @@
 
 "JoSk" mimics the native API of `setTimeout` and `setInterval` and supports [CRON expressions](https://github.com/veliovgroup/josk?tab=readme-ov-file#cron). All queued tasks are synced between all running application instances via Redis, MongoDB, or a [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md).
 
-The "JoSk" package is made for a variety of horizontally scaled apps, such as clusters, multi-servers, and multi-threaded Node.js instances, that are running either on the same or different machines or even different data centers. "JoSk" ensures exactly-one execution of each task across all running instances of the application.
+The "JoSk" package is made for a variety of horizontally scaled apps, such as clusters, multi-servers, and multi-threaded Node.js instances, that are running either on the same or different machines or even different data centers. "JoSk" uses storage-level leases and atomic task claims so each due tick is claimed by one instance; delivery guarantees depend on the scheduling method.
 
 "JoSk" is not just for multi-instance apps. It seamlessly integrates with single-instance applications as well, showcasing its versatility and adaptability.
 
@@ -44,8 +44,9 @@ __Note: JoSk is the server-only package.__
   - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
 - [Prefix mapping per adapter](https://github.com/veliovgroup/josk?tab=readme-ov-file#prefix-mapping)
 - [Operational FAQ](https://github.com/veliovgroup/josk?tab=readme-ov-file#operational-faq)
-- [Migration guide (v4 → v5)](https://github.com/veliovgroup/josk?tab=readme-ov-file#migration-guide-v4--v5)
-- [Migration guide (v5 → v6)](https://github.com/veliovgroup/josk?tab=readme-ov-file#migration-guide-v5--v6)
+- [Migration guide (v4 → v5)](docs/migration-v4-v5.md)
+- [Migration guide (v5 → v6)](docs/migration-v5-v6.md)
+- [Migration guide (v6 → v6.1)](docs/migration-v6-v6.1.md)
 - [Important notes](https://github.com/veliovgroup/josk?tab=readme-ov-file#notes)
 - [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 - [Why it's named "JoSk"](https://github.com/veliovgroup/josk?tab=readme-ov-file#why-josk)
@@ -118,7 +119,7 @@ npx skills add veliovgroup/josk
 
 Detected and supported agents include Claude Code, Codex CLI, Cursor, Windsurf, GitHub Copilot, Cline, Continue, Roo Code, OpenCode, Goose, Aider, Gemini CLI, Kimi CLI, Tabnine, Qwen Code, Antigravity, Replit, Devin, and many others. The CLI auto-detects which are installed and drops the skill into each agent's native skills directory (`.claude/skills/`, `.cursor/skills/`, `.codex/skills/`, …). No per-agent format conversion — the same `SKILL.md` is read by every host.
 
-Once installed, the agent loads the full public API, adapter setup, execution semantics, CRON and handler patterns, Meteor integration, and the operational FAQ as context whenever you write or review JoSk-related code. Triggers include: JoSk by name, scheduled / recurring jobs, cron-style tasks, `setInterval` / `setTimeout` work in clustered Node.js or Bun deployments, the `RedisAdapter` / `MongoAdapter` / `PostgresAdapter`, the Meteor `ostrio:cron-jobs` package, exactly-once / at-most-once execution, zombie-task recovery, or scheduler tuning (`zombieTime`, `execute`, `concurrency`).
+Once installed, the agent loads the full public API, adapter setup, execution semantics, CRON and handler patterns, Meteor integration, and the operational FAQ as context whenever you write or review JoSk-related code. Triggers include: JoSk by name, scheduled / recurring jobs, cron-style tasks, `setInterval` / `setTimeout` / `setImmediate` work in clustered Node.js or Bun deployments, the `RedisAdapter` / `MongoAdapter` / `PostgresAdapter`, the Meteor `ostrio:cron-jobs` package, method-specific at-least-once / at-most-once execution, zombie-task recovery, or scheduler tuning (`zombieTime`, `execute`, `concurrency`).
 
 Alternative install paths:
 
@@ -161,6 +162,8 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
   - `details.delay` {*Number*} - Execution `delay` (e.g. `interval` for `.setInterval()`)
   - `details.timestamp` {*Number*} - Execution timestamp as unix {*Number*}
 
+Hook throws and async rejections are logged and isolated from scheduler execution.
+
 ### `new RedisAdapter(opts)`
 
 *Since* `v5.0.0`
@@ -168,6 +171,7 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
 - `opts.client` {*RedisClient*} - [*Required*] `RedisClient` instance, like one returned from `await redis.createClient().connect()` method
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
 - `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) make sure all old tasks are completed during initialization. Useful for single-instance apps to clean up unfinished that occurred due to intermediate shutdown, reboot, or exception. Default: `false`
+- `opts.useHashTags` {*Boolean*} - [Optional] use Redis Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in same slot. Default: `false`, preserving existing standalone keys (`josk:prefix:*`)
 
 ### `new MongoAdapter(opts)`
 
@@ -180,7 +184,7 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
 
 ### `new PostgresAdapter(opts)`
 
-*Since* `v5.2.0`
+*Since* `v6.0.0`
 
 - `opts.client` {*Pool*|*Client*} - [*Required*] `pg` client with `.query()` method. `Pool` is recommended for long-running applications
 - `opts.prefix` {*String*} - [Optional] use to create multiple isolated scheduler namespaces in same database. Default: `default`
@@ -196,10 +200,10 @@ JoSk has no dependencies, hence make sure `redis` NPM package is installed in or
 
 KeyDB guidelines:
 
-- Use a single writable KeyDB primary or a KeyDB Cluster endpoint with all JoSk keys on the same hash slot. Adapter keys use hash tags: `josk:{prefix}:schedule`, `josk:{prefix}:tasks`, `josk:{prefix}:lock`.
+- Use a single writable KeyDB primary. For Redis Cluster or KeyDB Cluster, pass `useHashTags: true` so adapter keys use one hash slot: `josk:{prefix}:schedule`, `josk:{prefix}:tasks`, `josk:{prefix}:lock`.
 - Do not route JoSk reads or writes to replicas. Scheduler correctness depends on immediate visibility of lock and task-claim writes.
-- Avoid KeyDB active-replication/multi-master mode for JoSk exactly-once execution. Conflict resolution and eventual convergence can allow duplicate task claims across writers.
-- For multi-DC exactly-once scheduling, use a strongly consistent storage topology, or prefer PostgreSQL with one write authority.
+- Avoid KeyDB active-replication/multi-master mode for scheduler correctness. Conflict resolution and eventual convergence can allow duplicate task claims across writers.
+- For multi-DC strict single-claim scheduling, use a strongly consistent storage topology, or prefer PostgreSQL with one write authority.
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -213,6 +217,7 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'app-scheduler',
+    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
   }),
   onError(reason, details) {
     // Use onError hook to catch runtime exceptions
@@ -248,7 +253,7 @@ const jobs = new JoSk({
 
 #### PostgreSQL Adapter
 
-*Since* `v5.2.0`
+*Since* `v6.0.0`
 
 JoSk has no dependencies, hence make sure `pg` NPM package (`npm i pg`) is installed. PostgreSQL `>=12` is recommended. Adapter auto-creates and migrates `josk_tasks` and `josk_locks` tables on init, using current database/schema from the provided client.
 
@@ -427,20 +432,20 @@ jobs.setInterval(function (ready) {
 - `uid` {*String*} - Unique app-wide task id
 - Returns: {*`Promise<string>`*}
 
-*Run a task after delay in ms.* `setTimeout` *is useful for cluster - when you need to make sure task executed only once.* `ready()` *callback is passed as the first argument into a task function.*
+*Run a task after delay in ms.* `setTimeout` *is useful for cluster work where duplicate execution is worse than a missed run.* `ready()` *callback is passed as the first argument into a task function.*
 
 ```js
 jobs.setTimeout(function (ready) {
   /* ...run sync code... */
   ready();
-}, 60000, 'syncTaskIn1m'); // will run only once across the cluster in a minute
+}, 60000, 'syncTaskIn1m'); // will run at most once across the cluster in a minute
 
 jobs.setTimeout(function (ready) {
   asyncCall(function () {
     /* ...run async code... */
     ready();
   });
-}, 60000, 'asyncTaskIn1m'); // will run only once across the cluster in a minute
+}, 60000, 'asyncTaskIn1m'); // will run at most once across the cluster in a minute
 
 jobs.setTimeout(async function () {
   try {
@@ -450,7 +455,7 @@ jobs.setTimeout(async function () {
   } catch (err) {
     console.log(err)
   }
-}, 60000, 'asyncAwaitTaskIn1m'); // will run only once across the cluster in a minute
+}, 60000, 'asyncAwaitTaskIn1m'); // will run at most once across the cluster in a minute
 ```
 
 ### `setImmediate(func, uid)`
@@ -459,20 +464,20 @@ jobs.setTimeout(async function () {
 - `uid`  {*String*}   - Unique app-wide task id
 - Returns: {*`Promise<string>`*}
 
-*Immediate execute the function, and only once.* `setImmediate` *is useful for cluster - when you need to execute function immediately and only once across all servers.* `ready()` *is passed as the first argument into the task function.*
+*Run a one-shot task as soon as the next scheduler tick claims it.* `setImmediate` *is useful for cluster work where duplicate execution is worse than a missed run.* `ready()` *is passed as the first argument into the task function.*
 
 ```js
 jobs.setImmediate(function (ready) {
   //...run sync code
   ready();
-}, 'syncTask'); // will run immediately and only once across the cluster
+}, 'syncTask'); // will run at most once across the cluster
 
 jobs.setImmediate(function (ready) {
   asyncCall(function () {
     //...run more async code
     ready();
   });
-}, 'asyncTask'); // will run immediately and only once across the cluster
+}, 'asyncTask'); // will run at most once across the cluster
 
 jobs.setImmediate(async function () {
   try {
@@ -481,7 +486,7 @@ jobs.setImmediate(async function () {
   } catch (err) {
     console.log(err)
   }
-}, 'asyncTask'); // will run immediately and only once across the cluster
+}, 'asyncTask'); // will run at most once across the cluster
 ```
 
 ### `clearInterval(timerId)`
@@ -561,11 +566,11 @@ Failed response
 
 ## Execution semantics
 
-Different scheduling methods have different at-least-once / at-most-once / exactly-once guarantees. Pick the one that matches your tolerance for missed or duplicated runs.
+Different scheduling methods have different at-least-once / at-most-once guarantees. Pick the one that matches your tolerance for missed or duplicated runs.
 
 | Method | Guarantee | Notes |
 |---|---|---|
-| `setImmediate(func, uid)` | **Exactly-once** across the cluster | One claim per task, no retry once claimed. |
+| `setImmediate(func, uid)` | **At-most-once** across the cluster | Task is removed from storage *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setTimeout(func, delay, uid)` | **At-most-once** across the cluster | Task is removed from storage *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setInterval(func, delay, uid)` | **At-least-once** per scheduled tick (until cleared) | Storage row stays during execution. If `ready()` is not called within `zombieTime`, the task is re-claimed and may run again. Make your handler idempotent. |
 
@@ -696,9 +701,12 @@ During development and tests you may want to clean up Adapter's Storage
 To clean up old tasks via Redis CLI use the next query pattern:
 
 ```shell
-redis-cli --no-auth-warning --scan --pattern "josk:{default}:*" | xargs redis-cli --raw --no-auth-warning DEL
+redis-cli --no-auth-warning --scan --pattern "josk:default:*" | xargs redis-cli --raw --no-auth-warning DEL
 
 # If you're using multiple JoSk instances with prefix:
+redis-cli --no-auth-warning --scan --pattern "josk:prefix:*" | xargs redis-cli --raw --no-auth-warning DEL
+
+# If useHashTags is true:
 redis-cli --no-auth-warning --scan --pattern "josk:{prefix}:*" | xargs redis-cli --raw --no-auth-warning DEL
 ```
 
@@ -760,7 +768,7 @@ MongoClient.connect('mongodb://url', options, (error, client) => {
 
 | Adapter | Storage layout for `prefix: 'app'` | Notes |
 |---|---|---|
-| Redis | Keys: `josk:{app}:schedule`, `josk:{app}:tasks`, `josk:{app}:lock` | Hash tags `{app}` keep all keys on the same Cluster slot. Prefix must match `/^[A-Za-z0-9_\-:.]+/` — special characters (notably `{` and `}`) are rejected to protect Cluster routing. |
+| Redis | Default keys: `josk:app:schedule`, `josk:app:tasks`, `josk:app:lock`. With `useHashTags: true`: `josk:{app}:schedule`, `josk:{app}:tasks`, `josk:{app}:lock`. | Hash tags keep all keys on the same Cluster slot. Prefix must match `/^[A-Za-z0-9_\-:.]+/` — special characters (notably `{` and `}`) are rejected to protect Cluster routing. |
 | MongoDB | Collection `__JobTasks__app`; lock collection `__JobTasks__.lock` (shared across prefixes, scoped by `uniqueName` field) | Override the lock collection with `lockCollectionName`. Keep collection names short — Mongo's name limit is 120 characters including database name. |
 | PostgreSQL | Rows in `josk_tasks` filtered by `prefix='app'`; lock row in `josk_locks` with `lock_key='josk-app.lock'` | Table names are fixed. Use prefix for tenant/environment isolation. |
 
@@ -768,7 +776,7 @@ MongoClient.connect('mongodb://url', options, (error, client) => {
 
 ### How do I monitor stuck tasks?
 
-Set a long-running task to throw or skip `ready()` past `zombieTime`. The `onError` hook fires with `'One of your tasks is missing'` (only if `autoClear: false`). For active observability, query the storage directly: Redis `HLEN josk:{prefix}:tasks`, Mongo `db.__JobTasks__<prefix>.countDocuments({ executeAt: { $lt: new Date() } })`, Postgres `SELECT COUNT(*) FROM josk_tasks WHERE prefix='<prefix>' AND execute_at < (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT`.
+Set a long-running task to throw or skip `ready()` past `zombieTime`. The `onError` hook fires with `'One of your tasks is missing'` (only if `autoClear: false`). For active observability, query the storage directly: Redis `HLEN josk:prefix:tasks` (or `HLEN josk:{prefix}:tasks` with `useHashTags: true`), Mongo `db.__JobTasks__<prefix>.countDocuments({ executeAt: { $lt: new Date() } })`, Postgres `SELECT COUNT(*) FROM josk_tasks WHERE prefix='<prefix>' AND execute_at < (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT`.
 
 ### How do I handle storage restarts?
 
@@ -786,29 +794,9 @@ JoSk polls between `minRevolvingDelay` and `maxRevolvingDelay`. The effective in
 
 Lease tokens use storage-server time where possible (Redis `PX` TTL, Postgres `CURRENT_TIMESTAMP`, Mongo TTL index). JS clocks are used only for relative scheduling within a single process. It's recommended to ensure NTP is healthy on the database host — that single clock anchors lease ownership across the cluster.
 
-## Migration guide (v4 → v5)
-
-`v5.0.0` reworked storage adapters APIs as separate instances.
-
-- Adapters now require their own constructor. v4: `new JoSk({ db, prefix })`. v5: `new JoSk({ adapter: new MongoAdapter({ db, prefix }) })`.
-- Shipped with `RedisAdapter` and `MongoAdapter`.
-- `RedisAdapter` stores tasks in a sorted set (`josk:{prefix}:schedule`) plus hash (`josk:{prefix}:tasks`). Old `josk:{prefix}:task:*` keys are scanned and removed only when `resetOnInit: true`. To migrate a running cluster, plan a brief downtime: stop all instances, run one with `resetOnInit: true`, then redeploy.
-
-## Migration guide (v5 → v6)
-
-`v6.0.0` reworked storage adapters around owner-bound lease tokens, added atomic due-task claiming, and raised the runtime floor.
-
-- **Breaking:** minimum runtime is now `node@>=20.9.0` (LTS) or `bun@>=1.1.0`. Stay on `josk@^5` if you cannot upgrade Node yet.
-- `RedisAdapter` accepts both `redis@^4` and `redis@^5` clients.
-- New adapter: `PostgresAdapter`.
-- `PostgresAdapter` uses composite `(prefix, uid)` primary key. The adapter auto-migrates the table on startup, but the migration runs DDL — use a low-traffic deployment window.
-- `MongoAdapter` previously defaulted the prefix to `''`, producing the collection `__JobTasks__`. v6 defaults to `'default'`, producing `__JobTasks__default`. If you used the implicit empty prefix in v4/v5, pass `prefix: ''` explicitly to preserve the collection name, or migrate data: `db.__JobTasks__.renameCollection('__JobTasks__default')`.
-- Lock release now checks lease ownership; a JoSk instance can no longer release a foreign lease. __If you have custom adapters, follow the [adapter API contract](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)__.
-- If you use `cron-parser` — bump to `^5` and switch from `parser.parseExpression(...)` to `CronExpressionParser.parse(...)`.
-
 ## Notes
 
-- This package is perfect when you have multiple horizontally scaled servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code running repeating tasks that needs to run only once per application/cluster, not per server/instance;
+- This package is perfect when you have multiple horizontally scaled servers for load-balancing, durability, an array of micro-services or any other solution with multiple running copies of code running repeating tasks that need one cluster-wide claim per due tick, not one claim per server/instance;
 - Recommended floor — unique tasks shorter than ~2 seconds may overlap with the storage round-trip plus revolving delay; tasks ≥2s have stable execution gaps. Example tasks: [Email](https://www.npmjs.com/package/mail-time), SMS queue, Long-polling requests, Periodic application logic operations or Periodic data fetch, sync, etc.
 - Accuracy — Delay of each task depends on storage round-trip and jitter window. Trusted execution range is `task_delay ± (maxRevolvingDelay + Storage_Request_Delay)`. With default `minRevolvingDelay: 128` / `maxRevolvingDelay: 768`, expect ±0.8s + storage latency. Tighten the bounds for stricter timing at the cost of more storage reads.
 - Use `opts.minRevolvingDelay` and `opts.maxRevolvingDelay` to set the range for *random* delays between executions. Revolving range acts as a safety control to make sure different servers __not__ picking the same task at the same time. Default values (`128` and `768`) are the best for 3-server setup (*the most common topology*). Tune these options to match needs of your project. Higher `opts.minRevolvingDelay` will reduce storage read/writes;
