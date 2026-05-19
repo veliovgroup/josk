@@ -7,13 +7,12 @@ on:
     branches: [master, main]
 
 env:
-  # Latest stack pinned for node/driver smoke jobs (update when bumping devDependencies)
-  LATEST_MONGO_SERVER: '8'
-  LATEST_REDIS_SERVER: '8'
-  LATEST_POSTGRES_SERVER: '18'
+  # Driver majors for smoke jobs (update when bumping devDependencies)
   LATEST_MONGODB_DRIVER: '7'
   LATEST_REDIS_DRIVER: '5'
   LATEST_PG_DRIVER: '8'
+  # Latest server images — literals in services.*.image (env not allowed there)
+  # redis:8-alpine  mongo:8  postgres:18-alpine
 
 jobs:
   # Node 20/22/24 × redis driver 4|5 on latest server images
@@ -29,7 +28,7 @@ jobs:
 
     services:
       redis:
-        image: redis:${{ env.LATEST_REDIS_SERVER }}-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -39,7 +38,7 @@ jobs:
           --health-retries 10
 
       mongo:
-        image: mongo:${{ env.LATEST_MONGO_SERVER }}
+        image: mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -49,7 +48,7 @@ jobs:
           --health-retries 10
 
       postgres:
-        image: postgres:${{ env.LATEST_POSTGRES_SERVER }}-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -234,7 +233,7 @@ jobs:
 
     services:
       redis:
-        image: redis:${{ env.LATEST_REDIS_SERVER }}-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -244,7 +243,7 @@ jobs:
           --health-retries 10
 
       mongo:
-        image: mongo:${{ env.LATEST_MONGO_SERVER }}
+        image: mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -254,7 +253,7 @@ jobs:
           --health-retries 10
 
       postgres:
-        image: postgres:${{ env.LATEST_POSTGRES_SERVER }}-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -330,7 +329,7 @@ jobs:
 
     services:
       redis:
-        image: redis:${{ env.LATEST_REDIS_SERVER }}-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -340,7 +339,7 @@ jobs:
           --health-retries 10
 
       mongo:
-        image: mongo:${{ env.LATEST_MONGO_SERVER }}
+        image: mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -350,7 +349,7 @@ jobs:
           --health-retries 10
 
       postgres:
-        image: postgres:${{ env.LATEST_POSTGRES_SERVER }}-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -408,7 +407,7 @@ jobs:
 
     services:
       redis:
-        image: redis:${{ env.LATEST_REDIS_SERVER }}-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -418,7 +417,7 @@ jobs:
           --health-retries 10
 
       mongo:
-        image: mongo:${{ env.LATEST_MONGO_SERVER }}
+        image: mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -428,7 +427,7 @@ jobs:
           --health-retries 10
 
       postgres:
-        image: postgres:${{ env.LATEST_POSTGRES_SERVER }}-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
