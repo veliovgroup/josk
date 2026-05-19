@@ -328,6 +328,14 @@ describe('RedisAdapter unit coverage', () => {
     await clusterAdapter.ready();
   });
 
+  it('rejects non-boolean useHashTags values', () => {
+    expect(() => new RedisAdapter({ client: createRedisClient(), useHashTags: 'true' })).toThrow(/useHashTags.*boolean/);
+    expect(() => new RedisAdapter({ client: createRedisClient(), useHashTags: 1 })).toThrow(/useHashTags.*boolean/);
+    expect(() => new RedisAdapter({ client: createRedisClient(), useHashTags: null })).toThrow(/useHashTags.*boolean/);
+    expect(new RedisAdapter({ client: createRedisClient() }).useHashTags).toBe(false);
+    expect(new RedisAdapter({ client: createRedisClient(), useHashTags: undefined }).useHashTags).toBe(false);
+  });
+
   it('falls back to the default prefix when none is provided or the value is empty', async () => {
     const a = new RedisAdapter({ client: createRedisClient() });
     const b = new RedisAdapter({ client: createRedisClient(), prefix: '' });
