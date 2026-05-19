@@ -8,6 +8,7 @@
 .DS_Store
 .eslintcache
 .eslintrc
+CLAUDE.md
 adapters/blank-example.js
 adapters/blank-example.d.ts
 cover.jpg
