@@ -10,6 +10,7 @@ env:
   # Driver majors for smoke jobs (update when bumping devDependencies)
   LATEST_MONGODB_DRIVER: '7'
   LATEST_REDIS_DRIVER: '5'
+  # pg@7 breaks on Node 14+ (readyState === 'open' before connect); engines require Node >= 20.9
   LATEST_PG_DRIVER: '8'
   # Latest server images — literals in services.*.image (env not allowed there)
   # redis:8-alpine  mongo:8  postgres:18-alpine
@@ -221,7 +222,7 @@ jobs:
 
   # Official driver major lines on latest server images (Node 22)
   test-drivers:
-    name: Drivers mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@${{ matrix.pg-driver }}
+    name: Drivers mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@${{ env.LATEST_PG_DRIVER }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -229,7 +230,6 @@ jobs:
       matrix:
         mongodb-driver: ['5', '6', '7']
         redis-driver: ['4', '5']
-        pg-driver: ['7', '8']
 
     services:
       redis:
@@ -283,7 +283,7 @@ jobs:
           npm install --no-save \
             redis@${{ matrix.redis-driver }} \
             mongodb@${{ matrix.mongodb-driver }} \
-            pg@${{ matrix.pg-driver }}
+            pg@${{ env.LATEST_PG_DRIVER }}
           node -e "
             const pkgs = ['redis', 'mongodb', 'pg'];
             for (const name of pkgs) {
@@ -395,7 +395,7 @@ jobs:
 
   # Bun (latest) × official driver majors on latest server images
   test-bun-drivers:
-    name: Bun latest / mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@${{ matrix.pg-driver }}
+    name: Bun latest / mongo@${{ matrix.mongodb-driver }} redis@${{ matrix.redis-driver }} pg@${{ env.LATEST_PG_DRIVER }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -403,7 +403,6 @@ jobs:
       matrix:
         mongodb-driver: ['5', '6', '7']
         redis-driver: ['4', '5']
-        pg-driver: ['7', '8']
 
     services:
       redis:
@@ -456,7 +455,7 @@ jobs:
           bun add --no-save \
             redis@${{ matrix.redis-driver }} \
             mongodb@${{ matrix.mongodb-driver }} \
-            pg@${{ matrix.pg-driver }}
+            pg@${{ env.LATEST_PG_DRIVER }}
           bun -e "
             const pkgs = ['redis', 'mongodb', 'pg'];
             for (const name of pkgs) {
