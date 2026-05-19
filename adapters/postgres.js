@@ -82,24 +82,45 @@ class PostgresAdapter {
 
   /** @internal */
   async __setup() {
-    await this.client.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
+    // pg_advisory_lock is session-scoped. A `pg.Pool` rotates connections per
+    // query, so the lock must be acquired on one pinned session — otherwise
+    // the migration DDL runs unprotected and the lock leaks until the pool
+    // recycles the holding connection. Detect Pool by probing for a
+    // `connect()` that yields a releasable client; raw `pg.Client` keeps its
+    // own session so we use it directly.
+    let setupClient = this.client;
+    let release = null;
+    if (typeof this.client.connect === 'function') {
+      try {
+        const dedicated = await this.client.connect();
+        if (dedicated && typeof dedicated.query === 'function' && typeof dedicated.release === 'function') {
+          setupClient = dedicated;
+          release = () => dedicated.release();
+        }
+      } catch (connectErr) {
+        // pg.Client.connect() after manual connect resolves to undefined or
+        // throws "already connected" — both fine; fall back to this.client.
+      }
+    }
+
+    await setupClient.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
 
     try {
-      await this.client.query(`
+      await setupClient.query(`
         CREATE TABLE IF NOT EXISTS josk_meta (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         )
       `);
 
-      const versionResult = await this.client.query(
+      const versionResult = await setupClient.query(
         `SELECT value FROM josk_meta WHERE key = 'schema_version'`
       );
       const currentVersion = versionResult.rows && versionResult.rows[0]
         ? parseInt(versionResult.rows[0].value, 10)
         : 0;
 
-      await this.client.query(`
+      await setupClient.query(`
         CREATE TABLE IF NOT EXISTS josk_tasks (
           prefix TEXT NOT NULL DEFAULT 'default',
           uid TEXT NOT NULL,
@@ -116,19 +137,19 @@ class PostgresAdapter {
       `);
 
       if (currentVersion < 1) {
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT 'default'`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS uid TEXT NOT NULL DEFAULT ''`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS delay INTEGER NOT NULL DEFAULT 0`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS execute_at BIGINT NOT NULL DEFAULT 0`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_interval BOOLEAN NOT NULL DEFAULT false`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_owner_id TEXT`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_lease_id TEXT`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
-        await this.client.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT 'default'`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS uid TEXT NOT NULL DEFAULT ''`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS delay INTEGER NOT NULL DEFAULT 0`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS execute_at BIGINT NOT NULL DEFAULT 0`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_interval BOOLEAN NOT NULL DEFAULT false`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_owner_id TEXT`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claim_lease_id TEXT`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
 
-        const primaryKeyResult = await this.client.query(`
+        const primaryKeyResult = await setupClient.query(`
           SELECT kc.column_name
           FROM information_schema.table_constraints tc
           JOIN information_schema.key_column_usage kc
@@ -141,10 +162,10 @@ class PostgresAdapter {
         const primaryKeyColumns = (primaryKeyResult.rows || []).map((row) => row.column_name);
 
         if (primaryKeyColumns.length === 1 && primaryKeyColumns[0] === 'uid') {
-          await this.client.query(`ALTER TABLE josk_tasks DROP CONSTRAINT IF EXISTS josk_tasks_pkey`);
+          await setupClient.query(`ALTER TABLE josk_tasks DROP CONSTRAINT IF EXISTS josk_tasks_pkey`);
         }
 
-        await this.client.query(`
+        await setupClient.query(`
           ALTER TABLE josk_tasks
           ADD CONSTRAINT josk_tasks_pkey PRIMARY KEY (prefix, uid)
         `).catch((error) => {
@@ -153,13 +174,13 @@ class PostgresAdapter {
           }
         });
 
-        await this.client.query(`
+        await setupClient.query(`
           CREATE INDEX IF NOT EXISTS idx_josk_tasks_prefix_execute
           ON josk_tasks (prefix, execute_at)
           WHERE is_deleted = false
         `);
 
-        await this.client.query(`
+        await setupClient.query(`
           CREATE TABLE IF NOT EXISTS josk_locks (
             lock_key TEXT PRIMARY KEY,
             owner_id TEXT NOT NULL,
@@ -169,21 +190,21 @@ class PostgresAdapter {
           )
         `);
 
-        await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS owner_id TEXT`);
-        await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS lease_id TEXT`);
-        await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS locked_until BIGINT`);
-        await this.client.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
-        await this.client.query(`UPDATE josk_locks SET owner_id = COALESCE(owner_id, ''), lease_id = COALESCE(lease_id, ''), locked_until = COALESCE(locked_until, 0) WHERE owner_id IS NULL OR lease_id IS NULL OR locked_until IS NULL`);
-        await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN owner_id SET NOT NULL`);
-        await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN lease_id SET NOT NULL`);
-        await this.client.query(`ALTER TABLE josk_locks ALTER COLUMN locked_until SET NOT NULL`);
+        await setupClient.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS owner_id TEXT`);
+        await setupClient.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS lease_id TEXT`);
+        await setupClient.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS locked_until BIGINT`);
+        await setupClient.query(`ALTER TABLE josk_locks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`);
+        await setupClient.query(`UPDATE josk_locks SET owner_id = COALESCE(owner_id, ''), lease_id = COALESCE(lease_id, ''), locked_until = COALESCE(locked_until, 0) WHERE owner_id IS NULL OR lease_id IS NULL OR locked_until IS NULL`);
+        await setupClient.query(`ALTER TABLE josk_locks ALTER COLUMN owner_id SET NOT NULL`);
+        await setupClient.query(`ALTER TABLE josk_locks ALTER COLUMN lease_id SET NOT NULL`);
+        await setupClient.query(`ALTER TABLE josk_locks ALTER COLUMN locked_until SET NOT NULL`);
 
-        await this.client.query(`
+        await setupClient.query(`
           CREATE INDEX IF NOT EXISTS idx_josk_locks_locked_until
           ON josk_locks (locked_until)
         `);
 
-        await this.client.query(
+        await setupClient.query(
           `INSERT INTO josk_meta (key, value) VALUES ('schema_version', $1)
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
           [String(SCHEMA_VERSION)]
@@ -191,11 +212,17 @@ class PostgresAdapter {
       }
 
       if (this.resetOnInit) {
-        await this.client.query('DELETE FROM josk_tasks WHERE prefix = $1', [this.prefix]);
-        await this.client.query('DELETE FROM josk_locks WHERE lock_key = $1', [this.lockKey]);
+        await setupClient.query('DELETE FROM josk_tasks WHERE prefix = $1', [this.prefix]);
+        await setupClient.query('DELETE FROM josk_locks WHERE lock_key = $1', [this.lockKey]);
       }
     } finally {
-      await this.client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]);
+      try {
+        await setupClient.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]);
+      } finally {
+        if (release) {
+          release();
+        }
+      }
     }
   }
 
