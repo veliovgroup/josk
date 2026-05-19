@@ -581,6 +581,7 @@ class JoSk {
       const taskFunc = this.tasks[task.uid];
       const funcArity = taskFunc.length;
       let hasError = false;
+      let didInvoke = false;
       let returnedPromise;
       try {
         if (task.isInterval === false) {
@@ -592,9 +593,11 @@ class JoSk {
           }
 
           if (isRemoved === true) {
+            didInvoke = true;
             returnedPromise = taskFunc(ready);
           }
         } else {
+          didInvoke = true;
           returnedPromise = taskFunc(ready);
         }
 
@@ -604,6 +607,13 @@ class JoSk {
       } catch (taskExecError) {
         hasError = true;
         this.__errorHandler(taskExecError, 'Exception during task execution', 'An exception was thrown during task execution', task.uid);
+      }
+
+      if (!didInvoke) {
+        // setTimeout/setImmediate handler skipped because remove() failed or
+        // the task was claimed elsewhere. Do not auto-ready: that would fire
+        // onExecuted for a run that never happened.
+        return;
       }
 
       const isPromise = isPromiseLike(returnedPromise);
