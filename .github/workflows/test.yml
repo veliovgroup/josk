@@ -468,3 +468,154 @@ jobs:
           MONGO_URL: mongodb://127.0.0.1:27017/josk-bun-drivers-test
           PG_URL: postgres://postgres:postgres@127.0.0.1:5432/josk_test
         run: bun test ./test/jest/adapters.test.js
+
+  # Meteor package tests — adapter suites only (METEOR_TEST_SUITE in package.js)
+  test-meteor-mongo:
+    name: Meteor ${{ matrix.meteor }} / mongo adapter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        meteor:
+          # top 3 minor releases — Meteor v2
+          - '2.14'
+          - '2.15'
+          - '2.16'
+          # top 3 minor releases — Meteor v3
+          - '3.2'
+          # 3.3.0 breaks babel-compiler when typescript is used (meteor/meteor#13886)
+          - '3.3.1'
+          - '3.4'
+
+    services:
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Meteor
+        uses: actions/cache@v4
+        with:
+          path: ~/.meteor
+          key: meteor-${{ matrix.meteor }}-${{ runner.os }}
+
+      - name: Install Meteor ${{ matrix.meteor }}
+        run: |
+          curl -fsSL "https://install.meteor.com?release=${{ matrix.meteor }}" | sh
+          echo "$HOME/.meteor" >> $GITHUB_PATH
+
+      - name: Meteor package tests (MongoDB)
+        env:
+          METEOR_TEST_SUITE: mongo
+          MONGO_URL: mongodb://127.0.0.1:27017/josk-meteor-test
+        run: meteor test-packages ./ --driver-package=meteortesting:mocha --once
+
+  test-meteor-redis:
+    name: Meteor ${{ matrix.meteor }} / redis:${{ matrix.redis-server }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        meteor:
+          - '2.14'
+          - '2.15'
+          - '2.16'
+          - '3.2'
+          - '3.3.1'
+          - '3.4'
+        redis-server: ['6', '7', '8']
+
+    services:
+      redis:
+        image: redis:${{ matrix.redis-server }}-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Meteor
+        uses: actions/cache@v4
+        with:
+          path: ~/.meteor
+          key: meteor-${{ matrix.meteor }}-${{ runner.os }}
+
+      - name: Install Meteor ${{ matrix.meteor }}
+        run: |
+          curl -fsSL "https://install.meteor.com?release=${{ matrix.meteor }}" | sh
+          echo "$HOME/.meteor" >> $GITHUB_PATH
+
+      - name: Meteor package tests (Redis)
+        env:
+          METEOR_TEST_SUITE: redis
+          REDIS_URL: redis://127.0.0.1:6379
+        run: meteor test-packages ./ --driver-package=meteortesting:mocha --once
+
+  test-meteor-postgres:
+    name: Meteor ${{ matrix.meteor }} / pg:${{ matrix.postgres-server }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        meteor:
+          - '2.14'
+          - '2.15'
+          - '2.16'
+          - '3.2'
+          - '3.3.1'
+          - '3.4'
+        postgres-server: ['14', '15', '16', '17', '18']
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-server }}-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: josk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Meteor
+        uses: actions/cache@v4
+        with:
+          path: ~/.meteor
+          key: meteor-${{ matrix.meteor }}-${{ runner.os }}
+
+      - name: Install Meteor ${{ matrix.meteor }}
+        run: |
+          curl -fsSL "https://install.meteor.com?release=${{ matrix.meteor }}" | sh
+          echo "$HOME/.meteor" >> $GITHUB_PATH
+
+      - name: Meteor package tests (PostgreSQL)
+        env:
+          METEOR_TEST_SUITE: postgres
+          PG_URL: postgres://postgres:postgres@127.0.0.1:5432/josk_test
+        run: meteor test-packages ./ --driver-package=meteortesting:mocha --once
