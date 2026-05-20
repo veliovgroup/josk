@@ -1,14 +1,16 @@
 [![npm version](https://img.shields.io/npm/v/josk.svg)](https://www.npmjs.com/package/josk)
 [![npm downloads](https://img.shields.io/npm/dm/josk.svg)](https://www.npmjs.com/package/josk)
-[![Test](https://github.com/veliovgroup/josk/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/veliovgroup/josk/actions/workflows/test.yml)
+[![CI](https://github.com/veliovgroup/josk/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/veliovgroup/josk/actions/workflows/test.yml)
+[![minified size](https://img.shields.io/bundlephobia/minzip/josk.svg)](https://bundlephobia.com/package/josk)
 [![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen)](#running-tests)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![Node.js](https://img.shields.io/node/v/josk)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-ready-blue)](https://github.com/veliovgroup/josk#typescript)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1.0-black?logo=bun)](https://github.com/veliovgroup/josk#bun-runtime)
+[![Meteor.js](https://img.shields.io/badge/Meteor.js-ostrio%3Acron--jobs-red?logo=meteor&logoColor=white)](https://packosphere.com/ostrio/cron-jobs)
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://www.npmjs.com/package/josk)
-[![support](https://img.shields.io/badge/support-GitHub-white)](https://github.com/sponsors/dr-dimitru)
-[![support](https://img.shields.io/badge/support-PayPal-white)](https://paypal.me/veliovgroup)
+[![Sponsor](https://img.shields.io/github/sponsors/dr-dimitru?label=Sponsor)](https://github.com/sponsors/dr-dimitru)
+[![Donate](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/veliovgroup)
 <a href="https://ostr.io/info/built-by-developers-for-developers?ref=github-josk-repo-top"><img src="https://ostr.io/apple-touch-icon-60x60.png" height="20"></a>
 <a href="https://meteor-files.com/?ref=github-josk-repo-top"><img src="https://meteor-files.com/apple-touch-icon-60x60.png" height="20"></a>
 
@@ -43,6 +45,8 @@ __Note: JoSk is the server-only package.__
   - [`JoSk#clearTimeout()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#cleartimeouttimer)
   - [`JoSk#destroy()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#destroy)
   - [`JoSk#ping()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#ping)
+  - [`JoSk#pause()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#pause)
+  - [`JoSk#resume()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#resume)
 - [Execution semantics](https://github.com/veliovgroup/josk?tab=readme-ov-file#execution-semantics)
 - [TypeScript](https://github.com/veliovgroup/josk?tab=readme-ov-file#typescript)
 - [Examples](https://github.com/veliovgroup/josk?tab=readme-ov-file#examples)
@@ -600,6 +604,35 @@ Failed response
 */
 ```
 
+### `pause()`
+
+- Signature: `pause()` or `pause(timerId)`
+- Returns: {*boolean*} `true` if pause state changed, `false` if already paused for that scope
+- **When to use:** Multi-instance setups only — other JoSk peers must exist to run work while this process is paused. For long-running tasks that should not keep the JoSk handler (and revolving loop) blocked until finished; skip on single-instance apps and short handlers.
+- **Global** `pause()` — this instance stops acquiring the scheduler lease on revolving ticks. Handlers already running continue. Tasks stay registered in storage; other cluster members keep competing.
+- **Per-task** `pause(timerId)` — when this instance claims that task, it reschedules without invoking the handler so another instance can run it. Pass only the timer id string returned from `setInterval`, `setTimeout`, or `setImmediate` (not the bare `uid` argument you passed to `set*`).
+
+```js
+if (loadSheddingActive()) {
+  jobs.pause(); // stop competing while saturated
+}
+const heavy = await jobs.setInterval(worker, 60_000, 'heavy-sync');
+jobs.pause(heavy); // only skip this task on this pod
+```
+
+### `resume()`
+
+- Signature: `resume()` or `resume(timerId)`
+- Returns: {*boolean*} `true` if pause cleared, `false` if not paused
+- `resume()` clears global pause. `resume(timerId)` clears per-task pause (same timer id from `set*`). Competing resumes on the next revolving tick (no separate `start()`).
+
+```js
+jobs.resume();        // global
+jobs.resume(heavy);   // per timer id from set*
+```
+
+**Inside `set*` handlers (queue polling):** After this instance wins a tick, claim rows from your own queue, then `pause()` or `pause(timerId)`, call `ready()` (or return only after `ready()` if work is branched off), run heavy processing on this instance, and `resume()` / `resume(timerId)` in `finally` when done — so JoSk releases the tick quickly and this instance stops competing until local work finishes. See [skills/josk/references/patterns.md](skills/josk/references/patterns.md) for full examples (global and per-`timerId`).
+
 ## Execution semantics
 
 Different scheduling methods have different at-least-once / at-most-once guarantees. Pick the one that matches your tolerance for missed or duplicated runs.
@@ -618,6 +651,8 @@ Different scheduling methods have different at-least-once / at-most-once guarant
 - `one` claims a single due task per lease — smaller bursts, tighter fairness across instances.
 
 `concurrency` caps how many handlers run in parallel inside this JoSk instance. Default is unbounded (`Infinity`), which matches `setInterval`/`setTimeout` semantics from Node's standard library. Set a finite cap if handlers share resources (DB connections, external API rate limits).
+
+**Instance backpressure:** `pause()` / `pause(timerId)` are per-process, not cluster-wide — useful only when **several instances** share the scheduler and this one should yield during **long** local work. Pair with `concurrency` (caps parallel handlers) and `execute: 'one'` (smaller claim bursts).
 
 ## TypeScript
 
