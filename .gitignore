@@ -8,3 +8,4 @@ npm-debug.log*
 .types-tmp/
 *.tgz
 /.claude
+/docs/superpowers
