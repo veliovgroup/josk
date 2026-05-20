@@ -37,6 +37,10 @@ const adapter = {
 const jobs = new josk.JoSk({ adapter, execute: 'batch' });
 
 jobs.setImmediate(() => {}, 'cjs-task');
+jobs.pause();
+jobs.pause('cjs-tasksetImmediate');
+jobs.resume();
+jobs.resume('cjs-tasksetImmediate');
 jobs.destroy();
 
 const adapterCtor = josk.PostgresAdapter;

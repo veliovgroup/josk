@@ -888,3 +888,111 @@ describe('JoSk core', () => {
     expect(adapter.removeCalls).toContain(task.uid);
   });
 });
+
+describe('pause/resume', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('global pause skips acquireLock until resume', async () => {
+    const { job, adapter } = createJob();
+    expect(job.pause()).toBe(true);
+    expect(job.pause()).toBe(false);
+
+    jest.advanceTimersByTime(5);
+    await Promise.resolve();
+
+    expect(adapter.acquireCalls).toHaveLength(0);
+
+    expect(job.resume()).toBe(true);
+    expect(job.resume()).toBe(false);
+
+    await job.__iterate();
+    await Promise.resolve();
+
+    expect(adapter.acquireCalls.length).toBeGreaterThan(0);
+  });
+
+  it('per-timer pause defers claimed interval without running handler', async () => {
+    const { job, adapter } = createJob();
+    let ran = false;
+
+    const timerId = await job.setInterval(() => {
+      ran = true;
+    }, 5000, 'paused-task');
+
+    adapter.iterateImpl = async () => {
+      job.__execute({
+        uid: timerId,
+        delay: 5000,
+        isInterval: true,
+        isDeleted: false
+      });
+      return 1;
+    };
+
+    expect(job.pause(timerId)).toBe(true);
+
+    await job.__iterate();
+    await Promise.resolve();
+
+    expect(ran).toBe(false);
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task.uid).toBe(timerId);
+    expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThan(Date.now() - 100);
+  });
+
+  it('resume(timerId) allows handler after claim', async () => {
+    const { job, adapter } = createJob();
+    let ran = false;
+
+    const timerId = await job.setInterval(() => {
+      ran = true;
+    }, 5000, 'resume-task');
+
+    job.pause(timerId);
+    expect(job.resume(timerId)).toBe(true);
+    expect(job.resume(timerId)).toBe(false);
+
+    adapter.iterateImpl = async () => {
+      job.__execute({
+        uid: timerId,
+        delay: 5000,
+        isInterval: true,
+        isDeleted: false
+      });
+      return 1;
+    };
+
+    await job.__iterate();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ran).toBe(true);
+  });
+
+  it('pause throws on invalid timerId type', () => {
+    const { job } = createJob();
+    expect(() => job.pause(1)).toThrow('[josk] [pause] timerId must be a non-empty string');
+  });
+
+  it('pause throws when timerId is not from set*', () => {
+    const { job } = createJob();
+    expect(() => job.pause('poll-1m')).toThrow('[josk] [pause] timerId must be the string returned from setInterval, setTimeout, or setImmediate');
+  });
+
+  it('destroy clears pause state', async () => {
+    const { job } = createJob();
+    const timerId = await job.setInterval(() => {}, 5000, 'x');
+    job.pause();
+    job.pause(timerId);
+    job.destroy();
+    expect(job.resume()).toBe(false);
+    expect(job.resume(timerId)).toBe(false);
+  });
+});

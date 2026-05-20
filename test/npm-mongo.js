@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { closeMongoClient, destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerPauseResumeTests } from './pause-resume-tests.js';
 
 if (!process.env.MONGO_URL) {
   throw new Error('MONGO_URL env.var is not defined! Please run test with MONGO_URL, like `MONGO_URL=mongodb://127.0.0.1:27017/dbname npm test`');
@@ -19,6 +20,15 @@ const noop = (ready) => {
   typeof ready === 'function' && ready();
 };
 const ZOMBIE_TIME = 8000;
+
+const racingJoSkOpts = {
+  debug: DEBUG,
+  autoClear: true,
+  minRevolvingDelay,
+  maxRevolvingDelay,
+  zombieTime: ZOMBIE_TIME,
+  execute: 'one'
+};
 
 const mongoAddr = (process.env.MONGO_URL || '');
 const dbName = mongoAddr.split('/').pop().replace(/\/$/, '');
@@ -1139,6 +1149,34 @@ describe('Mongo - JoSk', function () {
         }, 384);
       });
     });
+  });
+
+  registerPauseResumeTests('Mongo', {
+    createJob: (prefix, resetOnInit) => new JoSk({
+      adapter: new MongoAdapter({ db, prefix, resetOnInit }),
+      ...racingJoSkOpts
+    }),
+    initCounter: async (prefix) => {
+      const collection = db.collection(`pauseResume_${prefix}`);
+      const insert = await collection.insertOne({ runsA: 0, runsB: 0, runs: 0, processed: 0 });
+      const _id = insert.insertedId;
+      return {
+        incA: () => collection.updateOne({ _id }, { $inc: { runsA: 1 } }),
+        incB: () => collection.updateOne({ _id }, { $inc: { runsB: 1 } }),
+        incRuns: () => collection.updateOne({ _id }, { $inc: { runs: 1 } }),
+        incProcessed: () => collection.updateOne({ _id }, { $inc: { processed: 1 } }),
+        read: async () => {
+          const rec = await collection.findOne({ _id });
+          return {
+            runsA: rec?.runsA || 0,
+            runsB: rec?.runsB || 0,
+            runs: rec?.runs || 0,
+            processed: rec?.processed || 0
+          };
+        },
+        cleanup: () => collection.deleteOne({ _id })
+      };
+    }
   });
 
   describe('Mongo - Destroy (abort) current timers', function () {

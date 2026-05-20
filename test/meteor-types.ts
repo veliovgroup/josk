@@ -133,5 +133,10 @@ describe('Meteor TypeScript — runtime', function () {
     const cleared2: boolean = await typedJobs.clearInterval(intervalId);
     assert.isBoolean(cleared1, 'clearTimeout returns boolean');
     assert.isBoolean(cleared2, 'clearInterval returns boolean');
+
+    assert.equal(typedJobs.pause(), true, 'pause() returns boolean');
+    assert.equal(typedJobs.pause(intervalId), true, 'pause(timerId) returns boolean');
+    assert.equal(typedJobs.resume(intervalId), true, 'resume(timerId) returns boolean');
+    assert.equal(typedJobs.resume(), true, 'resume() returns boolean');
   });
 });

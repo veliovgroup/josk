@@ -4,6 +4,7 @@ import { createClient } from 'redis';
 import { CronExpressionParser } from 'cron-parser';
 import { assert } from 'chai';
 import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerMeteorPauseResumeTests } from './meteor-pause-resume.js';
 
 if (!process.env.REDIS_URL) {
   throw new Error('REDIS_URL env.var is not defined! Please run test with REDIS_URL, like `REDIS_URL=redis://127.0.0.1:6379 meteor test-packages ./`');
@@ -14,6 +15,15 @@ const ZOMBIE_TIME = 8000;
 const minRevolvingDelay = 32;
 const maxRevolvingDelay = 256;
 const RANDOM_GAP = (maxRevolvingDelay - minRevolvingDelay) + 1024;
+
+const racingJoSkOpts = (debug, minDelay, maxDelay, zombieTime) => ({
+  debug,
+  autoClear: true,
+  minRevolvingDelay: minDelay,
+  maxRevolvingDelay: maxDelay,
+  zombieTime,
+  execute: 'one'
+});
 
 const noop = (ready) => {
   typeof ready === 'function' && ready();
@@ -363,6 +373,40 @@ describe('redis - racing conditions', function () {
       await client.del(key);
     }
   });
+});
+
+registerMeteorPauseResumeTests('redis', {
+  createJob: (prefix, resetOnInit) => new JoSk({
+    adapter: new RedisAdapter({ client, prefix, resetOnInit }),
+    ...racingJoSkOpts(DEBUG, minRevolvingDelay, maxRevolvingDelay, ZOMBIE_TIME)
+  }),
+  initCounter: async (prefix) => {
+    const key = `meteor:pause:${prefix}`;
+    await client.set(key, JSON.stringify({ runsA: 0, runsB: 0, runs: 0, processed: 0 }));
+    const read = async () => {
+      const raw = await client.get(key);
+      const parsed = raw ? JSON.parse(String(raw)) : {};
+      return {
+        runsA: parsed.runsA || 0,
+        runsB: parsed.runsB || 0,
+        runs: parsed.runs || 0,
+        processed: parsed.processed || 0
+      };
+    };
+    const write = async (patch) => {
+      const current = await read();
+      await client.set(key, JSON.stringify({ ...current, ...patch }));
+    };
+    return {
+      key,
+      incA: () => read().then((v) => write({ runsA: v.runsA + 1 })),
+      incB: () => read().then((v) => write({ runsB: v.runsB + 1 })),
+      incRuns: () => read().then((v) => write({ runs: v.runs + 1 })),
+      incProcessed: () => read().then((v) => write({ processed: v.processed + 1 })),
+      read,
+      cleanup: () => client.del(key)
+    };
+  }
 });
 
 describe('redis - zombieTime (stuck task recovery)', function () {

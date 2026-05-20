@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerPauseResumeTests } from './pause-resume-tests.js';
 
 if (!process.env.REDIS_URL) {
   throw new Error('REDIS_URL env.var is not defined! Please run test with REDIS_URL, like `REDIS_URL=redis://127.0.0.1:6379 npm test`');
@@ -19,6 +20,15 @@ const noop = (ready) => {
   typeof ready === 'function' && ready();
 };
 const ZOMBIE_TIME = 8000;
+
+const racingJoSkOpts = {
+  debug: DEBUG,
+  autoClear: true,
+  minRevolvingDelay,
+  maxRevolvingDelay,
+  zombieTime: ZOMBIE_TIME,
+  execute: 'one'
+};
 const getTask = async (adapter, uid) => {
   const payload = await adapter.client.hGet(adapter.tasksKey, uid);
   return payload ? JSON.parse(payload) : null;
@@ -1079,6 +1089,39 @@ describe('Redis - JoSk', function () {
         }, 384);
       });
     });
+  });
+
+  registerPauseResumeTests('Redis', {
+    createJob: (prefix, resetOnInit) => new JoSk({
+      adapter: new RedisAdapter({ client, prefix, resetOnInit }),
+      ...racingJoSkOpts
+    }),
+    initCounter: async (prefix) => {
+      const key = `npm:pause:${prefix}`;
+      await client.set(key, JSON.stringify({ runsA: 0, runsB: 0, runs: 0, processed: 0 }));
+      const read = async () => {
+        const raw = await client.get(key);
+        const parsed = raw ? JSON.parse(String(raw)) : {};
+        return {
+          runsA: parsed.runsA || 0,
+          runsB: parsed.runsB || 0,
+          runs: parsed.runs || 0,
+          processed: parsed.processed || 0
+        };
+      };
+      const write = async (patch) => {
+        const current = await read();
+        await client.set(key, JSON.stringify({ ...current, ...patch }));
+      };
+      return {
+        incA: () => read().then((v) => write({ runsA: v.runsA + 1 })),
+        incB: () => read().then((v) => write({ runsB: v.runsB + 1 })),
+        incRuns: () => read().then((v) => write({ runs: v.runs + 1 })),
+        incProcessed: () => read().then((v) => write({ processed: v.processed + 1 })),
+        read,
+        cleanup: () => client.del(key)
+      };
+    }
   });
 
   describe('Redis - Destroy (abort) current timers', function () {

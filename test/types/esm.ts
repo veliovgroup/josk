@@ -79,6 +79,10 @@ jobs.setTimeout((ready: (nextExecuteAt?: Date | number | ((error?: Error, succes
 jobs.setImmediate(() => {}, 'immediate-task');
 jobs.clearInterval(Promise.resolve('interval-tasksetInterval'));
 jobs.clearTimeout('timeout-tasksetTimeout');
+jobs.pause();
+jobs.pause('interval-tasksetInterval');
+jobs.resume();
+jobs.resume('interval-tasksetInterval');
 
 // @ts-expect-error adapter required
 new JoSk({});

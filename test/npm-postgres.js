@@ -4,6 +4,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerPauseResumeTests } from './pause-resume-tests.js';
 
 if (!process.env.PG_URL) {
   console.warn('PG_URL env.var not defined. Skipping Postgres tests. Use e.g. PG_URL=postgres://localhost:5432/npm-josk-test-001 npm run test-postgres');
@@ -552,6 +553,65 @@ describePostgres('PostgresAdapter + JoSk', function () {
       await pool.query('DELETE FROM josk_tasks WHERE prefix = $1', [prefix]);
       await pool.query('DELETE FROM josk_locks WHERE lock_key = $1', [`josk-${prefix}.lock`]);
       await pool.query('DELETE FROM josk_test_counts WHERE key = $1', [key]);
+    }
+  });
+
+  const racingJoSkOpts = {
+    debug: DEBUG,
+    autoClear: true,
+    minRevolvingDelay,
+    maxRevolvingDelay,
+    zombieTime: ZOMBIE_TIME,
+    execute: 'one'
+  };
+
+  registerPauseResumeTests('Postgres', {
+    createJob: (prefix, resetOnInit) => new JoSk({
+      adapter: new PostgresAdapter({ client: pool, prefix, resetOnInit }),
+      ...racingJoSkOpts
+    }),
+    initCounter: async (prefix) => {
+      const key = `pause:${prefix}`;
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS josk_test_pause_counts (
+          key TEXT PRIMARY KEY,
+          runs_a INTEGER NOT NULL DEFAULT 0,
+          runs_b INTEGER NOT NULL DEFAULT 0,
+          runs INTEGER NOT NULL DEFAULT 0,
+          processed INTEGER NOT NULL DEFAULT 0
+        )`
+      );
+      await pool.query(
+        `INSERT INTO josk_test_pause_counts (key, runs_a, runs_b, runs, processed)
+         VALUES ($1, 0, 0, 0, 0)
+         ON CONFLICT (key) DO UPDATE SET runs_a = 0, runs_b = 0, runs = 0, processed = 0`,
+        [key]
+      );
+      const read = async () => {
+        const result = await pool.query(
+          'SELECT runs_a, runs_b, runs, processed FROM josk_test_pause_counts WHERE key = $1',
+          [key]
+        );
+        const row = result.rows[0];
+        return {
+          runsA: row?.runs_a || 0,
+          runsB: row?.runs_b || 0,
+          runs: row?.runs || 0,
+          processed: row?.processed || 0
+        };
+      };
+      return {
+        incA: () => pool.query('UPDATE josk_test_pause_counts SET runs_a = runs_a + 1 WHERE key = $1', [key]),
+        incB: () => pool.query('UPDATE josk_test_pause_counts SET runs_b = runs_b + 1 WHERE key = $1', [key]),
+        incRuns: () => pool.query('UPDATE josk_test_pause_counts SET runs = runs + 1 WHERE key = $1', [key]),
+        incProcessed: () => pool.query('UPDATE josk_test_pause_counts SET processed = processed + 1 WHERE key = $1', [key]),
+        read,
+        cleanup: async () => {
+          await pool.query('DELETE FROM josk_test_pause_counts WHERE key = $1', [key]);
+          await pool.query('DELETE FROM josk_tasks WHERE prefix = $1', [prefix]);
+          await pool.query('DELETE FROM josk_locks WHERE lock_key = $1', [`josk-${prefix}.lock`]);
+        }
+      };
     }
   });
 
