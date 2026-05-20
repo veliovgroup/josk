@@ -115,6 +115,7 @@ Update this AGENTS.md on major refactors.
 - Keep `skills/josk/` terse: router + lazy `references/`; avoid duplicating tables/examples in `SKILL.md`
 - Skill frontmatter `description` must be one inline quoted string (not YAML folded blocks) for cross-tool installers
 - Skill frontmatter description: third-person ("Guides… Use when…"), not imperative "Trigger when"
+- CI matrix cells: adapter-scoped mocha file only, not full suite per cell
 
 ## Learned Workspace Facts
 
@@ -125,3 +126,8 @@ Update this AGENTS.md on major refactors.
 - Postgres driver: require `pg>=8.0.3` with Node ≥20.9; `pg@7` connect broken on modern Node; CI excludes `pg@7`
 - `npm run test:bun`: pass explicit files under `test/jest/`, not directory (Bun resolver)
 - CI `test-bun` job: Bun `latest` only; `engines.bun` stays `>=1.1.0`
+- CI: adapter-scoped matrix cells run one mocha file per service; `test-core` runs types/guards/Jest/coverage once (Node 22)
+- Meteor CI: `METEOR_TEST_SUITE` in `package.js` selects `meteor-ci-{mongo,redis,postgres}.js`; skip Meteor 3.3.0; Mongo CI omits `MONGO_URL`
+- Meteor package tests: `meteor test-packages --driver-package=meteortesting:mocha` (not `@zodern/mtest`, TinyTest-only)
+- Pause/resume integration: shared `test/pause-resume-tests.js`; Meteor re-export `test/meteor-pause-resume.js`; wired into npm-* and meteor-* adapter files
+- Multi-instance pause/resume tests: peer `readyOnly` handlers, `TASK_DELAY` ≥2048ms; handler race — `jobB.pause()` until first queue claim then `resume()`
