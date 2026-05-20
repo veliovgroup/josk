@@ -1,6 +1,6 @@
 Package.describe({
   name: 'ostrio:cron-jobs',
-  version: '6.1.0',
+  version: '6.2.0',
   summary: 'Tasks/CRON scheduler and manager for horizontally scaled multi-server apps',
   git: 'https://github.com/veliovgroup/josk',
   documentation: 'README.md'
@@ -25,8 +25,15 @@ Package.onTest((api) => {
   });
 
   api.use(['ecmascript', 'mongo', 'zodern:types', 'typescript', 'meteortesting:mocha@3.3.0'], 'server');
-  api.addFiles([
-    'test/meteor.js',
-    'test/meteor-types.ts',
-  ], 'server');
+
+  const suite = process.env.METEOR_TEST_SUITE;
+  const testFiles = suite === 'mongo'
+    ? ['test/meteor-ci-mongo.js']
+    : suite === 'redis'
+      ? ['test/meteor-ci-redis.js']
+      : suite === 'postgres'
+        ? ['test/meteor-ci-postgres.js']
+        : ['test/meteor.js', 'test/meteor-types.ts'];
+
+  api.addFiles(testFiles, 'server');
 });
