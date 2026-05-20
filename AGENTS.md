@@ -118,7 +118,10 @@ Update this AGENTS.md on major refactors.
 
 ## Learned Workspace Facts
 
-- GitHub Actions: `env` context is not allowed in `services.*.image`; use literals or `matrix` for image tags
+- GitHub Actions: `env` context not allowed in `services.*.image` or job `name`; use literals or `matrix`
 - `index.d.cts` is a copy of `index.d.ts` for the `require` export `types` path; identical content is intentional
 - `adapters/*.d.ts` declare adapter classes; required for TypeScript resolution behind `index.d.ts` re-exports
 - Redis Cluster / KeyDB Cluster: `RedisAdapter({ useHashTags: true })`; standalone default key layout unchanged
+- Postgres driver: require `pg>=8.0.3` with Node ≥20.9; `pg@7` connect broken on modern Node; CI excludes `pg@7`
+- `npm run test:bun`: pass explicit files under `test/jest/`, not directory (Bun resolver)
+- CI `test-bun` job: Bun `latest` only; `engines.bun` stays `>=1.1.0`
