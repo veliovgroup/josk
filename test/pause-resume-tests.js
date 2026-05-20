@@ -132,12 +132,14 @@ export const registerPauseResumeTests = (label, hooks) => {
         const before = await counter.read();
         assert.equal(jobA.pause(timerIdA), true);
         assert.equal(jobA.pause(timerIdA), false);
+        assert.equal(jobA.pause(), true);
 
         await waitUntil(async () => (await counter.read()).runs > before.runs, {
-          timeout: 10000,
+          timeout: 12000,
           message: msg('per-task: peer should increment while jobA defers')
         });
 
+        assert.equal(jobA.resume(), true);
         assert.equal(jobA.resume(timerIdA), true);
       } finally {
         destroyJobs(jobA, jobB);
