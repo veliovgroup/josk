@@ -80,6 +80,8 @@ export class JoSk {
     execute: JoSkExecuteMode;
     lockOwnerId: string;
     concurrency: number;
+    /** @internal @type {Set<string>} */
+    __pausedTimerIds: Set<string>;
     /** @type {JoSkAdapter} */
     adapter: JoSkAdapter;
     /**
@@ -153,6 +155,18 @@ export class JoSk {
      * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
      */
     destroy(): boolean;
+    /**
+     * Pause this instance from competing for scheduler work.
+     * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to pause all tasks on this instance
+     * @returns {boolean}
+     */
+    pause(timerId?: string): boolean;
+    /**
+     * Resume competing for scheduler work.
+     * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to resume all
+     * @returns {boolean}
+     */
+    resume(timerId?: string): boolean;
 }
 import { MongoAdapter } from './adapters/mongo.js';
 import { RedisAdapter } from './adapters/redis.js';

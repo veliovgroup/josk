@@ -1814,6 +1814,10 @@ class JoSk {
     this.__activeExecutions = 0;
     /** @internal */
     this.__pendingTasks = [];
+    /** @internal */
+    this.__pausedAll = false;
+    /** @internal */
+    this.__pausedUserIds = new Set();
 
     if (!validExecuteModes.has(this.execute)) {
       throw new Error(errors.execute);
@@ -2001,6 +2005,8 @@ class JoSk {
   destroy() {
     if (!this.isDestroyed) {
       this.isDestroyed = true;
+      this.__pausedAll = false;
+      this.__pausedUserIds.clear();
       if (this.nextRevolutionTimeout) {
         clearTimeout(this.nextRevolutionTimeout);
         this.nextRevolutionTimeout = null;
@@ -2008,6 +2014,66 @@ class JoSk {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Pause this instance from competing for scheduler work.
+   * @param {string} [uid] - User task id or internal timer id; omit to pause all tasks on this instance
+   * @returns {boolean}
+   */
+  pause(uid) {
+    if (this.isDestroyed) {
+      return false;
+    }
+
+    if (uid === void 0) {
+      if (this.__pausedAll) {
+        return false;
+      }
+      this.__pausedAll = true;
+      return true;
+    }
+
+    if (typeof uid !== 'string' || uid.length === 0) {
+      throw new Error('[josk] [pause] uid must be a non-empty string');
+    }
+
+    const bare = uid.replace(prefixRegex, '');
+    if (this.__pausedUserIds.has(bare)) {
+      return false;
+    }
+    this.__pausedUserIds.add(bare);
+    return true;
+  }
+
+  /**
+   * Resume competing for scheduler work.
+   * @param {string} [uid] - User task id or internal timer id; omit to resume all
+   * @returns {boolean}
+   */
+  resume(uid) {
+    if (this.isDestroyed) {
+      return false;
+    }
+
+    if (uid === void 0) {
+      if (!this.__pausedAll) {
+        return false;
+      }
+      this.__pausedAll = false;
+      return true;
+    }
+
+    if (typeof uid !== 'string' || uid.length === 0) {
+      throw new Error('[josk] [resume] uid must be a non-empty string');
+    }
+
+    const bare = uid.replace(prefixRegex, '');
+    if (!this.__pausedUserIds.has(bare)) {
+      return false;
+    }
+    this.__pausedUserIds.delete(bare);
+    return true;
   }
 
   /** @internal */
@@ -2144,6 +2210,34 @@ class JoSk {
 
   /**
    * @internal
+   * @param {string} timerId
+   */
+  __isTaskPaused(timerId) {
+    if (this.__pausedAll) {
+      return true;
+    }
+    const bare = timerId.replace(prefixRegex, '');
+    return this.__pausedUserIds.has(bare);
+  }
+
+  /**
+   * @internal
+   * @param {JoSkTask} task
+   * @returns {Promise<void>}
+   */
+  async __deferClaimedTask(task) {
+    const deferMs = Math.max(2000, typeof task.delay === 'number' && task.delay >= 2000 ? task.delay : 2000);
+    const nextExecuteAt = new Date(Date.now() + deferMs);
+    try {
+      await this.__adapterReady();
+      await this.adapter.update(task, nextExecuteAt);
+    } catch (deferError) {
+      this.__errorHandler(deferError, '[__deferClaimedTask] deferError', 'Failed to reschedule paused task', task.uid);
+    }
+  }
+
+  /**
+   * @internal
    * @param {JoSkTask} task
    * @returns {Promise<void>}
    */
@@ -2163,6 +2257,11 @@ class JoSk {
       } else {
         this._debug('[__execute] received malformed task', task);
       }
+      return;
+    }
+
+    if (this.__isTaskPaused(task.uid)) {
+      await this.__deferClaimedTask(task);
       return;
     }
 
@@ -2300,6 +2399,11 @@ class JoSk {
   /** @internal */
   async __iterate() {
     if (this.isDestroyed) {
+      return;
+    }
+
+    if (this.__pausedAll) {
+      this.__tick();
       return;
     }
 

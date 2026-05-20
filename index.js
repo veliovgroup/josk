@@ -179,6 +179,10 @@ class JoSk {
     this.__activeExecutions = 0;
     /** @internal */
     this.__pendingTasks = [];
+    /** @internal */
+    this.__pausedAll = false;
+    /** @internal @type {Set<string>} */
+    this.__pausedTimerIds = new Set();
 
     if (!validExecuteModes.has(this.execute)) {
       throw new Error(errors.execute);
@@ -366,6 +370,8 @@ class JoSk {
   destroy() {
     if (!this.isDestroyed) {
       this.isDestroyed = true;
+      this.__pausedAll = false;
+      this.__pausedTimerIds.clear();
       if (this.nextRevolutionTimeout) {
         clearTimeout(this.nextRevolutionTimeout);
         this.nextRevolutionTimeout = null;
@@ -373,6 +379,72 @@ class JoSk {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Pause this instance from competing for scheduler work.
+   * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to pause all tasks on this instance
+   * @returns {boolean}
+   */
+  pause(timerId) {
+    if (this.isDestroyed) {
+      return false;
+    }
+
+    if (timerId === void 0) {
+      if (this.__pausedAll) {
+        return false;
+      }
+      this.__pausedAll = true;
+      return true;
+    }
+
+    if (typeof timerId !== 'string' || timerId.length === 0) {
+      throw new Error('[josk] [pause] timerId must be a non-empty string');
+    }
+
+    if (!prefixRegex.test(timerId)) {
+      throw new Error('[josk] [pause] timerId must be the string returned from setInterval, setTimeout, or setImmediate');
+    }
+
+    if (this.__pausedTimerIds.has(timerId)) {
+      return false;
+    }
+    this.__pausedTimerIds.add(timerId);
+    return true;
+  }
+
+  /**
+   * Resume competing for scheduler work.
+   * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to resume all
+   * @returns {boolean}
+   */
+  resume(timerId) {
+    if (this.isDestroyed) {
+      return false;
+    }
+
+    if (timerId === void 0) {
+      if (!this.__pausedAll) {
+        return false;
+      }
+      this.__pausedAll = false;
+      return true;
+    }
+
+    if (typeof timerId !== 'string' || timerId.length === 0) {
+      throw new Error('[josk] [resume] timerId must be a non-empty string');
+    }
+
+    if (!prefixRegex.test(timerId)) {
+      throw new Error('[josk] [resume] timerId must be the string returned from setInterval, setTimeout, or setImmediate');
+    }
+
+    if (!this.__pausedTimerIds.has(timerId)) {
+      return false;
+    }
+    this.__pausedTimerIds.delete(timerId);
+    return true;
   }
 
   /** @internal */
@@ -509,6 +581,33 @@ class JoSk {
 
   /**
    * @internal
+   * @param {string} timerId
+   */
+  __isTaskPaused(timerId) {
+    if (this.__pausedAll) {
+      return true;
+    }
+    return this.__pausedTimerIds.has(timerId);
+  }
+
+  /**
+   * @internal
+   * @param {JoSkTask} task
+   * @returns {Promise<void>}
+   */
+  async __deferClaimedTask(task) {
+    const deferMs = Math.max(2000, typeof task.delay === 'number' && task.delay >= 2000 ? task.delay : 2000);
+    const nextExecuteAt = new Date(Date.now() + deferMs);
+    try {
+      await this.__adapterReady();
+      await this.adapter.update(task, nextExecuteAt);
+    } catch (deferError) {
+      this.__errorHandler(deferError, '[__deferClaimedTask] deferError', 'Failed to reschedule paused task', task.uid);
+    }
+  }
+
+  /**
+   * @internal
    * @param {JoSkTask} task
    * @returns {Promise<void>}
    */
@@ -528,6 +627,11 @@ class JoSk {
       } else {
         this._debug('[__execute] received malformed task', task);
       }
+      return;
+    }
+
+    if (this.__isTaskPaused(task.uid)) {
+      await this.__deferClaimedTask(task);
       return;
     }
 
@@ -665,6 +769,11 @@ class JoSk {
   /** @internal */
   async __iterate() {
     if (this.isDestroyed) {
+      return;
+    }
+
+    if (this.__pausedAll) {
+      this.__tick();
       return;
     }
 
