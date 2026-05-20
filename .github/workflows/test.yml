@@ -191,7 +191,7 @@ jobs:
 
   # Node 20/22/24 × pg@8
   test-postgres:
-    name: Node ${{ matrix.node }} / pg@${{ env.LATEST_PG_DRIVER }}
+    name: Node ${{ matrix.node }} / pg@8
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
