@@ -146,6 +146,28 @@ Call this before `process.exit()` for clean shutdown, especially in tests.
 
 Healthcheck. Returns `{ status, code, statusCode }` on success (status `'OK'`, code `200`) or `{ status: 'Error reason', code: 500, statusCode: 500, error }` on failure. Pair with the adapter being initialized — `ping` waits for `adapter.ready()` first.
 
+### `pause(timerId?)` → `boolean`
+
+Pause this instance from competing for scheduler work. Returns `true` if state changed, `false` if already paused for that scope.
+
+**Scope:** Meaningful only with **multiple JoSk instances** on the same storage prefix (another instance can claim while this one is paused). For **long-running** work that should not block the handler until complete — not for quick ticks on a single process.
+
+- **`pause()`** — skip `acquireLock` on revolving ticks. In-flight handlers continue. Tasks remain in storage; other cluster members keep competing.
+- **`pause(timerId)`** — when this instance claims that task, reschedule via `adapter.update` without running the handler. `timerId` must be the string returned from `setInterval`, `setTimeout`, or `setImmediate` — not the bare `uid` passed into `set*`.
+
+Per-process only — not cluster-wide. Throws if `timerId` is not a non-empty string or not a `set*` return value. On destroyed instance, returns `false` (no `onError`).
+
+### `resume(timerId?)` → `boolean`
+
+Resume competing. Returns `true` if pause cleared, `false` if not paused.
+
+- **`resume()`** — clear global pause.
+- **`resume(timerId)`** — clear per-task pause (same `set*` return value as `pause(timerId)`).
+
+Takes effect on the next revolving tick. Same validation and destroyed behavior as `pause`.
+
+**Inside handlers:** You may call `pause()` / `pause(timerId)` from the `set*` handler after claiming external queue work, then `ready()` (or return after explicit `ready()`) to release the JoSk tick quickly, and `resume()` / `resume(timerId)` when long work on this instance finishes. See [patterns.md](patterns.md) — “Queue claim + fast `ready()`”.
+
 ## Handler shape
 
 `JoSkTaskHandler = (ready: JoSkReady) => void | Promise<void>`.

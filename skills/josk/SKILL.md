@@ -1,6 +1,6 @@
 ---
 name: josk
-description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster hash-tag routing via `useHashTags`, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `execute`, `concurrency`, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
+description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster hash-tag routing via `useHashTags`, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
 ---
 
 # JoSk
@@ -54,6 +54,7 @@ Read `references/` lazily — do not guess v4/v5/v6 semantics from memory.
 - [ ] Storage + connected client
 - [ ] `onError` hook
 - [ ] `jobs.destroy()` on shutdown ([patterns.md](references/patterns.md))
+- [ ] `pause()` / `resume()` only multi-instance + long work that must not block the JoSk loop (see [patterns.md](references/patterns.md))
 - [ ] Adapter choice (below)
 
 ## Pick the adapter

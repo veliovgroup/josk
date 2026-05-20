@@ -166,6 +166,127 @@ Throws on the constructor if `concurrency` isn't a positive integer or `Infinity
 
 Per-instance — not per-cluster. If you need cluster-wide rate limiting, that lives in your handler logic, not in `concurrency`.
 
+## Instance backpressure (`pause` / `resume`)
+
+**When it applies:** Only in a **multi-instance** deployment (cluster, PM2, Kubernetes, multiple servers) where another JoSk peer can take over while this process is busy. On a **single instance**, `pause()` only stops your own revolving loop — there is no peer to pick up work, so it is usually unnecessary.
+
+Use for **long-running** handler work (large batches, slow APIs, heavy CPU) that must **not** hold the JoSk tick open until finished. Short handlers should finish normally (or call `ready()` early) without pause/resume.
+
+When this process is saturated (long handlers, GC pressure, batch imports), stop competing so peers claim due work:
+
+```js
+app.on('load-shed', () => jobs.pause());
+app.on('load-ok', () => jobs.resume());
+
+// or per heavy task on this pod only (use set* return value):
+const reindex = await jobs.setInterval(runReindex, 3600_000, 'reindex-all');
+jobs.pause(reindex);
+// later:
+jobs.resume(reindex);
+```
+
+- Does not cancel in-flight handlers.
+- Does not remove tasks from storage.
+- Per-task `pause(timerId)` reschedules claims this instance already won; use `execute: 'one'` if this instance still grabs too many tasks per lease.
+
+### Queue claim + fast `ready()` (inside the `set*` handler)
+
+Call `pause()` / `resume()` (global) or `pause(timerId)` / `resume(timerId)` **inside** the function passed to `setInterval` / `setTimeout` / `setImmediate` — after you have claimed work from your own queue, **before** `ready()` or before the handler returns. JoSk releases the cluster tick quickly; this instance stops competing until heavy work on **this** process is done.
+
+Typical flow:
+
+1. This JoSk instance wins the scheduled tick and enters the handler.
+2. Pull / lock records from a 3rd-party queue (delete, flag busy, etc.).
+3. `pause()` or `pause(timerId)`, then `await ready()` (callback style) or `return` after branching async work (Promise style — see below).
+4. Run the long job on this instance (or in a detached branch).
+5. When that work truly finishes on this instance, `resume()` or `resume(timerId)` in `finally`.
+
+Use the **`timerId`** returned from `set*` for per-task pause (store it in closure — the handler does not receive it as an argument).
+
+**Global pause** — this instance yields **all** scheduler competition while the batch runs:
+
+```js
+const timerId = await jobs.setInterval(async (ready) => {
+  const batch = await thirdPartyQueue.claim(50);
+  if (batch.length === 0) {
+    await ready();
+    return;
+  }
+
+  jobs.pause();
+  await ready(); // release JoSk claim; next interval tick can be claimed elsewhere
+
+  try {
+    await processBatch(batch);
+  } finally {
+    jobs.resume();
+  }
+}, 5000, 'queue-poller');
+```
+
+**Per-task pause** — same pattern, but only this timer id is deferred on reclaim; other tasks on this instance keep competing:
+
+```js
+const timerId = await jobs.setInterval(async (ready) => {
+  const batch = await thirdPartyQueue.claim(50);
+  if (batch.length === 0) {
+    await ready();
+    return;
+  }
+
+  jobs.pause(timerId);
+  await ready();
+
+  try {
+    await processBatch(batch);
+  } finally {
+    jobs.resume(timerId);
+  }
+}, 5000, 'queue-poller');
+```
+
+**Promise handler without `ready` in the signature** — call `ready()` explicitly before starting fire-and-forget work; otherwise JoSk auto-`ready()` when the returned Promise resolves (too early):
+
+```js
+const timerId = await jobs.setInterval(async (ready) => {
+  const batch = await thirdPartyQueue.claim(50);
+  if (batch.length === 0) {
+    return;
+  }
+
+  jobs.pause(timerId);
+  await ready();
+
+  try {
+    await processBatch(batch);
+  } finally {
+    jobs.resume(timerId);
+  }
+}, 5000, 'queue-poller');
+```
+
+**Branch off without awaiting** (work continues after handler returns) — still call `ready()` before the branch so the storage row is updated; always `resume()` in the branch `finally`:
+
+```js
+const timerId = await jobs.setInterval((ready) => {
+  thirdPartyQueue.claim(50, (err, batch) => {
+    if (err || !batch.length) {
+      ready();
+      return;
+    }
+
+    jobs.pause(timerId);
+    ready();
+
+    processBatch(batch, () => {
+      jobs.resume(timerId);
+    });
+  });
+}, 5000, 'queue-poller');
+```
+
+Guard `resume()` with `try/finally` so a failed batch does not leave the instance paused. If the process crashes after `pause()` and before `resume()`, competition stays off until restart — persist load state or call `resume()` on startup if needed.
+
 ## `execute: 'batch'` vs `'one'`
 
 - `'batch'` (default): under one lease, drain all currently due tasks. Best throughput, fewest storage round-trips.

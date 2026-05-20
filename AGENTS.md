@@ -6,7 +6,7 @@ JoSk. Node task scheduler. Single execution across scaled instances (clusters, m
 Single cluster-wide claim per scheduled tick in horizontally scaled Node.js/Bun.js. Guarantees vary by method: `setInterval` at-least-once, `setTimeout`/`setImmediate` at-most-once (removed before handler). Bulletproof. High perf. Storage agnostic. Easy adapters.
 
 ## Structure
-- `index.js`: core ESM (JoSk + adapters). Edit this.
+- `index.js`: core ESM (JoSk + adapters). Edit this. Public control: `pause()` / `pause(timerId)` stop this instance competing; `resume()` / `resume(timerId)` restore. `timerId` is the string from `set*` only (no bare uid). Document as multi-instance + long-running only (no benefit single process; short handlers need no pause).
 - `index.cjs`: generated via `prepublishOnly: rollup index.js --file index.cjs --format cjs` (npm publish runs it). CJS bundle for "require". Never edit directly. Regenerate before publish.
 - `adapters/`: postgres.js (pg Pool/tables/indexes/locks), mongo.js, redis.js, blank-example.js + .d.ts. Implement Adapter.
 - `test/`: npm-*.js (mocha+chai), meteor-*.js.
@@ -89,7 +89,7 @@ npm run test:coverage
 ```
 
 - ~3-6min. Requires running DBs.
-- Cover: set*/clear*, zombie (zombieTime), onError/onExecuted, autoClear, destroy mid-run, CRON helper, promise vs cb ready(), malformed, short delays, concurrent.
+- Cover: set*/clear*, zombie (zombieTime), onError/onExecuted, autoClear, destroy mid-run, pause/resume global and per-uid, CRON helper, promise vs cb ready(), malformed, short delays, concurrent.
 - Add test for any change. Target 99%+.
 
 ## Guidelines
