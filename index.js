@@ -429,6 +429,7 @@ class JoSk {
         return false;
       }
       this.__pausedAll = false;
+      this.__nudgeRevolution();
       return true;
     }
 
@@ -444,7 +445,25 @@ class JoSk {
       return false;
     }
     this.__pausedTimerIds.delete(timerId);
+    this.__nudgeRevolution();
     return true;
+  }
+
+  /**
+   * Schedule an immediate revolution after pause clears (do not wait for jitter tick).
+   * @internal
+   */
+  __nudgeRevolution() {
+    if (this.isDestroyed) {
+      return;
+    }
+
+    if (this.nextRevolutionTimeout) {
+      clearTimeout(this.nextRevolutionTimeout);
+      this.nextRevolutionTimeout = null;
+    }
+
+    this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), 0);
   }
 
   /** @internal */

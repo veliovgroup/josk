@@ -164,7 +164,7 @@ Resume competing. Returns `true` if pause cleared, `false` if not paused.
 - **`resume()`** — clear global pause.
 - **`resume(timerId)`** — clear per-task pause (same `set*` return value as `pause(timerId)`).
 
-Takes effect on the next revolving tick. Same validation and destroyed behavior as `pause`.
+Schedules an immediate revolution attempt (in addition to the normal jitter tick). Same validation and destroyed behavior as `pause`.
 
 **Inside handlers:** You may call `pause()` / `pause(timerId)` from the `set*` handler after claiming external queue work, then `ready()` (or return after explicit `ready()`) to release the JoSk tick quickly, and `resume()` / `resume(timerId)` when long work on this instance finishes. See [patterns.md](patterns.md) — “Queue claim + fast `ready()`”.
 
