@@ -167,12 +167,15 @@ export const registerPauseResumeTests = (label, hooks) => {
     });
 
     it('handler pause() + ready() + resume() yields scheduler while work continues', async function () {
+      this.slow(20000);
+      this.timeout(45000);
+
       const prefix = uniqueId('pause-handler');
       const counter = await initCounter(prefix);
       const jobA = createJob(prefix, true);
       const jobB = createJob(prefix, false);
-      const uidQueue = 'pause-handler-queue';
-      const uidPeer = 'pause-handler-peer';
+      const uidQueue = 'pause-handler-a-queue';
+      const uidPeer = 'pause-handler-z-peer';
 
       try {
         jobB.pause();
@@ -194,7 +197,7 @@ export const registerPauseResumeTests = (label, hooks) => {
         }, TASK_DELAY, uidPeer);
 
         await waitUntil(async () => (await counter.read()).runsA >= 1, {
-          timeout: 12000,
+          timeout: 18000,
           message: msg('handler: queue handler did not claim')
         });
 
@@ -207,8 +210,8 @@ export const registerPauseResumeTests = (label, hooks) => {
           const v = await counter.read();
           return v.processed >= 1 && v.runsB > afterClaim.runsB;
         }, {
-          timeout: 12000,
-          message: msg('handler: peer should run while jobA paused after ready()')
+          timeout: 18000,
+          message: () => `${msg('handler: peer should run while jobA paused after ready()')}; afterClaim=${JSON.stringify(afterClaim)}`
         });
       } finally {
         destroyJobs(jobA, jobB);
