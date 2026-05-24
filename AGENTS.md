@@ -116,6 +116,7 @@ Update this AGENTS.md on major refactors.
 - Skill frontmatter `description` must be one inline quoted string (not YAML folded blocks) for cross-tool installers
 - Skill frontmatter description: third-person ("Guides… Use when…"), not imperative "Trigger when"
 - CI matrix cells: adapter-scoped mocha file only, not full suite per cell
+- pause/resume `timerId`: string returned from `set*` only (no bare uid)
 
 ## Learned Workspace Facts
 
@@ -127,7 +128,7 @@ Update this AGENTS.md on major refactors.
 - `npm run test:bun`: pass explicit files under `test/jest/`, not directory (Bun resolver)
 - CI `test-bun` job: Bun `latest` only; `engines.bun` stays `>=1.1.0`
 - CI: adapter-scoped matrix cells run one mocha file per service; `test-core` runs types/guards/Jest/coverage once (Node 22)
-- Meteor CI: `METEOR_TEST_SUITE` in `package.js` selects `meteor-ci-{mongo,redis,postgres}.js`; skip Meteor 3.3.0; Mongo CI omits `MONGO_URL`
+- Meteor: `api.versionsFrom(['1.12', '2.14', '3.2'])`; `package.json` `meteor.versionsFrom` / `meteor.node` document bundled Node tiers (npm `engines` unchanged); CI matrix 1.12.1 (not 1.12.2 — broken installer) + 2.14–2.16 + 3.2/3.3.1/3.4; `meteorTestProfile()` branches npm pins + mocha driver (Node 12 / 14–17 / 18+); `test/meteor-cron.js` cron-parser v4/v5 shim; `METEOR_TEST_SUITE` → `meteor-ci-{mongo,redis,postgres}.js`; skip 3.3.0; Mongo CI omits `MONGO_URL`
 - Meteor package tests: `meteor test-packages --driver-package=meteortesting:mocha` (not `@zodern/mtest`, TinyTest-only)
-- Pause/resume integration: shared `test/pause-resume-tests.js`; Meteor re-export `test/meteor-pause-resume.js`; wired into npm-* and meteor-* adapter files
-- Multi-instance pause/resume tests: peer `readyOnly` handlers, `TASK_DELAY` ≥2048ms; handler race — `jobB.pause()` until first queue claim then `resume()`
+- Package source: `import from 'crypto'` not `node:crypto` — Meteor 1 isobuild compatibility; npm/Bun latest unchanged
+- Pause/resume: shared `test/pause-resume-tests.js`; Meteor `test/meteor-pause-resume.js`; wired into npm-* and meteor-* files; multi-instance tests use peer `readyOnly`, `TASK_DELAY` ≥2048ms, split warmup `waitUntil` for runsA/runsB on slow CI

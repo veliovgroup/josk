@@ -218,7 +218,21 @@ Environment variables consumed by the Meteor test suite:
 - `PG_URL` — required for the PostgreSQL adapter suite, e.g. `postgres://postgres:postgres@127.0.0.1:5432/postgres`; Postgres tests are skipped when this is unset
 - `DEBUG=true` — enables verbose JoSk logging during the run
 
-## Known Meteor Issues:
+## Requirements
+
+Meteor **1.12+**, **2.14+**, and **3.2+** supported (`api.versionsFrom(['1.12', '2.14', '3.2'])` in `package.js`; mirrored in `package.json` → `meteor.versionsFrom`). `meteorTestProfile()` branches on Meteor's bundled Node at build time:
+
+| Node | Meteor | Test npm pins | Mocha driver |
+|------|--------|---------------|--------------|
+| 12 | 1.12.x | `chai@4`, `cron-parser@4`, `pg@8.7` | `meteortesting:mocha@2.0.3` |
+| 14–17 | 2.x | `chai@4`, `cron-parser@4`, `pg@8.11` | `meteortesting:mocha@2.5.3` |
+| 18+ | 3.x | current majors | `meteortesting:mocha@3.3.0` |
+
+Meteor 1 CI uses `1.12.1` (`1.12.2` installer tarball broken — [meteor/meteor#11856](https://github.com/meteor/meteor/issues/11856)). TypeScript tests (`meteor-types.ts`) run on Node 14+ only. npm `devDependencies` unchanged for `npm test`.
+
+Meteor 2.x still uses **fibers** — see below if handlers throw `Can't wait without a fiber`.
+
+## Known Meteor Issues (Meteor 2 / fibers)
 
 `meteor@1` and `meteor@2` known to rely on `fibers` and may cause the next exception:
 

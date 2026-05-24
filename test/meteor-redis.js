@@ -1,7 +1,7 @@
 import { JoSk, RedisAdapter } from '../index.js';
 import { createClient } from 'redis';
 
-import { CronExpressionParser } from 'cron-parser';
+import { parseCronExpression } from './meteor-cron.js';
 import { assert } from 'chai';
 import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
 import { registerMeteorPauseResumeTests } from './meteor-pause-resume.js';
@@ -119,7 +119,7 @@ before(async function () {
   });
 
   createCronTask = async (uniqueName, cronTask, task) => {
-    const next = +CronExpressionParser.parse(cronTask).next().toDate();
+    const next = +parseCronExpression(cronTask).next().toDate();
     const timeout = next - Date.now();
 
     return await cron.setTimeout(function (done) {

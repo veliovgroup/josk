@@ -533,11 +533,11 @@ jobs:
       max-parallel: 12
       matrix:
         meteor:
-          # top 3 minor releases — Meteor v2
+          # v1 latest patch — 1.12.2 installer tarball broken (meteor/meteor#11856)
+          - '1.12.1'
           - '2.14'
           - '2.15'
           - '2.16'
-          # top 3 minor releases — Meteor v3
           - '3.2'
           # 3.3.0 breaks babel-compiler when typescript is used (meteor/meteor#13886)
           - '3.3.1'
@@ -571,6 +571,7 @@ jobs:
       max-parallel: 12
       matrix:
         meteor:
+          - '1.12.1'
           - '2.14'
           - '2.15'
           - '2.16'
@@ -619,6 +620,7 @@ jobs:
       max-parallel: 12
       matrix:
         meteor:
+          - '1.12.1'
           - '2.14'
           - '2.15'
           - '2.16'

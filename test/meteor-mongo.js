@@ -1,6 +1,6 @@
 import { MongoInternals } from 'meteor/mongo';
 import { JoSk, MongoAdapter } from '../index.js';
-import { CronExpressionParser } from 'cron-parser';
+import { parseCronExpression } from './meteor-cron.js';
 import { assert } from 'chai';
 import { destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
 import { registerMeteorPauseResumeTests } from './meteor-pause-resume.js';
@@ -102,11 +102,11 @@ before(function () {
   createCronTask = async (uniqueName, cronTask, task) => {
     const taskId = await cron.setInterval(function (ready) {
       if (task()) {
-        ready(CronExpressionParser.parse(cronTask).next().toDate());
+        ready(parseCronExpression(cronTask).next().toDate());
       } else {
         cron.clearInterval(taskId);
       }
-    }, +CronExpressionParser.parse(cronTask).next().toDate() - Date.now(), uniqueName);
+    }, +parseCronExpression(cronTask).next().toDate() - Date.now(), uniqueName);
 
     return taskId;
   };

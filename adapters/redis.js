@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from 'crypto';
 
 /**
  * @typedef {import('redis').RedisClientType | import('redis').RedisClusterType} RedisClient
