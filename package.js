@@ -8,7 +8,7 @@ Package.describe({
 
 /**
  * Meteor test-packages runs package.js under each release's bundled Node.
- * @returns {{ npm: Record<string, string>, mocha: string, typescript: boolean }}
+ * @returns {{ npm: Record<string, string>, mocha: string }}
  */
 const meteorTestProfile = () => {
   const nodeMajor = parseInt(String(process.versions.node).split('.')[0], 10);
@@ -22,7 +22,6 @@ const meteorTestProfile = () => {
         pg: '8.16.3',
       },
       mocha: 'meteortesting:mocha@3.3.0',
-      typescript: true,
     };
   }
 
@@ -35,27 +34,15 @@ const meteorTestProfile = () => {
         pg: '8.11.3',
       },
       mocha: 'meteortesting:mocha@2.1.0',
-      typescript: true,
     };
   }
 
-  // Meteor 1.12.x — Node 12
-  return {
-    npm: {
-      'cron-parser': '4.9.0',
-      chai: '4.4.1',
-      redis: '4.7.1',
-      pg: '8.7.3',
-    },
-    // 2.0.3+ needs ecmascript@0.15.1; Meteor 1.12 ships 0.14.4
-    mocha: 'meteortesting:mocha@1.1.5',
-    typescript: false,
-  };
+  throw new Error(`ostrio:cron-jobs requires Node >= 14 (got ${process.version})`);
 };
 
 Package.onUse((api) => {
-  // CI: 1.12.1, 2.14–2.16, 3.2 / 3.3.1 / 3.4 (skip 3.3.0)
-  api.versionsFrom(['1.12', '2.14', '3.2']);
+  // CI: 2.14–2.16, 3.2 / 3.3.1 / 3.4 (skip 3.3.0)
+  api.versionsFrom(['2.14', '3.2']);
   api.use('ecmascript', 'server');
   // TypeScript setup
   api.use(['zodern:types@1.0.13', 'typescript'], ['client', 'server'], { weak: true });
@@ -69,16 +56,10 @@ Package.onTest((api) => {
 
   Npm.depends(profile.npm);
 
-  const testUses = ['ecmascript', 'mongo', profile.mocha];
-  if (profile.typescript) {
-    testUses.push('zodern:types', 'typescript');
-  }
-  api.use(testUses, 'server');
+  api.use(['ecmascript', 'mongo', profile.mocha, 'zodern:types', 'typescript'], 'server');
 
   const suite = process.env.METEOR_TEST_SUITE;
-  const defaultTests = profile.typescript
-    ? ['test/meteor.js', 'test/meteor-types.ts']
-    : ['test/meteor.js'];
+  const defaultTests = ['test/meteor.js', 'test/meteor-types.ts'];
   const testFiles = suite === 'mongo'
     ? ['test/meteor-ci-mongo.js']
     : suite === 'redis'

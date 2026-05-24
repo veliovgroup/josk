@@ -128,7 +128,7 @@ Update this AGENTS.md on major refactors.
 - `npm run test:bun`: pass explicit files under `test/jest/`, not directory (Bun resolver)
 - CI `test-bun` job: Bun `latest` only; `engines.bun` stays `>=1.1.0`
 - CI: adapter-scoped matrix cells run one mocha file per service; `test-core` runs types/guards/Jest/coverage once (Node 22)
-- Meteor: `api.versionsFrom(['1.12', '2.14', '3.2'])`; `package.json` `meteor.versionsFrom` / `meteor.node` document bundled Node tiers (npm `engines` unchanged); CI matrix 1.12.1 (not 1.12.2 — broken installer) + 2.14–2.16 + 3.2/3.3.1/3.4; `meteorTestProfile()` branches npm pins + mocha driver (Node 12 / 14–17 / 18+); `test/meteor-cron.js` cron-parser v4/v5 shim; `METEOR_TEST_SUITE` → `meteor-ci-{mongo,redis,postgres}.js`; skip 3.3.0; Mongo CI omits `MONGO_URL`
+- Meteor: `api.versionsFrom(['2.14', '3.2'])`; npm Node ≥20.9; Meteor 2.x bundles Node 14 (`randomUUID` missing — `createRandomId` uses `randomBytes` hex fallback); `package.json` `meteor.versionsFrom` / `meteor.node` (npm `engines` unchanged); CI matrix 2.14–2.16 + 3.2/3.3.1/3.4; `meteorTestProfile()` Node 14–17 / 18+; `test/meteor-cron.js` cron-parser v4/v5 shim; `METEOR_TEST_SUITE` → `meteor-ci-{mongo,redis,postgres}.js`; skip 3.3.0; Mongo CI omits `MONGO_URL`
 - Meteor package tests: mocha version pinned in `package.js` `meteorTestProfile()` only; CLI `--driver-package=meteortesting:mocha` (no `@` — versioned CLI breaks test-packages on 3.x); do not commit `.versions`
-- Package source: `import from 'crypto'` not `node:crypto` — Meteor 1 isobuild compatibility; npm/Bun latest unchanged
+- Package source: `import from 'crypto'` not `node:crypto` — Meteor isobuild compatibility; npm/Bun latest unchanged
 - Pause/resume: shared `test/pause-resume-tests.js`; Meteor `test/meteor-pause-resume.js`; wired into npm-* and meteor-* files; multi-instance tests use peer `readyOnly`, `TASK_DELAY` ≥2048ms, split warmup `waitUntil` for runsA/runsB on slow CI

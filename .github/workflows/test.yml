@@ -533,8 +533,6 @@ jobs:
       max-parallel: 12
       matrix:
         meteor:
-          # v1 latest patch — 1.12.2 installer tarball broken (meteor/meteor#11856)
-          - '1.12.1'
           - '2.14'
           - '2.15'
           - '2.16'
@@ -572,7 +570,6 @@ jobs:
       max-parallel: 12
       matrix:
         meteor:
-          - '1.12.1'
           - '2.14'
           - '2.15'
           - '2.16'
@@ -622,7 +619,6 @@ jobs:
       max-parallel: 12
       matrix:
         meteor:
-          - '1.12.1'
           - '2.14'
           - '2.15'
           - '2.16'
