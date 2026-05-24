@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 
 import { MongoAdapter } from './adapters/mongo.js';
 import { RedisAdapter } from './adapters/redis.js';
@@ -7,7 +7,7 @@ import { PostgresAdapter } from './adapters/postgres.js';
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 const validExecuteModes = new Set(['batch', 'one']);
 
-const createRandomId = () => randomUUID();
+const createRandomId = typeof randomUUID === 'function' ? () => randomUUID() : () => randomBytes(16).toString('hex');
 const isPromiseLike = (value) => {
   return value !== null && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function';
 };
@@ -494,7 +494,8 @@ class JoSk {
       this.__adapterReadyPromise = Promise.resolve().then(() => this.adapter.ready());
     }
 
-    return await this.__adapterReadyPromise;
+    await this.__adapterReadyPromise;
+    return;
   }
 
   /** @internal */
