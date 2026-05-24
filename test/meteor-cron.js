@@ -18,7 +18,14 @@ const toNativeDate = (value) => {
 
 /**
  * cron-parser v4: parseExpression(); v5: CronExpressionParser.parse().
- * Meteor package tests pin v4 for Meteor 2 (Node 14).
+ * Meteor package tests pin v4 for Meteor 2 (Node 14), v5 for Meteor 3 (Node 18+).
+ *
+ * The default ESM import shape differs per bundler:
+ *   - Meteor 2 / npm with v4: `cronParser` is the CronParser fn with `.parseExpression`.
+ *   - Meteor 3 with v5: `cronParser` is the CronExpressionParser class itself
+ *     (resolves to `exports.default`) with `.parse`.
+ *   - Node ESM with v5: `cronParser` is the module-exports namespace with
+ *     `.CronExpressionParser`.
  *
  * Returns a thin iterator so tests can keep `parseCronExpression(expr).next().toDate()`.
  * Each `.next()` re-parses with `currentDate: new Date()` so v5 always schedules from
@@ -33,6 +40,10 @@ export const parseCronExpression = (expression, options) => {
 
     if (typeof cronParser.parseExpression === 'function') {
       return cronParser.parseExpression(expression, opts);
+    }
+
+    if (typeof cronParser.parse === 'function') {
+      return cronParser.parse(expression, opts);
     }
 
     return cronParser.CronExpressionParser.parse(expression, opts);
