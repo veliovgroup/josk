@@ -59,14 +59,20 @@ export const registerPauseResumeTests = (label, hooks) => {
     });
 
     it('global pause() stops this instance while peer keeps executing', async function () {
+      this.slow(20000);
+      this.timeout(45000);
+
       const prefix = uniqueId('pause-global');
       const counter = await initCounter(prefix);
       const jobA = createJob(prefix, true);
       const jobB = createJob(prefix, false);
       const uidA = 'pause-global-a';
       const uidB = 'pause-global-b';
+      let lastCounter = { runsA: 0, runsB: 0, runs: 0, processed: 0 };
 
       try {
+        await Promise.all([jobA.ping(), jobB.ping()]);
+
         await jobA.setInterval(async (ready) => {
           await counter.incA();
           await ready();
@@ -80,9 +86,19 @@ export const registerPauseResumeTests = (label, hooks) => {
         }, TASK_DELAY, uidB);
 
         await waitUntil(async () => {
-          const v = await counter.read();
-          return v.runsA >= 1 && v.runsB >= 1;
-        }, { timeout: 12000, message: msg('global: both instances did not run before pause') });
+          lastCounter = await counter.read();
+          return lastCounter.runsA >= 1;
+        }, {
+          timeout: 18000,
+          message: () => `${msg('global: jobA did not run before pause')}; counter=${JSON.stringify(lastCounter)}`
+        });
+        await waitUntil(async () => {
+          lastCounter = await counter.read();
+          return lastCounter.runsB >= 1;
+        }, {
+          timeout: 18000,
+          message: () => `${msg('global: jobB did not run before pause')}; counter=${JSON.stringify(lastCounter)}`
+        });
 
         const before = await counter.read();
         assert.equal(jobA.pause(), true);

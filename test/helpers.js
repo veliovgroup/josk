@@ -17,7 +17,8 @@ const waitUntil = async (predicate, opts = {}) => {
     await wait(interval);
   }
 
-  assert.fail(`${message}; last value: ${JSON.stringify(lastValue)}`);
+  const detail = typeof message === 'function' ? message(lastValue) : message;
+  assert.fail(`${detail}; last value: ${JSON.stringify(lastValue)}`);
 };
 
 const uniqueId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
