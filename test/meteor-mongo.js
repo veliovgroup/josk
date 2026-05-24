@@ -454,10 +454,10 @@ registerMeteorPauseResumeTests('Mongo', {
       read: async () => {
         const rec = await collection.findOne({ _id });
         return {
-          runsA: rec?.runsA || 0,
-          runsB: rec?.runsB || 0,
-          runs: rec?.runs || 0,
-          processed: rec?.processed || 0
+          runsA: (rec && rec.runsA) || 0,
+          runsB: (rec && rec.runsB) || 0,
+          runs: (rec && rec.runs) || 0,
+          processed: (rec && rec.processed) || 0
         };
       },
       cleanup: () => collection.deleteOne({ _id })

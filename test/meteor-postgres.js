@@ -108,7 +108,7 @@ describePostgres('Postgres - JoSk', function () {
 
     const getCount = async () => {
       const result = await pool.query('SELECT count_runs FROM josk_test_counts WHERE key = $1', [key]);
-      return result.rows[0]?.count_runs || 0;
+      return (result.rows[0] && result.rows[0].count_runs) || 0;
     };
 
     try {
@@ -188,10 +188,10 @@ describePostgres('Postgres - JoSk', function () {
         );
         const row = result.rows[0];
         return {
-          runsA: row?.runs_a || 0,
-          runsB: row?.runs_b || 0,
-          runs: row?.runs || 0,
-          processed: row?.processed || 0
+          runsA: (row && row.runs_a) || 0,
+          runsB: (row && row.runs_b) || 0,
+          runs: (row && row.runs) || 0,
+          processed: (row && row.processed) || 0
         };
       };
       return {

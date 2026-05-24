@@ -225,16 +225,15 @@ Meteor **1.12+**, **2.14+**, and **3.2+** supported (`api.versionsFrom(['1.12', 
 | Node | Meteor | Test npm pins | Mocha driver |
 |------|--------|---------------|--------------|
 | 12 | 1.12.x | `chai@4`, `cron-parser@4`, `pg@8.7` | `meteortesting:mocha@1.1.5` |
-| 14–17 | 2.x | `chai@4`, `cron-parser@4`, `pg@8.11` | `meteortesting:mocha@2.5.3` |
+| 14–17 | 2.x | `chai@4`, `cron-parser@4`, `pg@8.11` | `meteortesting:mocha@2.1.0` |
 | 18+ | 3.x | current majors | `meteortesting:mocha@3.3.0` |
 
 Meteor 1 CI uses `1.12.1` (`1.12.2` installer tarball broken — [meteor/meteor#11856](https://github.com/meteor/meteor/issues/11856)). TypeScript tests (`meteor-types.ts`) run on Node 14+ only. npm `devDependencies` unchanged for `npm test`.
 
-Do not commit `.versions` — it locks packages for one Meteor release and breaks multi-version CI. Pass a versioned mocha driver on the CLI (same tiers as `meteorTestProfile()`); CI uses `scripts/meteor-mocha-driver.sh`:
+Do not commit `.versions` — it locks packages for one Meteor release and breaks multi-version CI. Pin the driver in `package.js` only; pass `--driver-package=meteortesting:mocha` on the CLI (`@x.y.z` on the CLI breaks `test-packages` on Meteor 3.x):
 
 ```shell
-MOCHA_DRIVER=$(bash ./scripts/meteor-mocha-driver.sh)
-meteor test-packages ./ --driver-package="$MOCHA_DRIVER" --once
+meteor test-packages ./ --driver-package=meteortesting:mocha --once
 ```
 
 Meteor 2.x still uses **fibers** — see below if handlers throw `Can't wait without a fiber`.

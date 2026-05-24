@@ -561,8 +561,7 @@ jobs:
         env:
           METEOR_TEST_SUITE: mongo
         run: |
-          MOCHA_DRIVER=$(bash ./scripts/meteor-mocha-driver.sh)
-          meteor test-packages ./ --driver-package="$MOCHA_DRIVER" --once
+          meteor test-packages ./ --driver-package=meteortesting:mocha --once
 
   test-meteor-redis:
     name: Meteor ${{ matrix.meteor }} / redis:${{ matrix.redis-server }}
@@ -612,8 +611,7 @@ jobs:
           METEOR_TEST_SUITE: redis
           REDIS_URL: redis://127.0.0.1:6379
         run: |
-          MOCHA_DRIVER=$(bash ./scripts/meteor-mocha-driver.sh)
-          meteor test-packages ./ --driver-package="$MOCHA_DRIVER" --once
+          meteor test-packages ./ --driver-package=meteortesting:mocha --once
 
   test-meteor-postgres:
     name: Meteor ${{ matrix.meteor }} / pg:${{ matrix.postgres-server }}
@@ -667,5 +665,4 @@ jobs:
           METEOR_TEST_SUITE: postgres
           PG_URL: postgres://postgres:postgres@127.0.0.1:5432/josk_test
         run: |
-          MOCHA_DRIVER=$(bash ./scripts/meteor-mocha-driver.sh)
-          meteor test-packages ./ --driver-package="$MOCHA_DRIVER" --once
+          meteor test-packages ./ --driver-package=meteortesting:mocha --once

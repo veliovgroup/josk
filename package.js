@@ -34,7 +34,7 @@ const meteorTestProfile = () => {
         redis: '4.7.1',
         pg: '8.11.3',
       },
-      mocha: 'meteortesting:mocha@2.5.3',
+      mocha: 'meteortesting:mocha@2.1.0',
       typescript: true,
     };
   }
