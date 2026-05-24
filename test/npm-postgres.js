@@ -13,7 +13,7 @@ if (!process.env.PG_URL) {
 const DEBUG = process.env.DEBUG === 'true';
 const ZOMBIE_TIME = 5000;
 const minRevolvingDelay = 32;
-const maxRevolvingDelay = 128;
+const maxRevolvingDelay = 256;
 const describePostgres = process.env.PG_URL ? describe : describe.skip;
 
 let pool;

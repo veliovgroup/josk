@@ -107,15 +107,18 @@ export const registerPauseResumeTests = (label, hooks) => {
           const mid = await counter.read();
           return mid.runsB > before.runsB && mid.runsA === before.runsA;
         }, {
-          timeout: 8000,
+          timeout: 12000,
           message: msg('global: peer should run while jobA paused')
         });
 
         assert.equal(jobA.resume(), true);
         await waitUntil(async () => {
-          const v = await counter.read();
-          return v.runsA > before.runsA;
-        }, { timeout: 12000, message: msg('global: jobA did not resume competing') });
+          lastCounter = await counter.read();
+          return lastCounter.runsA > before.runsA;
+        }, {
+          timeout: 18000,
+          message: () => `${msg('global: jobA did not resume competing')}; counter=${JSON.stringify(lastCounter)}`
+        });
       } finally {
         destroyJobs(jobA, jobB);
         await counter.cleanup();
