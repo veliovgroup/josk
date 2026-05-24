@@ -47,7 +47,8 @@ const meteorTestProfile = () => {
       redis: '4.7.1',
       pg: '8.7.3',
     },
-    mocha: 'meteortesting:mocha@2.0.3',
+    // 2.0.3+ needs ecmascript@0.15.1; Meteor 1.12 ships 0.14.4
+    mocha: 'meteortesting:mocha@1.1.5',
     typescript: false,
   };
 };
