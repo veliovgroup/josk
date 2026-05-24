@@ -9,3 +9,4 @@ npm-debug.log*
 *.tgz
 /.claude
 /docs/superpowers
+.versions
