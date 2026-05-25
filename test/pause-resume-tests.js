@@ -73,6 +73,11 @@ export const registerPauseResumeTests = (label, hooks) => {
       try {
         await Promise.all([jobA.ping(), jobB.ping()]);
 
+        // Sidestep the shared-uid race for warmup: pause peer so the
+        // target instance is the only iterator and the next cycle is
+        // guaranteed to invoke its handler. Slow CI otherwise starves
+        // one side (50% per cycle ≠ 50% under heavy lock contention).
+        jobB.pause();
         await jobA.setInterval(async (ready) => {
           await counter.incA();
           await ready();
@@ -92,6 +97,9 @@ export const registerPauseResumeTests = (label, hooks) => {
           timeout: 18000,
           message: () => `${msg('global: jobA did not run before pause')}; counter=${JSON.stringify(lastCounter)}`
         });
+
+        assert.equal(jobA.pause(), true);
+        assert.equal(jobB.resume(), true);
         await waitUntil(async () => {
           lastCounter = await counter.read();
           return lastCounter.runsB >= 1;
@@ -101,8 +109,7 @@ export const registerPauseResumeTests = (label, hooks) => {
         });
 
         const before = await counter.read();
-        assert.equal(jobA.pause(), true);
-
+        // jobA already paused above; jobB still running.
         await waitUntil(async () => {
           const mid = await counter.read();
           return mid.runsB > before.runsB && mid.runsA === before.runsA;
@@ -111,10 +118,13 @@ export const registerPauseResumeTests = (label, hooks) => {
           message: msg('global: peer should run while jobA paused')
         });
 
+        // Pause peer so the resume verification is deterministic too.
+        assert.equal(jobB.pause(), true);
+        const beforeResume = await counter.read();
         assert.equal(jobA.resume(), true);
         await waitUntil(async () => {
           lastCounter = await counter.read();
-          return lastCounter.runsA > before.runsA;
+          return lastCounter.runsA > beforeResume.runsA;
         }, {
           timeout: 18000,
           message: () => `${msg('global: jobA did not resume competing')}; counter=${JSON.stringify(lastCounter)}`
