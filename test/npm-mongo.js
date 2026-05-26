@@ -399,7 +399,10 @@ describe('Mongo - JoSk', function () {
         } else {
           josk.clearInterval(timers[uniqueName]);
         }
-      }, +CronExpressionParser.parse(cronTask).next().toDate() - Date.now(), uniqueName);
+        // Clamp to 0: under CI load the gap between parse() and Date.now() can
+        // exceed the cron interval, producing a negative delay that
+        // `josk.setInterval` rejects via `isValidDelay`.
+      }, Math.max(0, +CronExpressionParser.parse(cronTask).next().toDate() - Date.now()), uniqueName);
 
       return timers[uniqueName];
     };

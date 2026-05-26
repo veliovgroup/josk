@@ -370,7 +370,10 @@ describe('Redis - JoSk', function () {
     const runs = {};
     const createCronTask = async (uniqueName, cronTask, task, josk = jobCron) => {
       const next = +CronExpressionParser.parse(cronTask).next().toDate();
-      const timeout = next - Date.now();
+      // Clamp to 0: under CI load the gap between parse() and Date.now() can
+      // exceed the cron interval (e.g. 1s for `* * * * * *`), producing a
+      // negative delay that `josk.setTimeout` rejects via `isValidDelay`.
+      const timeout = Math.max(0, next - Date.now());
 
       timers[uniqueName] = await josk.setTimeout(function (ready) {
         ready(() => { // <- call `endit()` right away

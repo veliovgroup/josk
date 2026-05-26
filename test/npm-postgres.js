@@ -295,7 +295,7 @@ describePostgres('PostgresAdapter + JoSk', function () {
       return await jobs.setInterval((ready) => {
         ready(CronExpressionParser.parse(cronStr).next().toDate());
         task();
-      }, next - Date.now(), name);
+      }, Math.max(0, next - Date.now()), name);
     };
 
     const timerId = await setCron(uid, '*/2 * * * * *', () => {

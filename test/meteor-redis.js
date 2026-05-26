@@ -120,7 +120,10 @@ before(async function () {
 
   createCronTask = async (uniqueName, cronTask, task) => {
     const next = +parseCronExpression(cronTask).next().toDate();
-    const timeout = next - Date.now();
+    // Clamp to 0: under CI load the gap between parse() and Date.now() can
+    // exceed the cron interval (e.g. 1s for `* * * * * *`), producing a
+    // negative delay that `cron.setTimeout` rejects via `isValidDelay`.
+    const timeout = Math.max(0, next - Date.now());
 
     return await cron.setTimeout(function (done) {
       done(() => { // <- call `done()` right away
