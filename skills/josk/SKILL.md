@@ -27,7 +27,9 @@ const jobs = new JoSk({
 });
 
 await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m');
-// shutdown: await jobs.destroy();
+// stop: jobs.pause();
+// restart: jobs.resume();
+// shutdown: jobs.destroy();
 ```
 
 ## Reference map
