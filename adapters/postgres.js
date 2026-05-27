@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 /**
  * @typedef {object} PostgresQueryResult
  * @property {number | null | undefined} [rowCount]
@@ -43,8 +45,21 @@
  * @property {boolean} is_deleted
  */
 
-const ADVISORY_LOCK_KEY = 93824517;
+// Two-key advisory lock: a stable JoSk namespace plus a per-prefix hash.
+// `pg_advisory_lock(int4, int4)` lives in its own keyspace, isolated from any
+// single-int callers in the same database. Co-tenant JoSk apps with distinct
+// prefixes get distinct lock IDs, so their schema migrations no longer block
+// each other.
+const ADVISORY_LOCK_NAMESPACE = 0x4A6F536B; // 'JoSk' in ASCII as int32
 const SCHEMA_VERSION = 1;
+
+/**
+ * @param {string} prefix
+ * @returns {number} signed int32 hash of the prefix string
+ */
+const advisoryLockKeyFor = (prefix) => {
+  return createHash('sha256').update(prefix).digest().readInt32BE(0);
+};
 
 /** Class representing PostgreSQL adapter for JoSk */
 class PostgresAdapter {
@@ -69,6 +84,8 @@ class PostgresAdapter {
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
+    /** @internal */
+    this.__advisoryLockKey = advisoryLockKeyFor(this.prefix);
     /** @internal */
     this.__readyPromise = this.__setup();
   }
@@ -103,7 +120,7 @@ class PostgresAdapter {
       }
     }
 
-    await setupClient.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
+    await setupClient.query('SELECT pg_advisory_lock($1, $2)', [ADVISORY_LOCK_NAMESPACE, this.__advisoryLockKey]);
 
     try {
       await setupClient.query(`
@@ -217,7 +234,7 @@ class PostgresAdapter {
       }
     } finally {
       try {
-        await setupClient.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]);
+        await setupClient.query('SELECT pg_advisory_unlock($1, $2)', [ADVISORY_LOCK_NAMESPACE, this.__advisoryLockKey]);
       } finally {
         if (release) {
           release();
