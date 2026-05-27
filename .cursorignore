@@ -3,8 +3,6 @@ node_modules
 .DS_Store
 .eslintcache
 .eslintrc
-.npmignore
-.meteorignore
 cover.jpg
 cover.png
 npm-debug.log*
