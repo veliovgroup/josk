@@ -108,7 +108,7 @@ const jobs = new JoSk({
 
 ## Same options, same methods
 
-Every option from the NPM API (`execute`, `concurrency`, `zombieTime`, `lockOwnerId`, `minRevolvingDelay`, `maxRevolvingDelay`, `autoClear`, `onError`, `onExecuted`, `debug`) and every adapter option (`RedisAdapter.useHashTags`, etc.) work identically here. Every method (`setInterval`, `setTimeout`, `setImmediate`, `clearInterval`, `clearTimeout`, `destroy`, `ping`) works identically too. Refer to `api.md` for signatures and to `patterns.md` for handler styles, CRON via `cron-parser`, and graceful shutdown.
+Every option from the NPM API (`execute`, `concurrency`, `zombieTime`, `lockOwnerId`, `minRevolvingDelay`, `maxRevolvingDelay`, `autoClear`, `onError`, `onExecuted`, `debug`) and every adapter option (`RedisAdapter.useHashTags`, etc.) work identically here. Every method (`setInterval`, `setTimeout`, `setImmediate`, `clearInterval`, `clearTimeout`, `destroy`, `ping`, `pause`, `resume`) works identically too. Refer to `api.md` for signatures and to `patterns.md` for handler styles, CRON via `cron-parser`, and graceful shutdown.
 
 ## Migration to Meteor 3 / async
 
