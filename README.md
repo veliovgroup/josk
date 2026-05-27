@@ -34,7 +34,7 @@ __Note: JoSk is the server-only package.__
   - [Bun runtime](https://github.com/veliovgroup/josk?tab=readme-ov-file#bun-runtime)
   - [Agent Skill (Claude Code, Codex, Cursor, Copilot, Windsurf, …)](https://github.com/veliovgroup/josk?tab=readme-ov-file#agent-skill)
 - [API](https://github.com/veliovgroup/josk?tab=readme-ov-file#api)
-  - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#initialization)
+  - [Constructor `new JoSk()`](https://github.com/veliovgroup/josk?tab=readme-ov-file#new-joskopts)
     - [`RedisAdapter`](https://github.com/veliovgroup/josk?tab=readme-ov-file#redis-adapter)
     - [`MongoAdapter`](https://github.com/veliovgroup/josk?tab=readme-ov-file#mongodb-adapter)
     - [`PostgresAdapter`](#postgresql-adapter)
@@ -76,7 +76,7 @@ __Note: JoSk is the server-only package.__
 ## Prerequisites
 
 - `redis-server@>=5.0.0` or KeyDB — for RedisAdapter (requires `redis` NPM package, both `redis@^4` and `redis@^5` are supported). KeyDB and Valkey are supported with the same single-writer topology.
-- `mongod@>=4.0.0` — for MongoAdapter (requires the official `mongodb` NPM package; the adapter is tested only against the official driver)
+- `mongod@>=4.4` — for MongoAdapter (requires the official `mongodb` NPM package; tested against the official driver only)
 - `postgres@>=12` — for PostgresAdapter (requires `pg@>=8.0.3` NPM package; `pg@7` does not connect on Node 14+)
 - `node@>=20.9.0` — Node.js version
 - `bun@>=1.1.0` — optional, runs the same package and the same Jest suite under [Bun](https://bun.sh) via `bun:test` (see [Bun runtime](#bun-runtime) section)
@@ -452,14 +452,14 @@ Calling `ready()` twice throws (or invokes the callback with `error`) — *"Reso
 For zero-arity handlers (`async function () { … }` or `() => doSomething()`), JoSk auto-calls `ready()` for you when the returned Promise settles. You only need to call `ready()` manually when the handler accepts it as an argument.
 
 ```js
-import parser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 
 const intervalCron = (job, cronExpr, uid) => {
-  const next = () => parser.parseExpression(cronExpr).next().toDate();
+  const next = () => CronExpressionParser.parse(cronExpr).next().toDate();
   return jobs.setInterval(function (ready) {
     job();
     ready(next()); // schedule the next run at the cron's next fire time
-  }, +next() - Date.now(), uid);
+  }, Math.max(0, +next() - Date.now()), uid);
 };
 
 intervalCron(() => sendReport(), '0 9 * * *', 'daily-report-9am');
@@ -786,10 +786,12 @@ redis-cli --no-auth-warning --scan --pattern "josk:{prefix}:*" | xargs redis-cli
 To clean up old tasks via MongoDB use the next query pattern:
 
 ```js
-// Run directly in MongoDB console:
-db.getCollection('__JobTasks__').remove({});
-// If you're using multiple JoSk instances with prefix:
-db.getCollection('__JobTasks__PrefixHere').remove({});
+// Run directly in MongoDB console (default prefix `default`):
+db.getCollection('__JobTasks__default').deleteMany({});
+// If you're using a custom prefix:
+db.getCollection('__JobTasks__PrefixHere').deleteMany({});
+// Lock collection (shared across prefixes by default):
+db.getCollection('__JobTasks__.lock').deleteMany({});
 ```
 
 #### Clean up PostgreSQL
@@ -807,31 +809,7 @@ DELETE FROM josk_locks WHERE lock_key = 'josk-cluster-scheduler.lock';
 
 ### MongoDB connection fine tuning
 
-```js
-// Recommended MongoDB connection options
-// When used with ReplicaSet
-const options = {
-  writeConcern: {
-    j: true,
-    w: 'majority',
-    wtimeout: 30000
-  },
-  readConcern: {
-    level: 'majority'
-  },
-  readPreference: 'primary'
-};
-
-MongoClient.connect('mongodb://url', options, (error, client) => {
-  // To avoid "DB locks" — it's a good idea to use separate DB from "main" application DB
-  const db = client.db('dbName');
-  const jobs = new JoSk({
-    adapter: new MongoAdapter({
-      db: db,
-    })
-  });
-});
-```
+For replica-set tuning, dedicated-DB recommendations, the maintained index inventory, and notes on Mongoose / CosmosDB / DocumentDB compatibility, see [`docs/mongodb.md`](docs/mongodb.md).
 
 ## Prefix mapping
 
@@ -875,71 +853,10 @@ Lease tokens use storage-server time where possible (Redis `PX` TTL, Postgres `C
 
 ## Running Tests
 
-1. Clone this package
-2. In Terminal (*Console*) go to directory where package is cloned
-3. Then run:
+Setup, full and targeted suites, coverage, and the Bun runner live in [`docs/testing.md`](docs/testing.md). Quickstart:
 
 ```shell
-# Before running tests make sure NODE_ENV === development
-# Install NPM dependencies
-npm install --save-dev
-
-# Before running full tests you need MongoDB, Redis, and PostgreSQL servers.
-# Required URLs:
-# - REDIS_URL: Redis connection string
-# - MONGO_URL: MongoDB connection string
-# - PG_URL: PostgreSQL connection string
-REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm test
-
-# Run Jest suite for core plus live adapter contract tests
-REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://localhost:5432/josk-tests" npm run test:jest
-
-# Run the same Jest suite under Bun (bun:test)
-REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://localhost:5432/josk-tests" npm run test:bun
-
-# Coverage report (Jest only — Mocha suites add to coverage when run separately)
-npm run test:coverage
-
-# TypeScript declaration smoke test
-npm run test:types
-
-# If previous run has errors — add "debug" to output extra logs
-DEBUG=true REDIS_URL="redis://127.0.0.1:6379" MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test-001" PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test-001" npm test
-
-# Be patient, tests are taking around 6 mins
-```
-
-### Run Redis tests only
-
-Run Redis-related tests only
-
-```shell
-# Before running Redis tests you need to have Redis server installed and running
-REDIS_URL="redis://127.0.0.1:6379" npm run test:redis
-
-# Be patient, tests are taking around 3 mins
-```
-
-### Run MongoDB tests only
-
-Run MongoDB-related tests only
-
-```shell
-# Before running Mongo tests you need to have MongoDB server installed and running
-MONGO_URL="mongodb://127.0.0.1:27017/npm-josk-test" npm run test:mongo
-
-# Be patient, tests are taking around 3 mins
-```
-
-### Run PostgreSQL tests only
-
-```shell
-# Before running, have PostgreSQL server running and create DB, e.g. npm-josk-test
-# PG_URL is required for PostgreSQL tests.
-# Install pg if not: npm install --save-dev pg
-PG_URL="postgres://postgres:postgres@localhost:5432/npm-josk-test" npm run test:postgres
-
-# Be patient, tests are taking around 3 mins
+REDIS_URL="…" MONGO_URL="…" PG_URL="…" npm test
 ```
 
 ## Why JoSk?
