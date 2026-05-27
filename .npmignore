@@ -1,6 +1,7 @@
 # Internal docs (README.md is force-included by npm regardless)
 *.md
 AGENTS.md
+CLAUDE.md
 
 # Editor / OS junk
 .DS_Store
