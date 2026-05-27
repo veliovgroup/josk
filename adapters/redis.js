@@ -95,6 +95,9 @@ const UPDATE_TASK_SCRIPT = `
   return 1
 `;
 
+// Returns the pre-claim task payload (executeAt = when the task was due) to
+// match the documented adapter contract (docs/adapter-api.md): storage holds
+// the post-claim park time, but callers see the original executeAt.
 const CLAIM_ONE_TASK_SCRIPT = `
   local now = tonumber(ARGV[1])
   local nextExecuteAt = tonumber(ARGV[2])
@@ -118,12 +121,15 @@ const CLAIM_ONE_TASK_SCRIPT = `
       elseif tonumber(task.executeAt) > now then
         redis.call('ZADD', KEYS[1], tonumber(task.executeAt), uid)
       else
+        local originalExecuteAt = task.executeAt
         task.executeAt = nextExecuteAt
         task.claimOwnerId = ARGV[3]
         task.claimLeaseId = ARGV[4]
 
         redis.call('HSET', KEYS[2], uid, cjson.encode(task))
         redis.call('ZADD', KEYS[1], nextExecuteAt, uid)
+
+        task.executeAt = originalExecuteAt
         return cjson.encode(task)
       end
     end
@@ -160,12 +166,15 @@ const CLAIM_BATCH_TASKS_SCRIPT = `
         elseif tonumber(task.executeAt) > now then
           redis.call('ZADD', KEYS[1], tonumber(task.executeAt), uid)
         else
+          local originalExecuteAt = task.executeAt
           task.executeAt = nextExecuteAt
           task.claimOwnerId = ARGV[3]
           task.claimLeaseId = ARGV[4]
 
           redis.call('HSET', KEYS[2], uid, cjson.encode(task))
           redis.call('ZADD', KEYS[1], nextExecuteAt, uid)
+
+          task.executeAt = originalExecuteAt
           table.insert(claimed, task)
         end
 
