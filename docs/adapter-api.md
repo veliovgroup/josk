@@ -54,11 +54,15 @@ Inside `Adapter#iterate()` call `this.joskInstance.__execute(task)` with:
 ({
   uid: String,
   delay: Number,
-  executeAt: Number, // or Date
+  executeAt: Number, // or Date — see "executeAt convention" below
   isInterval: Boolean,
   isDeleted: Boolean
 })
 ```
+
+### `executeAt` convention
+
+`executeAt` carries the **pre-claim** value — the moment the task was due to fire. Storage is updated to a post-claim park time (`nextExecuteAt`, typically `now + zombieTime`), but the task object handed back to JoSk reports the original due time. This lets handlers reason about scheduling drift and matches the semantics of all built-in adapters.
 
 ## Recommended Storage Pattern
 
