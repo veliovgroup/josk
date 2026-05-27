@@ -1,6 +1,6 @@
 'use strict';
 
-var node_crypto = require('node:crypto');
+var crypto = require('crypto');
 
 // MongoDB Storage Adapter for JoSk.
 //
@@ -691,7 +691,7 @@ const CLAIM_BATCH_TASKS_SCRIPT = `
 const REDIS_BATCH_CLAIM_LIMIT = 100;
 const REDIS_SCAN_LIMIT = 2000;
 
-const sha1Hex = (str) => node_crypto.createHash('sha1').update(str).digest('hex');
+const sha1Hex = (str) => crypto.createHash('sha1').update(str).digest('hex');
 
 const isNoScriptError = (error) => {
   if (!error) {
@@ -1642,7 +1642,7 @@ class PostgresAdapter {
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 const validExecuteModes = new Set(['batch', 'one']);
 
-const createRandomId = () => node_crypto.randomUUID();
+const createRandomId = typeof crypto.randomUUID === 'function' ? () => crypto.randomUUID() : () => crypto.randomBytes(16).toString('hex');
 const isPromiseLike = (value) => {
   return value !== null && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function';
 };
@@ -1816,8 +1816,8 @@ class JoSk {
     this.__pendingTasks = [];
     /** @internal */
     this.__pausedAll = false;
-    /** @internal */
-    this.__pausedUserIds = new Set();
+    /** @internal @type {Set<string>} */
+    this.__pausedTimerIds = new Set();
 
     if (!validExecuteModes.has(this.execute)) {
       throw new Error(errors.execute);
@@ -2006,7 +2006,7 @@ class JoSk {
     if (!this.isDestroyed) {
       this.isDestroyed = true;
       this.__pausedAll = false;
-      this.__pausedUserIds.clear();
+      this.__pausedTimerIds.clear();
       if (this.nextRevolutionTimeout) {
         clearTimeout(this.nextRevolutionTimeout);
         this.nextRevolutionTimeout = null;
@@ -2018,15 +2018,15 @@ class JoSk {
 
   /**
    * Pause this instance from competing for scheduler work.
-   * @param {string} [uid] - User task id or internal timer id; omit to pause all tasks on this instance
+   * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to pause all tasks on this instance
    * @returns {boolean}
    */
-  pause(uid) {
+  pause(timerId) {
     if (this.isDestroyed) {
       return false;
     }
 
-    if (uid === void 0) {
+    if (timerId === void 0) {
       if (this.__pausedAll) {
         return false;
       }
@@ -2034,46 +2034,71 @@ class JoSk {
       return true;
     }
 
-    if (typeof uid !== 'string' || uid.length === 0) {
-      throw new Error('[josk] [pause] uid must be a non-empty string');
+    if (typeof timerId !== 'string' || timerId.length === 0) {
+      throw new Error('[josk] [pause] timerId must be a non-empty string');
     }
 
-    const bare = uid.replace(prefixRegex, '');
-    if (this.__pausedUserIds.has(bare)) {
+    if (!prefixRegex.test(timerId)) {
+      throw new Error('[josk] [pause] timerId must be the string returned from setInterval, setTimeout, or setImmediate');
+    }
+
+    if (this.__pausedTimerIds.has(timerId)) {
       return false;
     }
-    this.__pausedUserIds.add(bare);
+    this.__pausedTimerIds.add(timerId);
     return true;
   }
 
   /**
    * Resume competing for scheduler work.
-   * @param {string} [uid] - User task id or internal timer id; omit to resume all
+   * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to resume all
    * @returns {boolean}
    */
-  resume(uid) {
+  resume(timerId) {
     if (this.isDestroyed) {
       return false;
     }
 
-    if (uid === void 0) {
+    if (timerId === void 0) {
       if (!this.__pausedAll) {
         return false;
       }
       this.__pausedAll = false;
+      this.__nudgeRevolution();
       return true;
     }
 
-    if (typeof uid !== 'string' || uid.length === 0) {
-      throw new Error('[josk] [resume] uid must be a non-empty string');
+    if (typeof timerId !== 'string' || timerId.length === 0) {
+      throw new Error('[josk] [resume] timerId must be a non-empty string');
     }
 
-    const bare = uid.replace(prefixRegex, '');
-    if (!this.__pausedUserIds.has(bare)) {
+    if (!prefixRegex.test(timerId)) {
+      throw new Error('[josk] [resume] timerId must be the string returned from setInterval, setTimeout, or setImmediate');
+    }
+
+    if (!this.__pausedTimerIds.has(timerId)) {
       return false;
     }
-    this.__pausedUserIds.delete(bare);
+    this.__pausedTimerIds.delete(timerId);
+    this.__nudgeRevolution();
     return true;
+  }
+
+  /**
+   * Schedule an immediate revolution after pause clears (do not wait for jitter tick).
+   * @internal
+   */
+  __nudgeRevolution() {
+    if (this.isDestroyed) {
+      return;
+    }
+
+    if (this.nextRevolutionTimeout) {
+      clearTimeout(this.nextRevolutionTimeout);
+      this.nextRevolutionTimeout = null;
+    }
+
+    this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), 0);
   }
 
   /** @internal */
@@ -2104,7 +2129,8 @@ class JoSk {
       this.__adapterReadyPromise = Promise.resolve().then(() => this.adapter.ready());
     }
 
-    return await this.__adapterReadyPromise;
+    await this.__adapterReadyPromise;
+    return;
   }
 
   /** @internal */
@@ -2216,8 +2242,7 @@ class JoSk {
     if (this.__pausedAll) {
       return true;
     }
-    const bare = timerId.replace(prefixRegex, '');
-    return this.__pausedUserIds.has(bare);
+    return this.__pausedTimerIds.has(timerId);
   }
 
   /**
