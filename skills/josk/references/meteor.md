@@ -1,6 +1,6 @@
 # JoSk in Meteor.js
 
-JoSk is published as the Atmosphere package `ostrio:cron-jobs`. The runtime behavior, API surface, and option set are identical to the NPM package — only the import path differs. Use this when the user's project is a Meteor app and they prefer Atmosphere packages over raw NPM.
+Atmosphere package `ostrio:cron-jobs`. Identical API to the NPM package — only the import path differs.
 
 ## Install
 
@@ -52,52 +52,11 @@ jobs.setInterval((ready) => {
 }, 60_000, 'task-1m-cb');
 ```
 
-This is the lowest-friction setup for Meteor: zero extra connections, zero extra processes. The scheduler shares the app's Mongo replica set.
+The scheduler shares the app's Mongo replica set — zero extra connections.
 
-## Redis from Meteor
+## Redis / PostgreSQL from Meteor
 
-Install the Redis driver into the Meteor app first:
-
-```sh
-meteor npm install redis
-```
-
-```js
-import { JoSk, RedisAdapter } from 'meteor/ostrio:cron-jobs';
-import { createClient } from 'redis';
-
-const redisClient = await createClient({
-  url: process.env.REDIS_URL,
-}).connect();
-
-const jobs = new JoSk({
-  adapter: new RedisAdapter({
-    client: redisClient,
-    prefix: 'cluster-scheduler',
-    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
-  }),
-});
-```
-
-## PostgreSQL from Meteor
-
-```sh
-meteor npm install pg
-```
-
-```js
-import { JoSk, PostgresAdapter } from 'meteor/ostrio:cron-jobs';
-import { Pool } from 'pg';
-
-const pool = new Pool({ connectionString: process.env.PG_URL });
-
-const jobs = new JoSk({
-  adapter: new PostgresAdapter({
-    client: pool,
-    prefix: 'cluster-scheduler',
-  }),
-});
-```
+Same `RedisAdapter` / `PostgresAdapter` setup as `adapters.md`. Install drivers via `meteor npm install redis` or `meteor npm install pg`, then import from `meteor/ostrio:cron-jobs` instead of `josk`.
 
 ## Meteor-specific notes
 
@@ -106,16 +65,4 @@ const jobs = new JoSk({
 - **Galaxy / autoscale.** When Galaxy scales the app horizontally, every container shares the same MongoDB. That's what JoSk's `MongoAdapter` is for — each due tick is claimed by one container; method guarantees still apply.
 - **`destroy()` on shutdown.** Hook into `process.on('SIGTERM', …)` to call `jobs.destroy()` before Galaxy stops the container, so the scheduler releases its lease cleanly.
 
-## Same options, same methods
-
-Every option from the NPM API (`execute`, `concurrency`, `zombieTime`, `lockOwnerId`, `minRevolvingDelay`, `maxRevolvingDelay`, `autoClear`, `onError`, `onExecuted`, `debug`) and every adapter option (`RedisAdapter.useHashTags`, etc.) work identically here. Every method (`setInterval`, `setTimeout`, `setImmediate`, `clearInterval`, `clearTimeout`, `destroy`, `ping`, `pause`, `resume`) works identically too. Refer to `api.md` for signatures and to `patterns.md` for handler styles, CRON via `cron-parser`, and graceful shutdown.
-
-## Migration to Meteor 3 / async
-
-Meteor 3 made the server code path async-first. JoSk's handler API has supported both async functions and callback styles since long before that — no migration needed for handlers themselves. Prefer the async / Promise-returning style in new Meteor 3 code:
-
-```js
-jobs.setInterval(async () => {
-  await Collection.rawCollection().updateOne(/* … */);
-}, 60_000, 'cleanup-1m');
-```
+All options and methods are identical to the NPM API — see `api.md` and `patterns.md`. Meteor 3's async-first server path needs no handler migration; the async / Promise-returning style is already supported.

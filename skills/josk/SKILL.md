@@ -10,9 +10,7 @@ Server-only. Schedule in Redis, MongoDB, or PostgreSQL; lease + atomic claim lim
 
 ## Quick start
 
-1. Connect storage client (JoSk does not open connections).
-2. Read the matching file under [references/](references/) — do not guess v4/v5/v6 semantics.
-3. Wire `onError`, unique per-task `uid`, and `destroy()` on shutdown.
+JoSk does not open connections — pass a connected client. Always wire `onError` and `destroy()` on shutdown. Read [references/](references/) lazily; do not guess v4/v5/v6 semantics from memory.
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -27,14 +25,10 @@ const jobs = new JoSk({
 });
 
 await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m');
-// stop: jobs.pause();
-// restart: jobs.resume();
-// shutdown: jobs.destroy();
+// jobs.pause() / jobs.resume() / jobs.destroy()
 ```
 
 ## Reference map
-
-Read `references/` lazily — do not guess v4/v5/v6 semantics from memory.
 
 | Question | Read |
 |---|---|
@@ -51,14 +45,6 @@ Read `references/` lazily — do not guess v4/v5/v6 semantics from memory.
 - **Handler** — async/Promise preferred; sync zero-arg; or `(ready) =>` for callback APIs ([patterns.md](references/patterns.md)).
 - **`set*` → `Promise<string>`** — pass string or that Promise to `clear*`.
 
-## New integration checklist
-
-- [ ] Storage + connected client
-- [ ] `onError` hook
-- [ ] `jobs.destroy()` on shutdown ([patterns.md](references/patterns.md))
-- [ ] `pause()` / `resume()` only multi-instance + long work that must not block the JoSk loop (see [patterns.md](references/patterns.md))
-- [ ] Adapter choice (below)
-
 ## Pick the adapter
 
 | Adapter | Choose when |
@@ -74,8 +60,6 @@ Read `references/` lazily — do not guess v4/v5/v6 semantics from memory.
 | `setInterval(fn, delay, uid)` | At-least-once per tick | Idempotent recurring work |
 | `setTimeout(fn, delay, uid)` | At-most-once | One-shot; duplicate worse than miss; removed before handler |
 | `setImmediate(fn, uid)` | At-most-once | One-shot fire-now; same as `setTimeout` with delay 0 |
-
-If unsure: ask whether duplicate or missed run is worse, then map to the table.
 
 `zombieTime` (default 15 min): max interval handler runtime before re-claim. Keep ≥ slowest handler + margin; not below 60s.
 
@@ -97,11 +81,3 @@ Call out proactively when reviewing JoSk usage:
 - Intervals <~2s (storage + jitter overlap)
 - MongoAdapter on CosmosDB/DocumentDB/Mongoose without warning
 - KeyDB active-replication / multi-master
-
-## Install
-
-```sh
-npm install josk redis   # or mongodb / pg
-bun add josk
-meteor add ostrio:cron-jobs   # see references/meteor.md
-```

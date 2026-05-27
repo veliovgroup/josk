@@ -1,7 +1,5 @@
 # JoSk patterns & recipes
 
-Working code for the situations users hit most often. Each pattern shows the canonical solution, the failure mode it avoids, and any tuning knob worth knowing.
-
 ## CRON schedules via `cron-parser`
 
 JoSk does not parse CRON expressions itself. The recommended pairing is the `cron-parser` package — v5 renamed the entrypoint to `CronExpressionParser.parse()`.
@@ -245,26 +243,6 @@ const timerId = await jobs.setInterval(async (ready) => {
 }, 5000, 'queue-poller');
 ```
 
-**Promise handler without `ready` in the signature** — call `ready()` explicitly before starting fire-and-forget work; otherwise JoSk auto-`ready()` when the returned Promise resolves (too early):
-
-```js
-const timerId = await jobs.setInterval(async (ready) => {
-  const batch = await thirdPartyQueue.claim(50);
-  if (batch.length === 0) {
-    return;
-  }
-
-  jobs.pause(timerId);
-  await ready();
-
-  try {
-    await processBatch(batch);
-  } finally {
-    jobs.resume(timerId);
-  }
-}, 5000, 'queue-poller');
-```
-
 **Branch off without awaiting** (work continues after handler returns) — still call `ready()` before the branch so the storage row is updated; always `resume()` in the branch `finally`:
 
 ```js
@@ -367,38 +345,3 @@ The effective tick happens at `delay + uniform(minRevolvingDelay, maxRevolvingDe
 
 For sub-2-second tasks the storage round-trip dominates — JoSk recommends ≥2s intervals for predictable spacing.
 
-## Bun runtime
-
-JoSk runs unmodified on Bun ≥ 1.1.0. Install with `bun add josk`. The same `RedisAdapter` / `MongoAdapter` / `PostgresAdapter` and the same drivers work. Schedulers running across mixed Node and Bun processes coexist under the same `prefix` — claim and lease are storage-level operations, runtime-agnostic.
-
-`bun build --compile` bundles JoSk like any ESM library.
-
-## TypeScript
-
-JoSk ships type declarations for both ESM (`index.d.ts`) and CJS (`index.d.cts`). All the public-API types are exported (see `api.md`):
-
-```ts
-import { JoSk, RedisAdapter } from 'josk';
-import type { JoSkAdapter, JoSkOption, JoSkOnError } from 'josk';
-import { createClient } from 'redis';
-
-const onError: JoSkOnError = async (title, details) => {
-  console.error(title, details.error, details.uid);
-};
-
-const adapter: JoSkAdapter = new RedisAdapter({
-  client: await createClient({ url: process.env.REDIS_URL }).connect(),
-  prefix: 'cluster-scheduler',
-});
-
-const options: JoSkOption = {
-  adapter,
-  execute: 'batch',
-  concurrency: 16,
-  onError,
-};
-
-const jobs = new JoSk(options);
-```
-
-`JoSkAdapter` is exported specifically so custom adapters can be checked against the public contract at compile time.

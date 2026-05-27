@@ -1,6 +1,6 @@
 # JoSk adapters
 
-Three built-in adapters plus the contract for writing custom ones. Pick by topology, not by familiarity — the adapters have meaningfully different failure modes and tuning knobs.
+Three built-in adapters plus the contract for writing custom ones. Pick by topology.
 
 ## Quick comparison
 
@@ -105,16 +105,14 @@ Mongo collection-name limit is 120 characters (including DB name). Keep prefixes
 
 ```js
 const options = {
-  writeConcern: { j: true, w: 'majority', wtimeout: 30000 },
+  writeConcern: { j: true, w: 'majority', wtimeoutMS: 30000 },
   readConcern: { level: 'majority' },
   readPreference: 'primary',
 };
 const client = await MongoClient.connect('mongodb://…', options);
 ```
 
-### What "tested only against the official driver" means
-
-The `MongoAdapter` is verified against the official `mongodb` NPM package. CosmosDB, DocumentDB, Mongoose's wrapped client, and other Mongo-compatible stores are not tested and may behave differently for transactions, TTL indexes, or `findOneAndUpdate` atomicity. Flag this when recommending JoSk for those backends.
+`MongoAdapter` is verified against the official `mongodb` NPM package only. CosmosDB, DocumentDB, Mongoose wrappers — flag as untested when recommending.
 
 ## `PostgresAdapter`
 
@@ -190,9 +188,9 @@ redis-cli --no-auth-warning --scan --pattern "josk:{default}:*" \
 ### MongoDB
 
 ```js
-db.getCollection('__JobTasks__default').remove({});
+db.getCollection('__JobTasks__default').deleteMany({});
 // Or for a custom prefix:
-db.getCollection('__JobTasks__myPrefix').remove({});
+db.getCollection('__JobTasks__myPrefix').deleteMany({});
 ```
 
 ### PostgreSQL
@@ -246,7 +244,7 @@ interface JoSkAdapter {
 
 1. Acquire the scheduler lease (owner-bound token).
 2. Atomically claim the next due task — move its `executeAt` to the supplied `nextExecuteAt` so it doesn't get claimed again by another instance during the same window.
-3. Return the pre-claim task payload.
+3. Return the pre-claim task payload (`executeAt` = original due time, not the new park value). All three built-in adapters honor this — see `docs/adapter-api.md`.
 4. Call `this.joskInstance.__execute(task)` (no `await`).
 5. Release the lease only if the owner token still matches.
 

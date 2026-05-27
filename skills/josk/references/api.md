@@ -1,48 +1,18 @@
 # JoSk public API reference
 
-Every public surface of the `josk` NPM package, with options, return shapes, and the subtle behaviors that aren't obvious from the type signatures. Pair this with `adapters.md` for adapter-specific options.
-
 ## Imports
 
 ```js
-// ESM (Node ≥20.9.0, Bun ≥1.1.0)
-import {
-  JoSk,
-  RedisAdapter,
-  MongoAdapter,
-  PostgresAdapter,
-} from 'josk';
+import { JoSk, RedisAdapter, MongoAdapter, PostgresAdapter } from 'josk';
 
-// CommonJS
-const {
-  JoSk,
-  RedisAdapter,
-  MongoAdapter,
-  PostgresAdapter,
-} = require('josk');
-
-// TypeScript — interfaces and hook types exported
-import type {
-  JoSkAdapter,
-  JoSkOption,
-  JoSkOnError,
-  JoSkOnExecuted,
-  JoSkPingResult,
-  JoSkExecuteMode,
-  JoSkLock,
-  JoSkTask,
-  JoSkErrorDetails,
-  JoSkExecutedDetails,
-  JoSkReady,
-  JoSkTaskHandler,
-} from 'josk';
+// TypeScript types are exported alongside (e.g. JoSkOption, JoSkOnError, JoSkTaskHandler, JoSkAdapter — see "Types" below).
 ```
 
-`josk` is server-only and ships with ESM (`index.js` + `index.d.ts`) and CJS (`index.cjs` + `index.d.cts`) entrypoints.
+Server-only. Ships ESM + CJS entrypoints.
 
 ## `new JoSk(opts)`
 
-Constructs and immediately starts the scheduler. The first revolving tick is scheduled inside the constructor — there is no separate `start()`.
+Constructs the scheduler and starts the first revolving tick from the constructor. No separate `start()`.
 
 ### Options
 
@@ -85,7 +55,7 @@ The constructor throws synchronously for:
 | `details.uid` | `string \| null` | Internal task id (with `setInterval`/`setTimeout`/`setImmediate` suffix). `null` when the error isn't tied to a specific task. Suitable for `clearInterval` / `clearTimeout`. |
 | `details.task` | `unknown` | Present when the offending task object itself was malformed. |
 
-The hook may be async — JoSk doesn't await it. Sync throws and async rejections are logged and isolated from scheduler flow.
+May be async; JoSk does not await it. Throws and rejections are isolated from scheduler flow.
 
 ### `onExecuted(uid, details)`
 

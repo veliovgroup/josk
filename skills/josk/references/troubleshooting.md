@@ -1,7 +1,5 @@
 # JoSk troubleshooting & operational FAQ
 
-The behaviors that surprise people, the migration notes that bite, and the queries that answer "is my scheduler healthy?".
-
 ## Execution semantics — the table to memorize
 
 | Method | Guarantee | What happens on crash mid-handler |
@@ -9,8 +7,6 @@ The behaviors that surprise people, the migration notes that bite, and the queri
 | `setImmediate(fn, uid)` | At-most-once across the cluster | Task is removed *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setTimeout(fn, delay, uid)` | At-most-once across the cluster | Task is removed *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setInterval(fn, delay, uid)` | At-least-once per scheduled tick (until cleared) | Storage row stays during execution. If `ready()` isn't called within `zombieTime`, the task is re-claimed and may run again. Make handlers idempotent. |
-
-If you see "this ran twice", that's `setInterval` + a handler that exceeded `zombieTime` or didn't call `ready()`. If you see "this didn't run", that's almost always `setTimeout` / `setImmediate` + a process crash, or a missing `setInterval` registration on the instance that holds the lease.
 
 ## "Zombie task" recovery — what actually happens
 
@@ -124,23 +120,11 @@ In order of likelihood:
 
 ## PostgresAdapter: `Connection terminated due to connection timeout`
 
-On Node 14+, `net.Socket` reports `readyState === 'open'` before TCP connect. **`pg@7` never calls `stream.connect()`** and hangs until timeout; fixed in **`pg@>=8.0.3`**. JoSk 6.x requires Node `>=20.9`, so use `pg@8` (or newer). The `Cannot find module 'pg-native'` console line is harmless optional native bindings.
+Use `pg@>=8.0.3`. Older `pg@7` hangs on TCP connect. The `Cannot find module 'pg-native'` log is harmless optional native bindings.
 
 ## Migrations
 
-Full upgrade guides live in the repo under `docs/`:
-
-| Upgrade | Guide |
-|---|---|
-| v4 → v5 | [docs/migration-v4-v5.md](https://github.com/veliovgroup/josk/blob/master/docs/migration-v4-v5.md) |
-| v5 → v6 | [docs/migration-v5-v6.md](https://github.com/veliovgroup/josk/blob/master/docs/migration-v5-v6.md) |
-| v6 → v6.1 | [docs/migration-v6-v6.1.md](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6-v6.1.md) |
-
-Quick hits:
-
-- **v4 → v5:** `new JoSk({ adapter: new MongoAdapter({ db, prefix }) })` instead of `new JoSk({ db, prefix })`.
-- **v5 → v6:** Node ≥20.9 or Bun ≥1.1; `PostgresAdapter`; Mongo default prefix `'default'`; lease ownership on lock release.
-- **v6 → v6.1:** `RedisAdapter({ useHashTags: true })` for Redis Cluster only — default keys unchanged.
+Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.md`, `docs/migration-v6-v6.1.md`.
 
 ## When NOT to use JoSk
 
@@ -150,15 +134,3 @@ Quick hits:
 - **Workflow orchestration with retries, fan-out, and DAGs.** JoSk is a scheduler, not a workflow engine. Use Temporal / Inngest / BullMQ for that.
 - **Mongo-compatible stores other than the official driver target.** The MongoAdapter is verified only against `mongodb`; CosmosDB / DocumentDB / Mongoose's client are unverified. Use Redis or Postgres instead, or test exhaustively before relying on it.
 
-## Quick checklist when reviewing a JoSk integration
-
-- `onError` hook set? Yes / no.
-- Every task `uid` unique across the codebase? Yes / no.
-- Handler runtime well under `zombieTime`? Yes / no.
-- Single writable primary for the storage? Yes / no.
-- `resetOnInit` is `false` in production? Yes / no.
-- `destroy()` called on shutdown signals? Yes / no.
-- Tasks ≥ 2 seconds apart? Yes / no.
-- Replica reads disabled for the JoSk database? Yes / no.
-
-Any "no" deserves at least a callout in review.
