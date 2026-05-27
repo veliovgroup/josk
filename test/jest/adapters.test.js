@@ -942,7 +942,11 @@ describe('PostgresAdapter unit coverage', () => {
     });
 
     await expect(adapter.ready()).rejects.toBe(setupError);
-    expect(client.query).toHaveBeenCalledWith('SELECT pg_advisory_unlock($1)', [93824517]);
+    expect(client.query).toHaveBeenCalledWith(
+      'SELECT pg_advisory_unlock($1, $2)',
+      [0x4A6F536B, adapter.__advisoryLockKey]
+    );
+    expect(typeof adapter.__advisoryLockKey).toBe('number');
   });
 
   it('reports ping states before assignment and on unexpected replies', async () => {
