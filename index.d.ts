@@ -80,8 +80,6 @@ export class JoSk {
     execute: JoSkExecuteMode;
     lockOwnerId: string;
     concurrency: number;
-    /** @internal @type {Set<string>} */
-    __pausedTimerIds: Set<string>;
     /** @type {JoSkAdapter} */
     adapter: JoSkAdapter;
     /**

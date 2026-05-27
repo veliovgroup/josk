@@ -16,8 +16,8 @@ const stripInternals = (source) => {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Single-line `/** @internal */`
-    if (/^\s*\/\*\*\s*@internal\s*\*\/\s*$/.test(line)) {
+    // Single-line `/** @internal [...] */` (allows additional tags like `@type`)
+    if (/^\s*\/\*\*\s*@internal\b[^*]*\*\/\s*$/.test(line)) {
       // Skip this line and the next declaration line
       i++;
       // Skip blank lines
