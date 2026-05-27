@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications. Supports Redis, MongoDB, PostgreSQL adapters.",
   "main": "index.js",
   "type": "module",
@@ -19,7 +19,7 @@
   },
   "scripts": {
     "build:types": "rm -rf ./.types-tmp && tsc -p tsconfig.json --outDir ./.types-tmp && node scripts/strip-internal.mjs ./.types-tmp/index.d.ts ./.types-tmp/index.d.cts ./.types-tmp/adapters/redis.d.ts ./.types-tmp/adapters/mongo.d.ts ./.types-tmp/adapters/postgres.d.ts ./.types-tmp/adapters/blank-example.d.ts && cp ./.types-tmp/index.d.ts ./index.d.ts && cp ./.types-tmp/index.d.cts ./index.d.cts && cp ./.types-tmp/adapters/*.d.ts ./adapters/ && rm -rf ./.types-tmp",
-    "prepublishOnly": "rollup index.js --file index.cjs --format cjs --external node:crypto && npm run build:types",
+    "prepublishOnly": "rollup index.js --file index.cjs --format cjs --external crypto,node:crypto --generatedCode.constBindings && npm run build:types",
     "test": "mocha ./test/npm.js && npm run test:jest && npm run test:types",
     "test:adapter-guards": "mocha ./test/adapter-guards.js",
     "test:jest": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs",
@@ -91,6 +91,14 @@
   "engines": {
     "node": ">=20.9.0",
     "bun": ">=1.1.0"
+  },
+  "meteor": {
+    "packageName": "ostrio:cron-jobs",
+    "versionsFrom": ["2.14", "3.2"],
+    "node": {
+      "2.14": ">=14",
+      "3.2": ">=18"
+    }
   },
   "devDependencies": {
     "chai": "^6.2.2",
