@@ -820,11 +820,14 @@ describe('Mongo - JoSk', function () {
       const taskId = `${taskName}setInterval`;
       const maxRuns = 3;
       let runs = 0;
+      // Sync handler can't `await` clearInterval, so capture its Promise to await externally.
+      // Without this, the final clearInterval below races the unawaited remove on the same uid.
+      let innerClear;
 
       await jobException.setInterval(function () {
         runs++;
         if (runs >= maxRuns) {
-          jobException.clearInterval(taskId);
+          innerClear = jobException.clearInterval(taskId);
         }
         throw new Error(errorMessage);
       }, 256, taskName);
@@ -836,6 +839,7 @@ describe('Mongo - JoSk', function () {
 
       assert.equal(runs, maxRuns, `setInterval correctly scheduled after exception and executed ${maxRuns} times`);
       assert.equal(exceptions[taskId].toString(), `Error: ${errorMessage}`, 'Error was correctly intercepted');
+      await innerClear;
       const isRemoved = await jobException.clearInterval(taskId);
       assert.isFalse(isRemoved, `${taskName} task was properly removed`);
     });
