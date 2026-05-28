@@ -124,7 +124,7 @@ Use `pg@>=8.0.3`. Older `pg@7` hangs on TCP connect. The `Cannot find module 'pg
 
 ## Migrations
 
-Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.md`, `docs/migration-v6-v6.1.md`.
+Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.md`, `docs/migration-v6-v6.1.md`, and `docs/migration-v6.1-v6.2.md`.
 
 ## When NOT to use JoSk
 
@@ -133,4 +133,3 @@ Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.
 - **Sub-2-second high-frequency work.** Storage round-trip + revolving delay are the floor; for sub-second cadence use Node's native timers and confine the work to a single process.
 - **Workflow orchestration with retries, fan-out, and DAGs.** JoSk is a scheduler, not a workflow engine. Use Temporal / Inngest / BullMQ for that.
 - **Mongo-compatible stores other than the official driver target.** The MongoAdapter is verified only against `mongodb`; CosmosDB / DocumentDB / Mongoose's client are unverified. Use Redis or Postgres instead, or test exhaustively before relying on it.
-

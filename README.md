@@ -60,6 +60,7 @@ __Note: JoSk is the server-only package.__
 - [Migration guide (v4 → v5)](docs/migration-v4-v5.md)
 - [Migration guide (v5 → v6)](docs/migration-v5-v6.md)
 - [Migration guide (v6 → v6.1)](docs/migration-v6-v6.1.md)
+- [Migration guide (v6.1 → v6.2)](docs/migration-v6.1-v6.2.md)
 - [Important notes](https://github.com/veliovgroup/josk?tab=readme-ov-file#notes)
 - [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 - [Why it's named "JoSk"](https://github.com/veliovgroup/josk?tab=readme-ov-file#why-josk)
