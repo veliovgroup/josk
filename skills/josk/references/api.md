@@ -73,7 +73,7 @@ May be async; JoSk does not await it. Throws and rejections are isolated from sc
 
 Schedules a recurring task. The returned string is the internal timer id (the `uid` with `setInterval` appended). Subsequent calls with the same effective id update or no-op — pick distinct `uid`s for distinct tasks.
 
-- `handler`: `(ready?: JoSkReady) => void | Promise<void>`. See "Handler shape" below.
+- `handler`: `(ready?: JoSkReady) => void | PromiseLike<unknown>`. See "Handler shape" below.
 - `delay`: finite non-negative number of milliseconds. `0` is allowed (run as fast as the storage / revolving delay permits).
 - `uid`: app-wide unique string. Required.
 
@@ -140,7 +140,7 @@ Schedules an immediate revolution attempt (in addition to the normal jitter tick
 
 ## Handler shape
 
-`JoSkTaskHandler = (ready: JoSkReady) => void | Promise<void>`.
+`JoSkTaskHandler = (ready: JoSkReady) => void | PromiseLike<unknown>`.
 
 The handler can be:
 
@@ -203,7 +203,7 @@ type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | Prom
 
 type JoSkReadyCallback = (error: Error | undefined, success: boolean) => void;
 type JoSkReady = (nextExecuteAt?: number | Date | JoSkReadyCallback) => Promise<boolean>;
-type JoSkTaskHandler = (ready: JoSkReady) => void | Promise<void>;
+type JoSkTaskHandler = (ready: JoSkReady) => void | PromiseLike<unknown>;
 
 type JoSkOption = {
   adapter: JoSkAdapter;

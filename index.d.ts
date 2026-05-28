@@ -34,7 +34,7 @@ export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void | P
 export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | PromiseLike<void>;
 export type JoSkReadyCallback = (error: Error | undefined, success: boolean) => void;
 export type JoSkReady = (nextExecuteAt?: number | Date | JoSkReadyCallback | undefined) => Promise<boolean>;
-export type JoSkTaskHandler = (ready: JoSkReady) => void | PromiseLike<void>;
+export type JoSkTaskHandler = (ready: JoSkReady) => void | PromiseLike<unknown>;
 export type JoSkStoredTask = JoSkTaskHandler & {
     isMissing?: boolean;
 };

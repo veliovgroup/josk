@@ -1747,7 +1747,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
 /**
  * @callback JoSkTaskHandler
  * @param {JoSkReady} ready
- * @returns {void | PromiseLike<void>}
+ * @returns {void | PromiseLike<unknown>}
  */
 
 /**
