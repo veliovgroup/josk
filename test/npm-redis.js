@@ -72,6 +72,8 @@ const testTimeout = function (delay) {
 };
 
 before(async function () {
+  this.timeout(30000);
+
   client = await createClient({
     url: process.env.REDIS_URL
   }).connect();
@@ -182,6 +184,8 @@ before(async function () {
 });
 
 after(async function () {
+  this.timeout(30000);
+
   destroyJobs(job, jobCron, jobException, Object.values(jobRacing));
   await Promise.all(racingClients.map(quitRedisClient));
   await quitRedisClient(client);

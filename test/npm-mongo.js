@@ -73,6 +73,8 @@ if (!dbName) {
 }
 
 before(async function () {
+  this.timeout(30000);
+
   client = await MongoClient.connect(mongoAddr, {
     writeConcern: {
       j: true,
@@ -197,6 +199,8 @@ before(async function () {
 });
 
 after(async function () {
+  this.timeout(30000);
+
   destroyJobs(job, jobCron, jobException, Object.values(jobRacing));
   await Promise.all(racingClients.map(closeMongoClient));
   await closeMongoClient(client);

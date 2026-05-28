@@ -59,9 +59,9 @@ void new RedisAdapter({
   prefix: 'cluster',
   useHashTags: true
 });
-const thenable: PromiseLike<void> = {
+const thenable: PromiseLike<boolean> = {
   then(onfulfilled) {
-    return Promise.resolve().then(onfulfilled);
+    return Promise.resolve(true).then(onfulfilled);
   }
 };
 
@@ -72,6 +72,7 @@ void _asyncErrorHook;
 void _asyncExecutedHook;
 
 jobs.setInterval(async () => {}, 2048, 'interval-task');
+jobs.setInterval(async () => true, 2048, 'promise-value-task');
 jobs.setInterval(() => thenable, 2048, 'thenable-task');
 jobs.setTimeout((ready: (nextExecuteAt?: Date | number | ((error?: Error, success?: boolean) => void)) => Promise<boolean>) => {
   void ready();

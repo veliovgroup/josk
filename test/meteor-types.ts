@@ -123,8 +123,9 @@ describe('Meteor TypeScript — runtime', function () {
       return;
     }
 
+    const valuePromiseHandler: JoSkTaskHandler = async () => true;
     const timeoutId: string = await typedJobs.setTimeout(() => {}, 2048, 'ts-timeout-task');
-    const intervalId: string = await typedJobs.setInterval(() => {}, 2048, 'ts-interval-task');
+    const intervalId: string = await typedJobs.setInterval(valuePromiseHandler, 2048, 'ts-interval-task');
 
     assert.isString(timeoutId, 'setTimeout returns string id');
     assert.isString(intervalId, 'setInterval returns string id');

@@ -63,12 +63,13 @@ void new josk.RedisAdapter({
   useHashTags: true
 });
 
-const thenable: PromiseLike<void> = {
+const thenable: PromiseLike<boolean> = {
   then(onfulfilled) {
-    return Promise.resolve().then(onfulfilled);
+    return Promise.resolve(true).then(onfulfilled);
   }
 };
 jobs.setInterval(() => thenable, 2048, 'thenable-cjs-task');
+jobs.setInterval(async () => true, 2048, 'promise-value-cjs-task');
 
 // Type-only imports resolve correctly through the .d.cts shim
 const execute: JoSkExecuteMode = 'one';
