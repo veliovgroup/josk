@@ -110,6 +110,7 @@ In order of likelihood:
 1. **The `uid` collides with another `setInterval` / `setTimeout` registration.** Internal timer ids include a suffix, so `setInterval(_, _, 'x')` and `setTimeout(_, _, 'x')` don't collide — but two `setInterval` calls with `uid: 'x'` do, and the second overwrites the first.
 2. **It was registered on an instance that has since shut down**, and no other instance has the handler in memory. Result: `onError('One of your tasks is missing', …)`. Register the handler on every instance, or enable `autoClear: true` if the task is genuinely obsolete.
 3. **`setTimeout` / `setImmediate` crashed before completing.** That's the at-most-once guarantee. If "miss" is unacceptable, use `setInterval` with idempotent semantics.
+4. **PostgresAdapter before `v6.2.0` with a delay/interval > ~24.85 days.** The `delay` column was `INTEGER`; values over `2147483647` ms overflowed int4 and the task was silently dropped on `add()`. Fixed in `v6.2.0` (column widened to `BIGINT`, auto-migrated). Upgrade for monthly-scale schedules.
 
 ## Replicas / Cluster topologies — what breaks
 
