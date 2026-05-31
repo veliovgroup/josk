@@ -1158,7 +1158,7 @@ class RedisAdapter {
 // prefixes get distinct lock IDs, so their schema migrations no longer block
 // each other.
 const ADVISORY_LOCK_NAMESPACE = 0x4A6F536B; // 'JoSk' in ASCII as int32
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * @param {string} prefix
@@ -1248,7 +1248,7 @@ class PostgresAdapter {
         CREATE TABLE IF NOT EXISTS josk_tasks (
           prefix TEXT NOT NULL DEFAULT 'default',
           uid TEXT NOT NULL,
-          delay INTEGER NOT NULL,
+          delay BIGINT NOT NULL,
           execute_at BIGINT NOT NULL,
           is_interval BOOLEAN NOT NULL DEFAULT false,
           is_deleted BOOLEAN NOT NULL DEFAULT false,
@@ -1263,7 +1263,7 @@ class PostgresAdapter {
       if (currentVersion < 1) {
         await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT 'default'`);
         await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS uid TEXT NOT NULL DEFAULT ''`);
-        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS delay INTEGER NOT NULL DEFAULT 0`);
+        await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS delay BIGINT NOT NULL DEFAULT 0`);
         await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS execute_at BIGINT NOT NULL DEFAULT 0`);
         await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_interval BOOLEAN NOT NULL DEFAULT false`);
         await setupClient.query(`ALTER TABLE josk_tasks ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`);
@@ -1327,7 +1327,15 @@ class PostgresAdapter {
           CREATE INDEX IF NOT EXISTS idx_josk_locks_locked_until
           ON josk_locks (locked_until)
         `);
+      }
 
+      if (currentVersion < 2) {
+        // Widen `delay` from INTEGER (int4 max ~2147483647ms ≈ 24.8 days) to BIGINT;
+        // longer delays/intervals overflowed int4 and silently failed to store. No-op on fresh installs.
+        await setupClient.query(`ALTER TABLE josk_tasks ALTER COLUMN delay TYPE BIGINT`);
+      }
+
+      if (currentVersion < SCHEMA_VERSION) {
         await setupClient.query(
           `INSERT INTO josk_meta (key, value) VALUES ('schema_version', $1)
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
