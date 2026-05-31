@@ -1,16 +1,16 @@
-[![npm version](https://img.shields.io/npm/v/josk.svg)](https://www.npmjs.com/package/josk)
-[![npm downloads](https://img.shields.io/npm/dm/josk.svg)](https://www.npmjs.com/package/josk)
-[![CI](https://github.com/veliovgroup/josk/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/veliovgroup/josk/actions/workflows/test.yml)
-[![minified size](https://img.shields.io/bundlephobia/minzip/josk.svg)](https://bundlephobia.com/package/josk)
-[![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen)](#running-tests)
-[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
-[![Node.js](https://img.shields.io/node/v/josk)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-ready-blue)](https://github.com/veliovgroup/josk#typescript)
-[![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1.0-black?logo=bun)](https://github.com/veliovgroup/josk#bun-runtime)
-[![Meteor.js](https://img.shields.io/badge/Meteor.js-ostrio%3Acron--jobs-red?logo=meteor&logoColor=white)](https://packosphere.com/ostrio/cron-jobs)
-[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://www.npmjs.com/package/josk)
-[![Sponsor](https://img.shields.io/github/sponsors/dr-dimitru?label=Sponsor)](https://github.com/sponsors/dr-dimitru)
-[![Donate](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/veliovgroup)
+[![npm version][badge-npm-v]][npm-url]
+[![npm downloads][badge-npm-dm]][npm-url]
+[![CI][badge-ci]][ci-url]
+[![minified size][badge-size]][size-url]
+[![Coverage][badge-cov]](#running-tests)
+[![License: BSD-3-Clause][badge-license]][license-url]
+[![Node.js][badge-node]][node-url]
+[![TypeScript][badge-ts]][ts-url]
+[![Bun][badge-bun]][bun-url]
+[![Meteor.js][badge-meteor]][meteor-url]
+[![zero dependencies][badge-deps]][npm-url]
+[![Sponsor][badge-sponsor]][sponsor-url]
+[![Donate][badge-donate]][donate-url]
 <a href="https://ostr.io/info/built-by-developers-for-developers?ref=github-josk-repo-top"><img src="https://ostr.io/apple-touch-icon-60x60.png" height="20"></a>
 <a href="https://meteor-files.com/?ref=github-josk-repo-top"><img src="https://meteor-files.com/apple-touch-icon-60x60.png" height="20"></a>
 
@@ -168,6 +168,7 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
   - `details.description` {*String*}
   - `details.error` {*Mix*}
   - `details.uid` {*String*} - Internal `uid`, suitable for `.clearInterval()` and `.clearTimeout()`
+  - `details.task` {*Mix*} - Present only for malformed-task errors; the offending task payload
 - `opts.onExecuted` {*Function*} - [Optional] Informational hook, called when task is finished. Default: `false`. Called with two arguments:
   - `uid` {*String*} - `uid` passed into `.setImmediate()`, `.setTimeout()`, or `setInterval()` methods
   - `details` {*Object*}
@@ -873,3 +874,27 @@ REDIS_URL="…" MONGO_URL="…" PG_URL="…" npm test
 - Star on [Atmosphere](https://atmospherejs.com/ostrio/cron-jobs)
 - [Sponsor via GitHub](https://github.com/sponsors/dr-dimitru)
 - [Support via PayPal](https://paypal.me/veliovgroup)
+
+[npm-url]: https://www.npmjs.com/package/josk
+[badge-npm-v]: https://img.shields.io/npm/v/josk.svg
+[badge-npm-dm]: https://img.shields.io/npm/dm/josk.svg
+[badge-ci]: https://github.com/veliovgroup/josk/actions/workflows/test.yml/badge.svg?branch=master
+[ci-url]: https://github.com/veliovgroup/josk/actions/workflows/test.yml
+[badge-size]: https://img.shields.io/bundlephobia/minzip/josk.svg
+[size-url]: https://bundlephobia.com/package/josk
+[badge-cov]: https://img.shields.io/badge/coverage-~99%25-brightgreen
+[badge-license]: https://img.shields.io/badge/License-BSD%203--Clause-blue.svg
+[license-url]: https://opensource.org/licenses/BSD-3-Clause
+[badge-node]: https://img.shields.io/node/v/josk
+[node-url]: https://nodejs.org/
+[badge-ts]: https://img.shields.io/badge/TypeScript-ready-blue
+[ts-url]: https://github.com/veliovgroup/josk#typescript
+[badge-bun]: https://img.shields.io/badge/Bun-%3E%3D1.1.0-black?logo=bun
+[bun-url]: https://github.com/veliovgroup/josk#bun-runtime
+[badge-meteor]: https://img.shields.io/badge/Meteor.js-ostrio%3Acron--jobs-red?logo=meteor&logoColor=white
+[meteor-url]: https://packosphere.com/ostrio/cron-jobs
+[badge-deps]: https://img.shields.io/badge/dependencies-0-brightgreen
+[badge-sponsor]: https://img.shields.io/github/sponsors/dr-dimitru?label=Sponsor
+[sponsor-url]: https://github.com/sponsors/dr-dimitru
+[badge-donate]: https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white
+[donate-url]: https://paypal.me/veliovgroup
