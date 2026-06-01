@@ -123,29 +123,20 @@ Notes:
 
 ### Agent Skill
 
-JoSk ships an [Agent Skill](https://inference.sh/blog/skills/agent-skills-overview) — the open, cross-tool standard for teaching AI coding agents about a library. The source lives in [`skills/josk/`](skills/josk/) and follows the standard `SKILL.md` + `references/` layout, so it installs into 50+ supported agents from one command via the [`npx skills` CLI](https://github.com/vercel-labs/skills).
+JoSk ships a Claude / Copilot / Cursor / Codex / Gemini-ready skill bundle. Install it once in your project (or globally) and your AI agent will reach for the right preset, adapter, and pitfall list without you having to paste docs into the chat.
 
-Install into every supported agent on your machine in one go:
+```sh
+# Install the JoSK skill globally:
+npx skills add veliovgroup/josk -g
 
-```shell
+# Or install the JoSK skill into the current project:
 npx skills add veliovgroup/josk
 ```
 
-Detected and supported agents include Claude Code, Codex CLI, Cursor, Windsurf, GitHub Copilot, Cline, Continue, Roo Code, OpenCode, Goose, Aider, Gemini CLI, Kimi CLI, Tabnine, Qwen Code, Antigravity, Replit, Devin, and many others. The CLI auto-detects which are installed and drops the skill into each agent's native skills directory (`.claude/skills/`, `.cursor/skills/`, `.codex/skills/`, …). No per-agent format conversion — the same `SKILL.md` is read by every host.
+The `npx skills` CLI ([vercel-labs/skills](https://github.com/vercel-labs/skills)) supports 50+ AI coding agents. Pass `-a claude-code` to target a specific agent. The bundled JoSk skill covers full public API, adapter setup, execution semantics, CRON and handler patterns, and common pitfalls — it's the same material as the README and `docs/`, structured for an LLM.
 
-Once installed, the agent loads the full public API, adapter setup, execution semantics, CRON and handler patterns, Meteor integration, and the operational FAQ as context whenever you write or review JoSk-related code. Triggers include: JoSk by name, scheduled / recurring jobs, cron-style tasks, `setInterval` / `setTimeout` / `setImmediate` work in clustered Node.js or Bun deployments, the `RedisAdapter` / `MongoAdapter` / `PostgresAdapter`, the Meteor `ostrio:cron-jobs` package, method-specific at-least-once / at-most-once execution, zombie-task recovery, or scheduler tuning (`zombieTime`, `execute`, `concurrency`).
-
-Alternative install paths:
-
-```shell
-# From a local clone of this repo (offline / pre-publish)
-npx skills add ./skills/josk
-
-# Browse and pick interactively first
-npx skills add veliovgroup/josk --list
-```
-
-The skill source is **not** shipped in the npm tarball — it's distributed via GitHub and consumed only by AI tooling.
+> [!NOTE]
+> The skill source is **not** shipped in the npm tarball — it's distributed via GitHub and consumed only by AI tooling.
 
 ## API:
 
