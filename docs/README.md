@@ -21,6 +21,7 @@ Upgrade one major/minor step at a time. Read the guide that matches your current
 | v5.x | v6.0 | [migration-v5-v6.md](migration-v5-v6.md) |
 | v6.0 | v6.1 | [migration-v6-v6.1.md](migration-v6-v6.1.md) |
 | v6.1 | v6.2 | [migration-v6.1-v6.2.md](migration-v6.1-v6.2.md) |
+| v6.2 | v6.3 | [migration-v6.2-v6.3.md](migration-v6.2-v6.3.md) |
 
 ## Agent Skill
 
