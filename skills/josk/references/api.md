@@ -24,6 +24,7 @@ Constructs the scheduler and starts the first revolving tick from the constructo
 | `onExecuted` | `JoSkOnExecuted` | `false` | Informational hook called after each successful task run. `(uid, { uid, date, delay, timestamp }) => void \| Promise<void>`. The first `uid` argument has the `setInterval`/`setTimeout`/`setImmediate` suffix stripped; the inner one is the internal timer id. |
 | `autoClear` | `boolean` | `false` | When a task is found in storage but not in this instance's in-memory `tasks` map, remove it from storage. Useful when running multiple app versions with diverging task lists; risky if processes briefly out-of-sync should not delete each other's work. |
 | `zombieTime` | `number` (ms) | `900000` (15 min) | Time after which a held task is re-claimable. Sets the upper bound for handler runtime. Do not go below `60000`. |
+| `lockLeaseTime` | `number` (ms) | `min(zombieTime, 30000)` | TTL of the scheduler lease taken per claiming cycle. Floored at `2 * maxRevolvingDelay + 1000`. Keeps an uncleanly-dead lease holder from freezing the prefix for up to `zombieTime`; per-task atomic claims (governed by `zombieTime`) still prevent duplicate runs. Throws if not a positive finite number. |
 | `execute` | `'batch' \| 'one'` | `'batch'` | `batch` drains all currently due tasks under one lease; `one` claims a single task per lease. Throws if any other string. |
 | `concurrency` | `number` | `Infinity` | Cap parallel handlers inside this instance. Must be a positive integer or `Infinity`. Throws otherwise. |
 | `lockOwnerId` | `string` | `'josk-<uuid>'` | Stable owner id for lease tokens. Useful so the same logical worker re-claims its leases after a planned restart, and for observability (`lockOwnerId` shows up in lease ids). |
@@ -37,11 +38,12 @@ The constructor throws synchronously for:
 - Missing `opts.adapter`
 - `opts.execute` outside `{'batch','one'}`
 - `opts.concurrency` that's not a positive integer or `Infinity`
+- `opts.lockLeaseTime` that's not a positive finite number
 - An adapter missing any of `acquireLock`, `releaseLock`, `remove`, `add`, `update`, `iterate`, `ping`
 
 ### Instance properties (read-only, mostly for tests)
 
-`debug`, `onError`, `autoClear`, `zombieTime`, `onExecuted`, `isDestroyed`, `minRevolvingDelay`, `maxRevolvingDelay`, `execute`, `lockOwnerId`, `concurrency`, `adapter`.
+`debug`, `onError`, `autoClear`, `zombieTime`, `lockLeaseTime`, `onExecuted`, `isDestroyed`, `minRevolvingDelay`, `maxRevolvingDelay`, `execute`, `lockOwnerId`, `concurrency`, `adapter`.
 
 ## Hook signatures
 
@@ -211,6 +213,7 @@ type JoSkOption = {
   onError?: JoSkOnError;
   autoClear?: boolean;
   zombieTime?: number;
+  lockLeaseTime?: number;
   onExecuted?: JoSkOnExecuted;
   minRevolvingDelay?: number;
   maxRevolvingDelay?: number;

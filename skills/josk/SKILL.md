@@ -1,6 +1,6 @@
 ---
 name: josk
-description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster hash-tag routing via `useHashTags`, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
+description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster hash-tag routing via `useHashTags`, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `lockLeaseTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
 ---
 
 # JoSk
@@ -62,6 +62,7 @@ await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m')
 | `setImmediate(fn, uid)` | At-most-once | One-shot fire-now; same as `setTimeout` with delay 0 |
 
 `zombieTime` (default 15 min): max interval handler runtime before re-claim. Keep ≥ slowest handler + margin; not below 60s.
+`lockLeaseTime` (default min(zombieTime, 30s), floor 2 * maxRevolvingDelay + 1000): TTL of the per-cycle scheduler lease — an uncleanly-dead holder frees the prefix after this, not after `zombieTime`.
 
 ## Throughput
 

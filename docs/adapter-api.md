@@ -9,6 +9,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 ## Design Rules
 
 - Keep second-layer scheduler lock. Use owner-bound lease token. Never release foreign lease.
+- Derive lock lifetime from the lock object's own expiry (`lock.expireAt` / `lock.expiresAtMs`, computed from `lockLeaseTime`). Never substitute `zombieTime` — a substituted long TTL freezes the whole prefix for up to `zombieTime` when a holder dies uncleanly.
 - Claim due tasks atomically in storage. Do not `find all due -> update later`.
 - `iterate()` should claim and execute `one` or `batch` depending on `executeMode`.
 - `ready()` optional but recommended. Use it to finish schema/index/init work before first storage op.
