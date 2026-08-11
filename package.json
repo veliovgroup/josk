@@ -1,6 +1,6 @@
 {
   "name": "josk",
-  "version": "6.2.0",
+  "version": "6.3.0",
   "description": "Tasks/CRON scheduler and manager for horizontally scaled multi-server applications. Supports Redis, MongoDB, PostgreSQL adapters.",
   "main": "index.js",
   "type": "module",
