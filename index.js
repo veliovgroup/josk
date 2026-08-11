@@ -56,6 +56,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {string} leaseId
  * @property {Date} expireAt
  * @property {number} expiresAtMs
+ * @property {number} [leaseMs] Relative lease duration (ms) captured at mint time; adapters MUST prefer this over re-deriving a duration from `expiresAtMs - Date.now()`, which re-reads the app clock and is distorted by clock steps between mint and acquire
  */
 
 /**
@@ -513,7 +514,8 @@ class JoSk {
       ownerId: this.lockOwnerId,
       leaseId: `${this.lockOwnerId}:${this.__lockLeaseCounter}:${createRandomId()}`,
       expireAt,
-      expiresAtMs: +expireAt
+      expiresAtMs: +expireAt,
+      leaseMs: this.lockLeaseTime
     };
   }
 

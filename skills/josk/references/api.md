@@ -176,6 +176,7 @@ type JoSkLock = {
   leaseId: string;     // includes ownerId prefix + counter + uuid
   expireAt: Date;
   expiresAtMs: number;
+  leaseMs?: number;    // relative lease duration; adapters prefer this over expiresAtMs - Date.now()
 };
 
 type JoSkTask = {

@@ -569,6 +569,40 @@ describe('RedisAdapter unit coverage', () => {
     expect(Number(client.eval.mock.calls[0][1].arguments[1])).toBe(1);
   });
 
+  it('acquireLock prefers lock.leaseMs over app-clock re-derivation (backward clock step)', async () => {
+    const { adapter, client } = await setupRedisAdapter();
+    // Simulates an NTP step backward AFTER __getLock(): the absolute deadline
+    // now reads 60s further in the future than the configured lease.
+    const expireAt = new Date(Date.now() + 3000 + 60_000);
+
+    await adapter.acquireLock({
+      ownerId: 'redis-skew-owner',
+      leaseId: 'redis-skew-owner-1',
+      expireAt,
+      expiresAtMs: +expireAt,
+      leaseMs: 3000
+    });
+
+    expect(Number(client.eval.mock.calls[0][1].arguments[1])).toBe(3000);
+  });
+
+  it('acquireLock prefers lock.leaseMs over app-clock re-derivation (forward clock step)', async () => {
+    const { adapter, client } = await setupRedisAdapter();
+    // Forward step: the absolute deadline reads as already expired, but the
+    // lease itself was minted moments ago — PX must not collapse to 1.
+    const expireAt = new Date(Date.now() - 50);
+
+    await adapter.acquireLock({
+      ownerId: 'redis-skew-fwd-owner',
+      leaseId: 'redis-skew-fwd-owner-1',
+      expireAt,
+      expiresAtMs: +expireAt,
+      leaseMs: 3000
+    });
+
+    expect(Number(client.eval.mock.calls[0][1].arguments[1])).toBe(3000);
+  });
+
   it('batch iterate stops claiming before the lease expires and leaves the rest for a later revolution', async () => {
     const makeBatch = (name, count) => Array.from({ length: count }, (_unused, i) => ({
       uid: `${name}-${i}`,
@@ -1179,6 +1213,32 @@ describe('PostgresAdapter unit coverage', () => {
     expect(lockQuery.sql).toContain('(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT + $4');
     expect(lockQuery.values[3]).toBeGreaterThan(4500);
     expect(lockQuery.values[3]).toBeLessThanOrEqual(5000);
+  });
+
+  it('acquireLock prefers lock.leaseMs so an app-clock step cannot distort the server-side lease', async () => {
+    const queries = [];
+    const { adapter } = await setupPostgresAdapter((sql, values) => {
+      queries.push({ sql, values });
+      if (sql.includes('INSERT INTO josk_locks')) {
+        return { rowCount: 1, rows: [{ lease_id: 'l1' }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    // Backward NTP step after __getLock(): absolute deadline reads 60s longer
+    // than the configured lease. The lease sent to the server must stay 5000.
+    const expireAt = new Date(Date.now() + 5000 + 60_000);
+    const acquired = await adapter.acquireLock({
+      ownerId: 'owner',
+      leaseId: 'lease-skew',
+      expireAt,
+      expiresAtMs: +expireAt,
+      leaseMs: 5000
+    });
+
+    expect(acquired).toBe(true);
+    const lockQuery = queries.find((q) => q.sql.includes('INSERT INTO josk_locks'));
+    expect(lockQuery.values[3]).toBe(5000);
   });
 
   it('reports claim errors and exposes private method coverage', async () => {

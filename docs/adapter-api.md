@@ -9,7 +9,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 ## Design Rules
 
 - Keep second-layer scheduler lock. Use owner-bound lease token. Never release foreign lease.
-- Derive lock lifetime from the lock object's own expiry (`lock.expireAt` / `lock.expiresAtMs`, computed from `lockLeaseTime`). Never substitute `zombieTime` — a substituted long TTL freezes the whole prefix for up to `zombieTime` when a holder dies uncleanly.
+- Derive lock lifetime from the lock object itself — prefer the relative `lock.leaseMs`; use `lock.expireAt` / `lock.expiresAtMs` only as a fallback for locks minted without it. Never substitute `zombieTime` (a substituted long TTL freezes the whole prefix for up to `zombieTime` when a holder dies uncleanly), and never re-derive a duration as `expiresAtMs - Date.now()` when `leaseMs` is present — that second app-clock read is distorted by any clock step between mint and acquire.
 - Claim due tasks atomically in storage. Do not `find all due -> update later`.
 - `iterate()` should claim and execute `one` or `batch` depending on `executeMode`.
 - `ready()` optional but recommended. Use it to finish schema/index/init work before first storage op.
@@ -31,6 +31,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
   - `{string} lock.leaseId`
   - `{Date} lock.expireAt`
   - `{number} lock.expiresAtMs`
+  - `{number} [lock.leaseMs]` — relative lease duration; prefer over re-deriving from `expiresAtMs`
 - async `Adapter#releaseLock(lock) - {Promise<void>}`
   - same `lock` object
 - async `Adapter#remove(uid) - {Promise<boolean>}`

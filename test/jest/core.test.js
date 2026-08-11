@@ -1018,6 +1018,13 @@ describe('pause/resume', () => {
       expect(job.lockLeaseTime).toBe(1002);
     });
 
+    it('__getLock carries the relative lease duration so adapters never re-read the app clock', () => {
+      const { job } = createJob({ lockLeaseTime: 3000 });
+      const lock = job.__getLock();
+      expect(lock.leaseMs).toBe(3000);
+      expect(lock.expiresAtMs - +lock.expireAt).toBe(0);
+    });
+
     it('throws on invalid lockLeaseTime', () => {
       expect(() => createJob({ lockLeaseTime: -5 })).toThrow('[josk] [lockLeaseTime] option must be a positive finite Number');
       expect(() => createJob({ lockLeaseTime: '5000' })).toThrow('[josk] [lockLeaseTime]');

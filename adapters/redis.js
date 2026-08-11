@@ -372,7 +372,10 @@ class RedisAdapter {
   async acquireLock(lock) {
     await this.ready();
 
-    const px = Math.max(1, lock.expiresAtMs - Date.now());
+    // Prefer the relative duration minted with the lock: re-deriving from the
+    // absolute deadline re-reads the app clock, and a clock step between
+    // __getLock() and here stretches or collapses the lease (see JoSkLock.leaseMs).
+    const px = Math.max(1, Number.isFinite(lock.leaseMs) ? lock.leaseMs : (lock.expiresAtMs - Date.now()));
     const res = await this.__runScript('acquireLock', {
       keys: [this.lockKey],
       arguments: [this.__serializeLock(lock), `${px}`]

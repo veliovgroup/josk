@@ -881,7 +881,10 @@ class RedisAdapter {
   async acquireLock(lock) {
     await this.ready();
 
-    const px = Math.max(1, lock.expiresAtMs - Date.now());
+    // Prefer the relative duration minted with the lock: re-deriving from the
+    // absolute deadline re-reads the app clock, and a clock step between
+    // __getLock() and here stretches or collapses the lease (see JoSkLock.leaseMs).
+    const px = Math.max(1, Number.isFinite(lock.leaseMs) ? lock.leaseMs : (lock.expiresAtMs - Date.now()));
     const res = await this.__runScript('acquireLock', {
       keys: [this.lockKey],
       arguments: [this.__serializeLock(lock), `${px}`]
@@ -1412,7 +1415,10 @@ class PostgresAdapter {
     await this.ready();
 
     try {
-      const leaseDuration = Math.max(1, lock.expiresAtMs - Date.now());
+      // Prefer the relative duration minted with the lock: re-deriving from the
+      // absolute deadline re-reads the app clock, and a clock step between
+      // __getLock() and here stretches or collapses the lease (see JoSkLock.leaseMs).
+      const leaseDuration = Math.max(1, Number.isFinite(lock.leaseMs) ? lock.leaseMs : (lock.expiresAtMs - Date.now()));
       const res = await this.client.query(
         `INSERT INTO josk_locks (lock_key, owner_id, lease_id, locked_until)
          VALUES ($1, $2, $3, (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT + $4)
@@ -1729,6 +1735,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {string} leaseId
  * @property {Date} expireAt
  * @property {number} expiresAtMs
+ * @property {number} [leaseMs] Relative lease duration (ms) captured at mint time; adapters MUST prefer this over re-deriving a duration from `expiresAtMs - Date.now()`, which re-reads the app clock and is distorted by clock steps between mint and acquire
  */
 
 /**
@@ -2186,7 +2193,8 @@ class JoSk {
       ownerId: this.lockOwnerId,
       leaseId: `${this.lockOwnerId}:${this.__lockLeaseCounter}:${createRandomId()}`,
       expireAt,
-      expiresAtMs: +expireAt
+      expiresAtMs: +expireAt,
+      leaseMs: this.lockLeaseTime
     };
   }
 

@@ -222,7 +222,7 @@ interface JoSkAdapter {
 
 ### Required design rules
 
-- **Owner-bound lease tokens.** Never release a foreign lease. The lock object contains `ownerId`, `leaseId`, `expireAt`, `expiresAtMs` — `releaseLock` must check the owner before deleting.
+- **Owner-bound lease tokens.** Never release a foreign lease. The lock object contains `ownerId`, `leaseId`, `expireAt`, `expiresAtMs`, `leaseMs` — `releaseLock` must check the owner before deleting, and lease TTLs should come from `leaseMs` (relative), not from a second app-clock read against `expiresAtMs`.
 - **Atomic due-task claim.** Do not `find all due → update later`. Use a single atomic operation (Lua, `FOR UPDATE SKIP LOCKED`, atomic `findOneAndUpdate`) to claim and return the task in one round-trip.
 - **`iterate(nextExecuteAt, lock, executeMode)`** is the entry point JoSk calls each tick. Claim one task (for `executeMode === 'one'`) or as many as the lease lets you (`executeMode === 'batch'`) and call `this.joskInstance.__execute(task)` **fire-and-forget** for each — JoSk handles internal concurrency and error wrapping.
 - **Storage-server time** for lease comparisons. Mixed client clocks across a cluster cause incorrect lock ownership. See `adapters/postgres.js` for the `CURRENT_TIMESTAMP` pattern.

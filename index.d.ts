@@ -29,6 +29,10 @@ export type JoSkLock = {
     leaseId: string;
     expireAt: Date;
     expiresAtMs: number;
+    /**
+     * Relative lease duration (ms) captured at mint time; adapters MUST prefer this over re-deriving a duration from `expiresAtMs - Date.now()`, which re-reads the app clock and is distorted by clock steps between mint and acquire
+     */
+    leaseMs?: number | undefined;
 };
 export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void | PromiseLike<void>;
 export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | PromiseLike<void>;
