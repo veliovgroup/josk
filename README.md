@@ -60,7 +60,7 @@ __Note: JoSk is the server-only package.__
 - [Migration guide (v4 → v5)](docs/migration-v4-v5.md)
 - [Migration guide (v5 → v6)](docs/migration-v5-v6.md)
 - [Migration guide (v6 → v6.1)](docs/migration-v6-v6.1.md)
-- [Migration guide (v6.1 → v6.2)](docs/migration-v6.1-v6.2.md)
+- [Migration guides](https://github.com/veliovgroup/josk/blob/master/docs/README.md#migration-guides)
 - [Important notes](https://github.com/veliovgroup/josk?tab=readme-ov-file#notes)
 - [~99% tests coverage](https://github.com/veliovgroup/josk?tab=readme-ov-file#running-tests)
 - [Why it's named "JoSk"](https://github.com/veliovgroup/josk?tab=readme-ov-file#why-josk)
@@ -148,7 +148,7 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
 - `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to below `60000` (*one minute*)
-- `opts.lockLeaseTime` {*Number*} - [Optional] TTL in milliseconds of the scheduler lease — the short-lived cluster-wide lock each instance holds for a single claiming cycle. This option exists so an instance that dies uncleanly while holding the lease (process kill, power loss, wedged claiming cycle) can't freeze scheduling for the whole prefix for up to `zombieTime`: the lease self-expires after `lockLeaseTime` and another instance takes over. Safe to keep short — duplicate-run prevention is enforced by per-task atomic claims, not by this lock. `zombieTime` still governs stuck-task ("*zombie*") re-claim and is unaffected by this option. Value is floored at `2 * maxRevolvingDelay + 1000` milliseconds. Default: `min(zombieTime, 30000)` (*30 seconds at default `zombieTime`*)
+- `opts.lockLeaseTime` {*Number*} - [Optional] Scheduler lease TTL in milliseconds. Default: `min(zombieTime, 30000)`, floored at `2 * maxRevolvingDelay + 1000`. See [v6.3 migration notes](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.2-v6.3.md)
 - `opts.execute` {*String*} - [Optional] due-task execution mode. Use `one` to claim and run one task per scheduler lease, or `batch` to drain all currently due tasks under same lease. Default: `batch`
 - `opts.concurrency` {*Number*} - [Optional] maximum number of task handlers that can run in parallel. Use a positive integer to cap parallelism (useful when handlers share rate-limited resources like the same DB the adapter uses); use `Infinity` to disable throttling. Default: `Infinity`
 - `opts.lockOwnerId` {*String*} - [Optional] stable owner id for scheduler lease tokens. Useful for observability (lease IDs include this prefix) and for re-claiming this instance's leases after a planned restart. Default: auto-generated per `JoSk` instance via `crypto.randomUUID()`
@@ -835,7 +835,7 @@ JoSk polls between `minRevolvingDelay` and `maxRevolvingDelay`. The effective in
 
 ### What about clock skew between nodes?
 
-Lease tokens use storage-server time where possible (Redis `PX` TTL, Postgres `CURRENT_TIMESTAMP`, Mongo TTL index). JS clocks are used only for relative scheduling within a single process. It's recommended to ensure NTP is healthy on the database host — that single clock anchors lease ownership across the cluster.
+Redis uses relative `PX` TTL. Postgres derives lease expiry from `CURRENT_TIMESTAMP`, so app-node clock skew does not change lock lifetime. Mongo stores app-generated dates and uses a server-side TTL index for cleanup; keep Mongo app nodes time-synchronized.
 
 ## Notes
 
