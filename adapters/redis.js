@@ -190,6 +190,7 @@ const CLAIM_BATCH_TASKS_SCRIPT = `
 
 const REDIS_BATCH_CLAIM_LIMIT = 100;
 const REDIS_SCAN_LIMIT = 2000;
+const REDIS_LEASE_STOP_MARGIN = 500;
 
 const sha1Hex = (str) => createHash('sha1').update(str).digest('hex');
 
@@ -371,9 +372,10 @@ class RedisAdapter {
   async acquireLock(lock) {
     await this.ready();
 
+    const px = Math.max(1, lock.expiresAtMs - Date.now());
     const res = await this.__runScript('acquireLock', {
       keys: [this.lockKey],
-      arguments: [this.__serializeLock(lock), `${this.joskInstance.zombieTime}`]
+      arguments: [this.__serializeLock(lock), `${px}`]
     });
 
     return res === 'OK';
@@ -482,7 +484,10 @@ class RedisAdapter {
       return executed + 1;
     }
 
-    while (true) {
+    // Bounded by the lease expiry so a huge due-batch can't outlive the lock;
+    // leftover due tasks are picked up on the next revolution.
+    const stopAtMs = lock.expiresAtMs - REDIS_LEASE_STOP_MARGIN;
+    while (Date.now() < stopAtMs) {
       const tasks = await this.__claimNextTasks(nextExecuteAt, lock, REDIS_BATCH_CLAIM_LIMIT);
       if (tasks.length === 0) {
         break;

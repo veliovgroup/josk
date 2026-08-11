@@ -286,6 +286,26 @@ describe('Redis - JoSk', function () {
       }
     });
 
+    it('dead holder\'s scheduler lock expires after its lease, not zombieTime', async function () {
+      this.slow(8000);
+      this.timeout(16000);
+
+      const leaseTime = 2048;
+      const adapter = await buildAdapter();
+      adapter.joskInstance.zombieTime = 300000; // deliberately huge — lease must NOT inherit it
+      const deadHolder = makeLock('redis-direct-dead-holder', leaseTime);
+
+      try {
+        assert.isTrue(await adapter.acquireLock(deadHolder), 'dead holder acquires the lock');
+        // simulate unclean process death: releaseLock is never called
+        assert.isFalse(await adapter.acquireLock(makeLock('redis-direct-successor', leaseTime)), 'successor blocked while lease is live');
+        await wait(leaseTime + 1024);
+        assert.isTrue(await adapter.acquireLock(makeLock('redis-direct-successor', leaseTime)), 'successor acquires shortly after lease expiry — not after zombieTime');
+      } finally {
+        await cleanup(adapter);
+      }
+    });
+
     it('resetOnInit clears previously stored tasks and locks scoped to the prefix', async function () {
       const prefix = uniqueId('testCaseNPM-direct-reset');
       const seed = await buildAdapter({ prefix });

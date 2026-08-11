@@ -55,6 +55,7 @@ export type JoSkOption = {
     onError?: JoSkOnError | undefined;
     autoClear?: boolean | undefined;
     zombieTime?: number | undefined;
+    lockLeaseTime?: number | undefined;
     onExecuted?: JoSkOnExecuted | undefined;
     minRevolvingDelay?: number | undefined;
     maxRevolvingDelay?: number | undefined;
@@ -79,6 +80,7 @@ export class JoSk {
     maxRevolvingDelay: number;
     execute: JoSkExecuteMode;
     lockOwnerId: string;
+    lockLeaseTime: number;
     concurrency: number;
     /** @type {JoSkAdapter} */
     adapter: JoSkAdapter;

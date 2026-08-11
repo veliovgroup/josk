@@ -115,6 +115,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {JoSkOnError} [onError]
  * @property {boolean} [autoClear]
  * @property {number} [zombieTime]
+ * @property {number} [lockLeaseTime]
  * @property {JoSkOnExecuted} [onExecuted]
  * @property {number} [minRevolvingDelay]
  * @property {number} [maxRevolvingDelay]
@@ -126,6 +127,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
 const errors = {
   execute: '[josk] [execute] option must be either "batch" or "one"!',
   concurrency: '[josk] [concurrency] option must be a positive integer or Infinity',
+  lockLeaseTime: '[josk] [lockLeaseTime] option must be a positive finite Number',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be a finite non-negative Number!',
@@ -159,6 +161,11 @@ class JoSk {
     this.maxRevolvingDelay = opts.maxRevolvingDelay || 768;
     this.execute = opts.execute || 'batch';
     this.lockOwnerId = typeof opts.lockOwnerId === 'string' && opts.lockOwnerId.length > 0 ? opts.lockOwnerId : `josk-${createRandomId()}`;
+
+    if (opts.lockLeaseTime !== void 0 && (typeof opts.lockLeaseTime !== 'number' || !Number.isFinite(opts.lockLeaseTime) || opts.lockLeaseTime <= 0)) {
+      throw new Error(errors.lockLeaseTime);
+    }
+    this.lockLeaseTime = Math.max(opts.lockLeaseTime || Math.min(this.zombieTime, 30000), (2 * this.maxRevolvingDelay) + 1000);
 
     if (opts.concurrency !== void 0) {
       if (opts.concurrency !== Infinity && (!Number.isInteger(opts.concurrency) || opts.concurrency < 1)) {
@@ -500,7 +507,7 @@ class JoSk {
 
   /** @internal */
   __getLock() {
-    const expireAt = new Date(Date.now() + this.zombieTime);
+    const expireAt = new Date(Date.now() + this.lockLeaseTime);
     this.__lockLeaseCounter++;
     return {
       ownerId: this.lockOwnerId,

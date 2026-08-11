@@ -533,6 +533,99 @@ describe('RedisAdapter unit coverage', () => {
     expect(batchCall.arguments[3]).toBe(lock.leaseId);
     expect(harness.__errorHandler).not.toHaveBeenCalled();
   });
+
+  it('acquireLock derives PX from the lock expiry, not zombieTime', async () => {
+    const { adapter, client, harness } = await setupRedisAdapter();
+    const expireAt = new Date(Date.now() + 3000);
+    const lock = {
+      ownerId: 'redis-lease-owner',
+      leaseId: 'redis-lease-owner-1',
+      expireAt,
+      expiresAtMs: +expireAt
+    };
+
+    await adapter.acquireLock(lock);
+
+    expect(client.eval).toHaveBeenCalledTimes(1);
+    const options = client.eval.mock.calls[0][1];
+    expect(options.keys).toEqual([adapter.lockKey]);
+    const px = Number(options.arguments[1]);
+    expect(px).toBeGreaterThan(2500);
+    expect(px).toBeLessThanOrEqual(3000);
+    expect(px).not.toBe(harness.zombieTime);
+  });
+
+  it('acquireLock clamps PX at 1 for an already-expired lock object', async () => {
+    const { adapter, client } = await setupRedisAdapter();
+    const expireAt = new Date(Date.now() - 50);
+
+    await adapter.acquireLock({
+      ownerId: 'redis-expired-owner',
+      leaseId: 'redis-expired-owner-1',
+      expireAt,
+      expiresAtMs: +expireAt
+    });
+
+    expect(Number(client.eval.mock.calls[0][1].arguments[1])).toBe(1);
+  });
+
+  it('batch iterate stops claiming before the lease expires and leaves the rest for a later revolution', async () => {
+    const makeBatch = (name, count) => Array.from({ length: count }, (_unused, i) => ({
+      uid: `${name}-${i}`,
+      delay: 1,
+      executeAt: Date.now() - 1000,
+      isInterval: false,
+      isDeleted: false
+    }));
+    const firstBatch = makeBatch('lease-a', 100);
+    const leftoverBatch = makeBatch('lease-b', 3);
+    const evalResults = [JSON.stringify(firstBatch), JSON.stringify(leftoverBatch), JSON.stringify([])];
+
+    const base = Date.now();
+    let now = base;
+    const client = {
+      del: jest.fn(async () => 1),
+      scanIterator: jest.fn(() => (async function* () {})()),
+      ping: jest.fn(async () => 'PONG'),
+      eval: jest.fn(async () => {
+        now += 2000; // simulate a slow claim round-trip
+        return evalResults.shift() ?? JSON.stringify([]);
+      })
+    };
+    const adapter = new RedisAdapter({
+      client,
+      prefix: uniquePrefix('redis-lease-bound')
+    });
+    const harness = createHarness();
+    adapter.joskInstance = harness;
+    await adapter.ready();
+
+    const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now);
+
+    try {
+      const shortLock = {
+        ownerId: 'lease-owner',
+        leaseId: 'lease-owner-1',
+        expireAt: new Date(base + 2400),
+        expiresAtMs: base + 2400
+      };
+      await expect(adapter.iterate(new Date(base + 60000), shortLock, 'batch')).resolves.toBe(100);
+      expect(client.eval).toHaveBeenCalledTimes(1);
+      expect(harness.__execute).toHaveBeenCalledTimes(100);
+
+      const freshLock = {
+        ownerId: 'lease-owner',
+        leaseId: 'lease-owner-2',
+        expireAt: new Date(now + 10000),
+        expiresAtMs: now + 10000
+      };
+      await expect(adapter.iterate(new Date(now + 60000), freshLock, 'batch')).resolves.toBe(3);
+      expect(harness.__execute).toHaveBeenCalledTimes(103);
+      expect(harness.__errorHandler).not.toHaveBeenCalled();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
 
 describe('MongoAdapter unit coverage', () => {

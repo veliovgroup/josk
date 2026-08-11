@@ -995,4 +995,51 @@ describe('pause/resume', () => {
     expect(job.resume()).toBe(false);
     expect(job.resume(timerId)).toBe(false);
   });
+
+  describe('lockLeaseTime', () => {
+    it('defaults to min(zombieTime, 30000)', () => {
+      const { job } = createJob();
+      expect(job.lockLeaseTime).toBe(30000);
+
+      const { job: shortZombie } = createJob({ zombieTime: 5000 });
+      expect(shortZombie.lockLeaseTime).toBe(5000);
+    });
+
+    it('floors lockLeaseTime at 2 * maxRevolvingDelay + 1000', () => {
+      const { job } = createJob({ lockLeaseTime: 10 });
+      expect(job.lockLeaseTime).toBe(1002);
+
+      const { job: defaultDelays } = createJob({ maxRevolvingDelay: 768, lockLeaseTime: 100 });
+      expect(defaultDelays.lockLeaseTime).toBe(2536);
+    });
+
+    it('applies the floor to the derived default when zombieTime is tiny', () => {
+      const { job } = createJob({ zombieTime: 100 });
+      expect(job.lockLeaseTime).toBe(1002);
+    });
+
+    it('throws on invalid lockLeaseTime', () => {
+      expect(() => createJob({ lockLeaseTime: -5 })).toThrow('[josk] [lockLeaseTime] option must be a positive finite Number');
+      expect(() => createJob({ lockLeaseTime: '5000' })).toThrow('[josk] [lockLeaseTime]');
+      expect(() => createJob({ lockLeaseTime: NaN })).toThrow('[josk] [lockLeaseTime]');
+      expect(() => createJob({ lockLeaseTime: Infinity })).toThrow('[josk] [lockLeaseTime]');
+    });
+
+    it('scheduler lock expiry derives from lockLeaseTime, not zombieTime', () => {
+      const { job } = createJob({ zombieTime: 300000, lockLeaseTime: 3000 });
+      const lock = job.__getLock();
+      expect(lock.expiresAtMs - Date.now()).toBe(3000);
+      expect(+lock.expireAt - Date.now()).toBe(3000);
+    });
+
+    it('task park time (nextExecuteAt) still derives from zombieTime', async () => {
+      const { job, adapter } = createJob({ zombieTime: 300000, lockLeaseTime: 3000 });
+
+      await job.__iterate();
+
+      expect(adapter.iterateCalls).toHaveLength(1);
+      expect(+adapter.iterateCalls[0].nextExecuteAt - Date.now()).toBe(300000);
+      expect(adapter.acquireCalls[0].expiresAtMs - Date.now()).toBe(3000);
+    });
+  });
 });
