@@ -86,9 +86,9 @@ Running `jobs.ping()` after a restart confirms readiness.
 
 ## Clock skew across nodes
 
-Lease tokens use storage-server time where possible (`PEXPIRE` for Redis, `CURRENT_TIMESTAMP` for Postgres, TTL index for Mongo). JS clocks are used only for relative scheduling within a single process. NTP on the storage host is the single clock that anchors lease ownership across the cluster — keep it healthy.
+Redis uses relative `PEXPIRE` TTL. Postgres computes lease expiry from `CURRENT_TIMESTAMP`, so app-node clock skew does not change lock lifetime. Mongo persists app-generated dates and uses a server-side TTL index for cleanup; keep Mongo app nodes time-synchronized.
 
-If clocks across app nodes are wildly off and you need correctness anyway, `PostgresAdapter` is the most resistant: its `acquireLock` compares lease expiry server-side via `CURRENT_TIMESTAMP`.
+If app-node clocks may diverge, prefer `PostgresAdapter`: `acquireLock` computes and compares lease expiry from server time.
 
 ## "Why does my interval drift by ~1 second?"
 
@@ -125,7 +125,7 @@ Use `pg@>=8.0.3`. Older `pg@7` hangs on TCP connect. The `Cannot find module 'pg
 
 ## Migrations
 
-Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.md`, `docs/migration-v6-v6.1.md`, and `docs/migration-v6.1-v6.2.md`.
+Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.md`, `docs/migration-v6-v6.1.md`, `docs/migration-v6.1-v6.2.md`, and `docs/migration-v6.2-v6.3.md`.
 
 ## When NOT to use JoSk
 
