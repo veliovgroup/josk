@@ -20,7 +20,7 @@ const jobs = new JoSk({
 
 ## Custom adapters
 
-Use expiry carried by `lock.expireAt` or `lock.expiresAtMs`. Do not substitute `joskInstance.zombieTime`. Keep lock release owner-bound with `ownerId` and `leaseId`.
+Prefer the relative lease duration carried by `lock.leaseMs`; fall back to `lock.expireAt` / `lock.expiresAtMs` only for locks minted without it. Do not substitute `joskInstance.zombieTime`, and do not re-derive a duration as `expiresAtMs - Date.now()` when `leaseMs` is present — that second app-clock read is distorted by clock steps between mint and acquire. Keep lock release owner-bound with `ownerId` and `leaseId`.
 
 Redis batch claiming stops before lease expiry and resumes remaining due tasks on next scheduler revolution.
 
