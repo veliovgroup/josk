@@ -1176,7 +1176,9 @@ describe('PostgresAdapter unit coverage', () => {
     expect(acquired).toBe(true);
     const lockQuery = queries.find((q) => q.sql.includes('INSERT INTO josk_locks'));
     expect(lockQuery).toBeTruthy();
-    expect(lockQuery.sql).toContain('EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)');
+    expect(lockQuery.sql).toContain('(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT + $4');
+    expect(lockQuery.values[3]).toBeGreaterThan(4500);
+    expect(lockQuery.values[3]).toBeLessThanOrEqual(5000);
   });
 
   it('reports claim errors and exposes private method coverage', async () => {

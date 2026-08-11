@@ -1032,6 +1032,21 @@ describe('pause/resume', () => {
       expect(+lock.expireAt - Date.now()).toBe(3000);
     });
 
+    it('starts scheduler timing windows after adapter initialization completes', async () => {
+      const adapter = new FakeAdapter({
+        readyPromise: Promise.resolve().then(() => {
+          jest.setSystemTime(Date.now() + 5000);
+        })
+      });
+      const { job } = createJob({ lockLeaseTime: 3000 }, adapter);
+
+      await job.__iterate();
+
+      expect(adapter.acquireCalls[0].expiresAtMs - Date.now()).toBe(3000);
+      expect(+adapter.acquireCalls[0].expireAt - Date.now()).toBe(3000);
+      expect(+adapter.iterateCalls[0].nextExecuteAt - Date.now()).toBe(900000);
+    });
+
     it('task park time (nextExecuteAt) still derives from zombieTime', async () => {
       const { job, adapter } = createJob({ zombieTime: 300000, lockLeaseTime: 3000 });
 

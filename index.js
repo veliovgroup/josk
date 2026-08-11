@@ -804,12 +804,13 @@ class JoSk {
       return;
     }
 
-    const nextExecuteAt = new Date(Date.now() + this.zombieTime);
-    const lock = this.__getLock();
     let isAcquired = false;
+    let lock;
 
     try {
       await this.__adapterReady();
+      const nextExecuteAt = new Date(Date.now() + this.zombieTime);
+      lock = this.__getLock();
       isAcquired = await this.adapter.acquireLock(lock);
       if (isAcquired) {
         await this.adapter.iterate(nextExecuteAt, lock, this.execute);

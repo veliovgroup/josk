@@ -88,6 +88,7 @@ describe('Meteor TypeScript — runtime', function () {
       minRevolvingDelay: 32,
       maxRevolvingDelay: 256,
       zombieTime: 8000,
+      lockLeaseTime: 3000,
       autoClear: true,
       onError,
       onExecuted

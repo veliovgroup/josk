@@ -61,6 +61,7 @@ Same JoSk options from NPM package are available in Meteor:
 - `adapter` — required storage adapter instance: `MongoAdapter`, `RedisAdapter`, or `PostgresAdapter`
 - `execute` — `batch` (default) drains due tasks under one lease; `one` claims one task per lease
 - `zombieTime` — stuck-task retry time; default is `900000` ms
+- `lockLeaseTime` — scheduler lease TTL; default is `min(zombieTime, 30000)` with polling-based floor
 - `lockOwnerId` — optional stable owner id for scheduler lease tokens
 - `minRevolvingDelay` and `maxRevolvingDelay` — polling jitter range; higher values reduce storage writes
 - `autoClear` — removes storage tasks missing from current process memory

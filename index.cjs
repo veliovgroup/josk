@@ -1412,9 +1412,10 @@ class PostgresAdapter {
     await this.ready();
 
     try {
+      const leaseDuration = Math.max(1, lock.expiresAtMs - Date.now());
       const res = await this.client.query(
         `INSERT INTO josk_locks (lock_key, owner_id, lease_id, locked_until)
-         VALUES ($1, $2, $3, $4)
+         VALUES ($1, $2, $3, (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT + $4)
          ON CONFLICT (lock_key) DO UPDATE
            SET owner_id = EXCLUDED.owner_id,
                lease_id = EXCLUDED.lease_id,
@@ -1422,7 +1423,7 @@ class PostgresAdapter {
                updated_at = CURRENT_TIMESTAMP
          WHERE josk_locks.locked_until <= (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT
          RETURNING lease_id`,
-        [this.lockKey, lock.ownerId, lock.leaseId, lock.expiresAtMs]
+        [this.lockKey, lock.ownerId, lock.leaseId, leaseDuration]
       );
       return (res.rowCount || 0) >= 1;
     } catch (lockError) {
@@ -2476,12 +2477,13 @@ class JoSk {
       return;
     }
 
-    const nextExecuteAt = new Date(Date.now() + this.zombieTime);
-    const lock = this.__getLock();
     let isAcquired = false;
+    let lock;
 
     try {
       await this.__adapterReady();
+      const nextExecuteAt = new Date(Date.now() + this.zombieTime);
+      lock = this.__getLock();
       isAcquired = await this.adapter.acquireLock(lock);
       if (isAcquired) {
         await this.adapter.iterate(nextExecuteAt, lock, this.execute);

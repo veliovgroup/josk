@@ -29,6 +29,7 @@ const adapter = {
 const jobs = new JoSk({
   adapter,
   execute: 'one',
+  lockLeaseTime: 30000,
   onError(_title: string, details: { description: string; uid: string | null }) {
     details.description;
     details.uid;

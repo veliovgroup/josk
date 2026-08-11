@@ -73,7 +73,7 @@ jobs.setInterval(async () => true, 2048, 'promise-value-cjs-task');
 
 // Type-only imports resolve correctly through the .d.cts shim
 const execute: JoSkExecuteMode = 'one';
-const opt: JoSkOption = { adapter, execute, concurrency: 4 };
+const opt: JoSkOption = { adapter, execute, concurrency: 4, lockLeaseTime: 30000 };
 void opt;
 
 const onError: JoSkOnError = (_title, _details) => {};
