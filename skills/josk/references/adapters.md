@@ -6,7 +6,7 @@ Three built-in adapters plus the contract for writing custom ones. Pick by topol
 
 | Adapter | Best for | Prerequisite NPM | Server requirement | Lock mechanism | Notes |
 |---|---|---|---|---|---|
-| `RedisAdapter` | High-frequency scheduling, single-writer Redis/KeyDB | `redis@^4 \|\| ^5` | `redis-server@≥5.0.0` (Lua + sorted sets), or KeyDB / Valkey. Cluster mode requires `useHashTags: true` | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim | Reject active-active / multi-master topologies |
+| `RedisAdapter` | High-frequency scheduling, single-writer Redis / KeyDB / Valkey | `redis@^4 \|\| ^5` | Lua + sorted sets (`redis-server@≥5.0.0`, KeyDB, Valkey). Cluster requires `useHashTags: true` | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim | Reject active-active / KeyDB active-replication |
 | `MongoAdapter` | Apps that already run MongoDB (incl. Meteor) | `mongodb` (official driver) | `mongod@≥4.0.0` | TTL-indexed `.lock` collection, atomic `findOneAndUpdate` task claim | Tested only against official driver. Other Mongo-compatible stores unverified |
 | `PostgresAdapter` | Multi-region / strict single-claim, mixed clocks | `pg` | `postgres@≥12` | `josk_locks` row with `CURRENT_TIMESTAMP`-compared expiry, `FOR UPDATE SKIP LOCKED` claim | Strongest clock-skew resistance. Auto-migrates schema on init |
 
@@ -24,7 +24,7 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'app-scheduler',
-    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
+    // useHashTags: true, // Redis / KeyDB / Valkey Cluster
   }),
   onError(reason, details) {
     console.error('[josk]', reason, details.error);
@@ -39,7 +39,7 @@ const jobs = new JoSk({
 | `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` or `redis@^5` client. Either `RedisClientType` or `RedisClusterType`. |
 | `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+$/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
 | `resetOnInit` | `boolean` | `false` | Deletes all keys under this prefix on init. Local-dev / single-instance recovery only. Disastrous in clustered prod. |
-| `useHashTags` | `boolean` | `false` | Use Redis Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps existing standalone keys (`josk:prefix:*`). |
+| `useHashTags` | `boolean` | `false` | Redis / KeyDB / Valkey Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps standalone keys (`josk:prefix:*`). |
 
 ### Keys created (for `prefix: 'app'`)
 
@@ -57,11 +57,38 @@ With `useHashTags: true`:
 
 The `{app}` braces are Redis hash tags that keep all adapter keys on the same Cluster slot.
 
-### Redis / KeyDB topology guidelines
+### Engines: Redis, KeyDB, Valkey
 
-- One writable primary endpoint. For Redis Cluster or KeyDB Cluster, set `useHashTags: true`.
+Same RESP client (`redis@^4 \|\| ^5`). JoSk is Lua-always (HASH + ZSET + `SET NX PX` + `cjson`). No `WATCH`. No RedisJSON / Streams / modules.
+
+| Engine | Standalone | Cluster | Proven |
+|---|---|---|---|
+| Redis | Yes | `useHashTags: true` | CI: Redis 6 / 7 / 8 standalone. No Cluster job |
+| KeyDB | Yes, as single-writer Redis | `useHashTags: true` | README: well-tested. No CI image |
+| Valkey | Yes (Redis 7.2 fork) | `useHashTags: true` | Not in CI; treat as Redis 7 |
+
+**Will run well:** one writable primary, or Cluster with `useHashTags: true`. JoSk itself is fine on Redis ≥ 5.
+
+**Will not:** KeyDB active-replication / multi-master; Redis active-active (CRDT); replica reads; Cluster without `useHashTags` (`CROSSSLOT` on Lua). Multi-DC / mixed clocks → `PostgresAdapter`.
+
+`useHashTags` only **renames** keys (`josk:prefix:*` → `josk:{prefix}:*`). Same hash + ZSET layout. Existing untagged keys are not read.
+
+### With MailTime (`mail-time` / `ostrio:mailer`)
+
+MailTime owns the email queue; JoSk only leases `queue.iterate()`. **REQUIRED:** `mail-time` skill (`npx skills add veliovgroup/mail-time`) for queue CAS, concat, SMTP.
+
+- Set `useHashTags` on **both** `RedisQueue` and `RedisAdapter` (or `josk.adapter.useHashTags`). One side tagged → `CROSSSLOT` or empty drains.
+- MailTime prefixes JoSk as `mailTimeQueue${prefix}` → tagged lock `josk:{mailTimeQueueotp}:lock`.
+- MailTime tagged mode is a **new** queue layout (hash + ZSET + Lua), not a JoSk-style rename of `letter:`/`sendat:` keys. Do not copy JoSk `RENAME`/`DUMP` onto MailTime queues — use MailTime's migrate script.
+- MailTime standalone still needs `WATCH`+`MULTI`; JoSk never does. Cluster clients have no `WATCH` — MailTime then needs tagged Lua.
+- `concatEmails` uses `SET PXAT` (engine ≥ 6.2). That floor is MailTime's, not JoSk's.
+- Tagged MailTime `iterate` returns at most 100 due rows per tick (Lua bound).
+
+### Topology guidelines
+
+- One writable primary. Redis / KeyDB / Valkey Cluster: `useHashTags: true`.
 - **Do not** route reads or writes to replicas. Lease writes must be immediately visible.
-- **Do not** use Redis active-active / multi-master or KeyDB active-replication for scheduler correctness. Conflict resolution can allow duplicate task claims across writers.
+- **Do not** use Redis active-active / multi-master or KeyDB active-replication. Conflict resolution can duplicate claims.
 - For multi-DC strict single-claim requirements, prefer `PostgresAdapter`.
 
 ## `MongoAdapter`

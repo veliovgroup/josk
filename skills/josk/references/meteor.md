@@ -56,7 +56,7 @@ The scheduler shares the app's Mongo replica set — zero extra connections.
 
 ## Redis / PostgreSQL from Meteor
 
-Same `RedisAdapter` / `PostgresAdapter` setup as `adapters.md`. Install drivers via `meteor npm install redis` or `meteor npm install pg`, then import from `meteor/ostrio:cron-jobs` instead of `josk`.
+Same `RedisAdapter` / `PostgresAdapter` setup as `adapters.md` (Redis / KeyDB / Valkey: one writable primary; Cluster needs `useHashTags: true`). Install drivers via `meteor npm install redis` or `meteor npm install pg`, then import from `meteor/ostrio:cron-jobs` instead of `josk`.
 
 ## Meteor-specific notes
 

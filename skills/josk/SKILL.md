@@ -1,6 +1,6 @@
 ---
 name: josk
-description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster hash-tag routing via `useHashTags`, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `lockLeaseTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
+description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster / Valkey `useHashTags`, KeyDB active-replication, MailTime RedisQueue pairing, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `lockLeaseTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
 ---
 
 # JoSk
@@ -36,7 +36,8 @@ await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m')
 | Adapter setup, cluster rules, custom adapter | [references/adapters.md](references/adapters.md) |
 | Handlers, CRON, concurrency, shutdown | [references/patterns.md](references/patterns.md) |
 | Meteor / `ostrio:cron-jobs` | [references/meteor.md](references/meteor.md) |
-| Zombies, jitter, migrations, KeyDB | [references/troubleshooting.md](references/troubleshooting.md) |
+| Zombies, jitter, migrations, KeyDB / Valkey | [references/troubleshooting.md](references/troubleshooting.md) |
+| Email queue on JoSk (`mail-time`) | **REQUIRED** `mail-time` skill (`npx skills add veliovgroup/mail-time`) |
 
 ## Mental model
 
@@ -50,7 +51,7 @@ await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m')
 | Adapter | Choose when |
 |---|---|
 | **PostgreSQL** | Multi-DC, clock skew, strict single-claim; `SKIP LOCKED` |
-| **Redis / KeyDB / Valkey** | Single-region, high frequency; single writable primary only; Cluster needs `useHashTags: true` |
+| **Redis / KeyDB / Valkey** | Single-region, high frequency; one writable primary; Cluster / Valkey Cluster needs `useHashTags: true`. Engines + MailTime pairing: [adapters.md](references/adapters.md) |
 | **MongoDB** | App already on Mongo (Meteor: `MongoInternals…mongo.db`); official `mongodb` driver |
 
 ## Pick the scheduling method
@@ -78,7 +79,8 @@ Call out proactively when reviewing JoSk usage:
 - Default `zombieTime` with handlers >15 min
 - `resetOnInit: true` in production cluster
 - Replica reads / multi-writer Redis
-- Redis Cluster without `useHashTags: true`
+- Redis / KeyDB / Valkey Cluster without `useHashTags: true`
+- MailTime Redis Cluster with `useHashTags` on only JoSk or only `RedisQueue`
 - Intervals <~2s (storage + jitter overlap)
 - MongoAdapter on CosmosDB/DocumentDB/Mongoose without warning
-- KeyDB active-replication / multi-master
+- KeyDB active-replication / Redis active-active / multi-master
