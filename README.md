@@ -1,3 +1,5 @@
+# JoSk
+
 [![npm version][badge-npm-v]][npm-url]
 [![npm downloads][badge-npm-dm]][npm-url]
 [![CI][badge-ci]][ci-url]
@@ -11,10 +13,9 @@
 [![zero dependencies][badge-deps]][npm-url]
 [![Sponsor][badge-sponsor]][sponsor-url]
 [![Donate][badge-donate]][donate-url]
+<a href="https://bridge-cdn.com/?ref=github-josk-repo-top"><img src="https://bridge-cdn.com/favicon.svg" height="20"></a>
 <a href="https://ostr.io/info/built-by-developers-for-developers?ref=github-josk-repo-top"><img src="https://ostr.io/apple-touch-icon-60x60.png" height="20"></a>
 <a href="https://meteor-files.com/?ref=github-josk-repo-top"><img src="https://meteor-files.com/apple-touch-icon-60x60.png" height="20"></a>
-
-# JoSk
 
 "JoSk" is a Node.js task manager for horizontally scaled apps and apps that would need to scale horizontally quickly at some point of growth.
 
@@ -859,6 +860,7 @@ REDIS_URL="…" MONGO_URL="…" PG_URL="…" npm test
 
 ## Support our open source contribution:
 
+- Try [🌉 Bridge CDN](https://bridge-cdn.com/?ref=github-josk-repo-footer) - A SEO-focused alternative to Cloudflare. CDN, DNS, IndexNow, Prerender, SEO, Edge Computing.
 - Upload and share files using [☄️ meteor-files.com](https://meteor-files.com/?ref=github-josk-repo-footer) — Continue interrupted file uploads without losing any progress. There is nothing that will stop Meteor from delivering your file to the desired destination
 - Use [▲ ostr.io](https://ostr.io?ref=github-josk-repo-footer) for [Server Monitoring](https://snmp-monitoring.com), [Web Analytics](https://ostr.io/info/web-analytics?ref=github-josk-repo-footer), [WebSec](https://domain-protection.info), [Web-CRON](https://web-cron.info) and [SEO Pre-rendering](https://prerendering.com) of a website
 - Star on [GitHub](https://github.com/veliovgroup/josk)
