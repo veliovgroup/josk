@@ -58,6 +58,13 @@ const expectDueTaskClaiming = async (adapter, harness) => {
   expect(harness.__execute).not.toHaveBeenCalled();
 };
 
+const INTERVAL_DELAY = 60000;
+
+const expectResetSchedule = (executeAt, before, delay = INTERVAL_DELAY) => {
+  expect(executeAt).toBeGreaterThanOrEqual(before + delay);
+  expect(executeAt).toBeLessThanOrEqual(Date.now() + delay);
+};
+
 const createRedisClient = (opts = {}) => {
   const evalResults = [...(opts.evalResults || [])];
   return {
@@ -278,6 +285,27 @@ describe('RedisAdapter unit coverage', () => {
     expect(adapter.__getTaskKey('abc')).toBe(`${adapter.uniqueName}:task:abc`);
     expect(harness.__execute).not.toHaveBeenCalled();
     expect(harness.__errorHandler).toHaveBeenCalledTimes(2);
+  });
+
+  it('add() passes uid, delay, now + delay, and the interval flag to the add script', async () => {
+    const { adapter, client } = await setupRedisAdapter({
+      evalResults: [1, 1]
+    });
+    const before = Date.now();
+
+    await expect(adapter.add('redis-add-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+    await expect(adapter.add('redis-add-timeout', false, INTERVAL_DELAY)).resolves.toBe(true);
+
+    const [intervalSource, intervalCall] = client.eval.mock.calls[0];
+    const [, timeoutCall] = client.eval.mock.calls[1];
+    expect(intervalSource).toContain('storedExecuteAt < executeAt');
+    expect(intervalSource).toContain("redis.call('ZADD', KEYS[1], executeAt, ARGV[1])");
+    expect(intervalCall.keys).toEqual([adapter.scheduleKey, adapter.tasksKey]);
+    expect(intervalCall.arguments[0]).toBe('redis-add-interval');
+    expect(intervalCall.arguments[1]).toBe(`${INTERVAL_DELAY}`);
+    expectResetSchedule(Number(intervalCall.arguments[2]), before);
+    expect(intervalCall.arguments[3]).toBe('1');
+    expect(timeoutCall.arguments[3]).toBe('0');
   });
 
   it('rejects prefixes containing characters outside the allowed set', () => {
@@ -834,6 +862,56 @@ describe('MongoAdapter unit coverage', () => {
     expect(harness.__errorHandler.mock.calls.length).toBeGreaterThanOrEqual(5);
   });
 
+  it('add(interval) upserts via a pipeline that keeps an earlier stored executeAt', async () => {
+    const { adapter, collection } = await setupMongoAdapter();
+    const before = Date.now();
+
+    await expect(adapter.add('$mongo-add-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+    const [filter, update, options] = collection.updateOne.mock.calls[0];
+    expect(filter).toEqual({ uid: '$mongo-add-interval' });
+    expect(options).toEqual({ upsert: true });
+    expect(Array.isArray(update)).toBe(true);
+    expect(update).toHaveLength(1);
+
+    const stage = update[0].$set;
+    expect(stage.uid).toEqual({ $literal: '$mongo-add-interval' });
+    expect(stage.delay).toEqual({ $literal: INTERVAL_DELAY });
+    expect(stage.isInterval).toBe(true);
+    expect(stage.isDeleted).toBe(false);
+
+    const [condition, keep, fallback] = stage.executeAt.$cond;
+    const next = fallback.$literal;
+    expect(keep).toBe('$executeAt');
+    expect(next).toBeInstanceOf(Date);
+    expectResetSchedule(+next, before);
+    expect(condition.$and).toEqual([
+      { $eq: ['$isInterval', true] },
+      { $eq: ['$isDeleted', false] },
+      { $eq: ['$delay', { $literal: INTERVAL_DELAY }] },
+      { $eq: [{ $type: '$executeAt' }, 'date'] },
+      { $lt: ['$executeAt', { $literal: next }] }
+    ]);
+  });
+
+  it('add(timeout) keeps the plain $set upsert that always resets executeAt', async () => {
+    const { adapter, collection } = await setupMongoAdapter();
+    const before = Date.now();
+
+    await expect(adapter.add('mongo-add-timeout', false, INTERVAL_DELAY)).resolves.toBe(true);
+
+    const [filter, update, options] = collection.updateOne.mock.calls[0];
+    expect(filter).toEqual({ uid: 'mongo-add-timeout' });
+    expect(options).toEqual({ upsert: true });
+    expect(update.$set).toMatchObject({
+      uid: 'mongo-add-timeout',
+      delay: INTERVAL_DELAY,
+      isInterval: false,
+      isDeleted: false
+    });
+    expectResetSchedule(+update.$set.executeAt, before);
+  });
+
   it('handles empty one-mode claims and legacy claim results', async () => {
     const task = {
       _id: 'legacy-claim',
@@ -1166,6 +1244,31 @@ describe('PostgresAdapter unit coverage', () => {
     expect(harness.__errorHandler.mock.calls.length).toBeGreaterThanOrEqual(6);
   });
 
+  it('add() upserts in one statement that keeps an earlier execute_at only for unchanged intervals', async () => {
+    const addQueries = [];
+    const { adapter } = await setupPostgresAdapter((sql, values) => {
+      if (sql.includes('INSERT INTO josk_tasks')) {
+        addQueries.push({ sql, values });
+        return { rowCount: 1, rows: [{ uid: values[1] }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const before = Date.now();
+
+    await expect(adapter.add('postgres-add-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+    await expect(adapter.add('postgres-add-timeout', false, INTERVAL_DELAY)).resolves.toBe(true);
+
+    expect(addQueries).toHaveLength(2);
+    const [intervalQuery, timeoutQuery] = addQueries;
+    const sql = intervalQuery.sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('ON CONFLICT (prefix, uid) DO UPDATE SET');
+    expect(sql).toContain('execute_at = CASE WHEN EXCLUDED.is_interval = true AND josk_tasks.is_interval = true AND josk_tasks.is_deleted = false AND josk_tasks.delay = EXCLUDED.delay AND josk_tasks.execute_at < EXCLUDED.execute_at THEN josk_tasks.execute_at ELSE EXCLUDED.execute_at END');
+    expect(intervalQuery.values.slice(0, 3)).toEqual([adapter.prefix, 'postgres-add-interval', INTERVAL_DELAY]);
+    expectResetSchedule(intervalQuery.values[3], before);
+    expect(intervalQuery.values[4]).toBe(true);
+    expect(timeoutQuery.values[4]).toBe(false);
+  });
+
   it('handles empty one-mode iteration and full batch page continuation', async () => {
     const { adapter, harness } = await setupPostgresAdapter();
     const tasks = Array.from({
@@ -1387,6 +1490,28 @@ const adapterSuites = [{
 
     return {
       adapter,
+      // ADD_TASK_SCRIPT has always refused to revive a tombstoned (isDeleted) hash entry.
+      revivesDeletedTasks: false,
+      async readTask(uid) {
+        const payload = await client.hGet(adapter.tasksKey, uid);
+        if (!payload) {
+          return null;
+        }
+        const task = JSON.parse(String(payload));
+        const score = await client.zScore(adapter.scheduleKey, uid);
+        return {
+          delay: Number(task.delay),
+          executeAt: Number(task.executeAt),
+          scheduledAt: score === null ? null : Number(score),
+          isInterval: task.isInterval === true,
+          isDeleted: task.isDeleted === true
+        };
+      },
+      async markDeleted(uid) {
+        const task = JSON.parse(String(await client.hGet(adapter.tasksKey, uid)));
+        task.isDeleted = true;
+        await client.hSet(adapter.tasksKey, uid, JSON.stringify(task));
+      },
       async cleanup() {
         await client.del([adapter.scheduleKey, adapter.tasksKey, adapter.lockKey]);
         await client.quit();
@@ -1411,6 +1536,23 @@ const adapterSuites = [{
 
     return {
       adapter,
+      revivesDeletedTasks: true,
+      async readTask(uid) {
+        const task = await adapter.collection.findOne({ uid });
+        if (!task) {
+          return null;
+        }
+        return {
+          delay: Number(task.delay),
+          executeAt: +task.executeAt,
+          scheduledAt: +task.executeAt,
+          isInterval: task.isInterval === true,
+          isDeleted: task.isDeleted === true
+        };
+      },
+      async markDeleted(uid) {
+        await adapter.collection.updateOne({ uid }, { $set: { isDeleted: true } });
+      },
       async cleanup() {
         await adapter.collection.drop().catch(() => {});
         await adapter.lockCollection.deleteMany({
@@ -1436,6 +1578,27 @@ const adapterSuites = [{
 
     return {
       adapter,
+      revivesDeletedTasks: true,
+      async readTask(uid) {
+        const res = await client.query(
+          'SELECT delay, execute_at, is_interval, is_deleted FROM josk_tasks WHERE prefix = $1 AND uid = $2',
+          [adapter.prefix, uid]
+        );
+        const task = res.rows[0];
+        if (!task) {
+          return null;
+        }
+        return {
+          delay: Number(task.delay),
+          executeAt: Number(task.execute_at),
+          scheduledAt: Number(task.execute_at),
+          isInterval: task.is_interval === true,
+          isDeleted: task.is_deleted === true
+        };
+      },
+      async markDeleted(uid) {
+        await client.query('UPDATE josk_tasks SET is_deleted = true WHERE prefix = $1 AND uid = $2', [adapter.prefix, uid]);
+      },
       async cleanup() {
         await client.query('DELETE FROM josk_tasks WHERE prefix = $1', [adapter.prefix]).catch(() => {});
         await client.query('DELETE FROM josk_locks WHERE lock_key = $1', [adapter.lockKey]).catch(() => {});
@@ -1514,6 +1677,148 @@ for (const suite of adapterSuites) {
       await expect(adapter.update({ uid: 'bad-date' }, 'not-a-date')).resolves.toBe(false);
       expect(harness.__errorHandler).toHaveBeenCalledTimes(1);
       expect(harness.__errorHandler.mock.calls[0][1]).toContain('[update] [nextExecuteAt]');
+    });
+
+    const seedTask = async (adapter, uid, isInterval, storedExecuteAt) => {
+      await expect(adapter.add(uid, isInterval, INTERVAL_DELAY)).resolves.toBe(true);
+      await expect(adapter.update({ uid }, new Date(storedExecuteAt))).resolves.toBe(true);
+      await expect(context.readTask(uid)).resolves.toMatchObject({
+        executeAt: storedExecuteAt,
+        scheduledAt: storedExecuteAt
+      });
+    };
+
+    it('creates a new interval task at now + delay', async () => {
+      const adapter = await setupAdapter();
+      const before = Date.now();
+
+      await expect(adapter.add('interval-new', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const task = await context.readTask('interval-new');
+      expectResetSchedule(task.executeAt, before);
+      expect(task).toMatchObject({
+        delay: INTERVAL_DELAY,
+        scheduledAt: task.executeAt,
+        isInterval: true,
+        isDeleted: false
+      });
+    });
+
+    it('keeps an earlier stored executeAt when an interval re-registers with the same delay', async () => {
+      const adapter = await setupAdapter();
+      const storedExecuteAt = Date.now() + 20000;
+      await seedTask(adapter, 'interval-keep', true, storedExecuteAt);
+
+      await expect(adapter.add('interval-keep', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      await expect(context.readTask('interval-keep')).resolves.toMatchObject({
+        delay: INTERVAL_DELAY,
+        executeAt: storedExecuteAt,
+        scheduledAt: storedExecuteAt,
+        isInterval: true,
+        isDeleted: false
+      });
+    });
+
+    it('keeps a past-due interval past-due on re-registration so the next tick claims it', async () => {
+      const adapter = await setupAdapter();
+      const storedExecuteAt = Date.now() - 5000;
+      await seedTask(adapter, 'interval-past-due', true, storedExecuteAt);
+
+      await expect(adapter.add('interval-past-due', true, INTERVAL_DELAY)).resolves.toBe(true);
+      await expect(context.readTask('interval-past-due')).resolves.toMatchObject({
+        executeAt: storedExecuteAt,
+        scheduledAt: storedExecuteAt
+      });
+
+      const claimed = await adapter.iterate(new Date(Date.now() + 60000), createLock('past-due-owner'), 'batch');
+      expect(claimed).toBe(1);
+      expect(harness.__execute).toHaveBeenCalledTimes(1);
+      expect(harness.__execute.mock.calls[0][0].uid).toBe('interval-past-due');
+    });
+
+    it('replaces a later stored executeAt (e.g. a zombie park time) with now + delay', async () => {
+      const adapter = await setupAdapter();
+      await seedTask(adapter, 'interval-later', true, Date.now() + (10 * INTERVAL_DELAY));
+      const before = Date.now();
+
+      await expect(adapter.add('interval-later', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const task = await context.readTask('interval-later');
+      expectResetSchedule(task.executeAt, before);
+      expect(task.scheduledAt).toBe(task.executeAt);
+    });
+
+    it('resets to now + delay when an interval re-registers with a different delay', async () => {
+      const adapter = await setupAdapter();
+      const newDelay = INTERVAL_DELAY * 2;
+      await seedTask(adapter, 'interval-new-delay', true, Date.now() + 20000);
+      const before = Date.now();
+
+      await expect(adapter.add('interval-new-delay', true, newDelay)).resolves.toBe(true);
+
+      const task = await context.readTask('interval-new-delay');
+      expectResetSchedule(task.executeAt, before, newDelay);
+      expect(task).toMatchObject({
+        delay: newDelay,
+        scheduledAt: task.executeAt,
+        isInterval: true
+      });
+    });
+
+    it('never keeps the stored executeAt of a deleted task', async () => {
+      const adapter = await setupAdapter();
+      const storedExecuteAt = Date.now() + 20000;
+      await seedTask(adapter, 'interval-deleted', true, storedExecuteAt);
+      await context.markDeleted('interval-deleted');
+      const before = Date.now();
+
+      const added = await adapter.add('interval-deleted', true, INTERVAL_DELAY);
+      const task = await context.readTask('interval-deleted');
+
+      if (context.revivesDeletedTasks) {
+        expect(added).toBe(true);
+        expectResetSchedule(task.executeAt, before);
+        expect(task).toMatchObject({
+          scheduledAt: task.executeAt,
+          isDeleted: false
+        });
+      } else {
+        expect(added).toBe(false);
+        expect(task.isDeleted).toBe(true);
+      }
+    });
+
+    it('resets setTimeout tasks and interval-kind changes to now + delay', async () => {
+      const adapter = await setupAdapter();
+      await seedTask(adapter, 'timeout-reset', false, Date.now() + 20000);
+      await seedTask(adapter, 'kind-change', true, Date.now() + 20000);
+      const before = Date.now();
+
+      await expect(adapter.add('timeout-reset', false, INTERVAL_DELAY)).resolves.toBe(true);
+      await expect(adapter.add('kind-change', false, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const timeoutTask = await context.readTask('timeout-reset');
+      expectResetSchedule(timeoutTask.executeAt, before);
+      expect(timeoutTask).toMatchObject({
+        scheduledAt: timeoutTask.executeAt,
+        isInterval: false
+      });
+
+      const kindTask = await context.readTask('kind-change');
+      expectResetSchedule(kindTask.executeAt, before);
+      expect(kindTask.isInterval).toBe(false);
+    });
+
+    it('stores a $-prefixed interval uid verbatim across re-registration', async () => {
+      const adapter = await setupAdapter();
+      const storedExecuteAt = Date.now() + 20000;
+      await seedTask(adapter, '$dollar-interval', true, storedExecuteAt);
+
+      await expect(adapter.add('$dollar-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+      await expect(context.readTask('$dollar-interval')).resolves.toMatchObject({
+        executeAt: storedExecuteAt
+      });
     });
   });
 }

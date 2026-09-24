@@ -15,6 +15,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 - `ready()` optional but recommended. Use it to finish schema/index/init work before first storage op.
 - Prefer storage-server time over client time when comparing lease expirations. Mixed client clocks across a cluster will cause incorrect lock ownership otherwise. See `adapters/postgres.js` (`CURRENT_TIMESTAMP` in `acquireLock`) for a reference pattern.
 - Call `joskInstance.__execute(task)` fire-and-forget (do not `await`). JoSk handles internal concurrency and error wrapping.
+- `add()` for an interval (`isInterval === true`) keeps the stored `executeAt` when the stored task exists, is not deleted, is an interval, has the same `delay`, and its `executeAt` is earlier than `now + delay`. In every other case (new task, deleted task, changed `delay`, one-shot task) store `now + delay`. Do it in one atomic storage operation and write the same value to every place the adapter stores the schedule (e.g. the Redis task hash and schedule ZSET). Every process re-registers its intervals on boot; resetting unconditionally lets frequent restarts of any instance postpone intervals cluster-wide. See the `add()` implementations in `adapters/mongo.js` (update pipeline), `adapters/redis.js` (Lua), and `adapters/postgres.js` (`ON CONFLICT ... CASE`).
 
 ## Adapter Class API
 
@@ -40,6 +41,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
   - `{string} uid`
   - `{boolean} isInterval`
   - `{number} delay`
+  - upsert; an unchanged interval keeps an earlier stored `executeAt` (see Design Rules)
 - async `Adapter#update(task, nextExecuteAt) - {Promise<boolean>}`
   - `{object} task`
   - `{Date} nextExecuteAt`

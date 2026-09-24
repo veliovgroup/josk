@@ -375,12 +375,23 @@ class PostgresAdapter {
     await this.ready();
 
     try {
+      // Re-registering an existing interval with the same delay keeps its
+      // stored execute_at when that is earlier, so process restarts do not
+      // push the next run back by a full delay. SET expressions read the old row.
       const res = await this.client.query(
         `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT (prefix, uid) DO UPDATE SET
            delay = EXCLUDED.delay,
-           execute_at = EXCLUDED.execute_at,
+           execute_at = CASE
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
+              AND josk_tasks.delay = EXCLUDED.delay
+              AND josk_tasks.execute_at < EXCLUDED.execute_at
+             THEN josk_tasks.execute_at
+             ELSE EXCLUDED.execute_at
+           END,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
            updated_at = CURRENT_TIMESTAMP

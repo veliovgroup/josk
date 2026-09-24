@@ -90,6 +90,10 @@ Redis uses relative `PEXPIRE` TTL. Postgres computes lease expiry from `CURRENT_
 
 If app-node clocks may diverge, prefer `PostgresAdapter`: `acquireLock` computes and compares lease expiry from server time.
 
+## "Why does my interval run late or never after restarts?"
+
+`josk@6.3.0` and earlier reset an interval's next run to `now + delay` on every `setInterval()` call. Every boot of every instance re-registers its intervals, so a crash-looping instance, frequent rolling deploys, or Meteor dev hot reloads push each interval back by a full `delay` for the whole cluster. A 10-minute interval can go an hour without running. Later releases keep the stored next run when an existing interval re-registers with the same `delay` and the stored time is earlier. Upgrade.
+
 ## "Why does my interval drift by ~1 second?"
 
 The effective interval is `delay + uniform(min, max) + round-trip`, not `delay` exactly. Defaults put `min=128`, `max=768`, so the upper bound is `delay + 768ms + storage latency`. To tighten: lower `maxRevolvingDelay`. To get exact wall-clock cadence (e.g. fire at the top of every minute), use the CRON pattern in `patterns.md` and call `ready(nextDate)`.

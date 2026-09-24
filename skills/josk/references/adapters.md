@@ -253,6 +253,7 @@ interface JoSkAdapter {
 - **Atomic due-task claim.** Do not `find all due → update later`. Use a single atomic operation (Lua, `FOR UPDATE SKIP LOCKED`, atomic `findOneAndUpdate`) to claim and return the task in one round-trip.
 - **`iterate(nextExecuteAt, lock, executeMode)`** is the entry point JoSk calls each tick. Claim one task (for `executeMode === 'one'`) or as many as the lease lets you (`executeMode === 'batch'`) and call `this.joskInstance.__execute(task)` **fire-and-forget** for each — JoSk handles internal concurrency and error wrapping.
 - **Storage-server time** for lease comparisons. Mixed client clocks across a cluster cause incorrect lock ownership. See `adapters/postgres.js` for the `CURRENT_TIMESTAMP` pattern.
+- **`add()` keeps an unchanged interval's schedule.** When an existing, non-deleted interval re-registers with the same `delay`, keep its stored `executeAt` if it is earlier than `now + delay`; otherwise store `now + delay`. Do it in one atomic operation and update every copy of the schedule (the Redis adapter writes the task hash and the schedule ZSET). One-shot tasks always store `now + delay`. Unconditional resets let restarts of any instance postpone intervals cluster-wide.
 - **`ready()`** is optional but recommended for adapters that need to create schemas, indexes, or run migrations before the first storage op.
 
 ### Task object shape (what to pass to `__execute`)

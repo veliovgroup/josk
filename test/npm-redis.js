@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { destroyJobs, quitRedisClient, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerIntervalRestartTests } from './interval-restart-tests.js';
 import { registerPauseResumeTests } from './pause-resume-tests.js';
 
 if (!process.env.REDIS_URL) {
@@ -1120,6 +1121,14 @@ describe('Redis - JoSk', function () {
         }, 384);
       });
     });
+  });
+
+  registerIntervalRestartTests('Redis', {
+    createJob: (prefix, resetOnInit) => new JoSk({
+      adapter: new RedisAdapter({ client, prefix, resetOnInit }),
+      ...racingJoSkOpts
+    }),
+    cleanup: (prefix) => client.del([`josk:${prefix}:schedule`, `josk:${prefix}:tasks`, `josk:${prefix}:lock`])
   });
 
   registerPauseResumeTests('Redis', {

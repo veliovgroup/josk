@@ -81,6 +81,8 @@ Schedules a recurring task. The returned string is the internal timer id (the `u
 
 **Execution guarantee:** at-least-once per scheduled tick. The storage row for the task stays during execution; if the handler does not signal completion within `zombieTime`, the task is re-claimed and may run again. Make recurring handlers idempotent.
 
+**Re-registration:** every boot calls `setInterval` again. An existing interval with the same `delay` keeps its stored next run when that is earlier than `now + delay`, so restarts and rolling deploys do not postpone it. A past-due task runs on the first revolution after boot, and one instance claims it. New tasks and a changed `delay` schedule at `now + delay`. `josk@6.3.0` and earlier reset to `now + delay` on every call. CRON helpers pass a fresh `delay` each boot, so they move to the next CRON time as before.
+
 ### `setTimeout(handler, delay, uid)` → `Promise<string>`
 
 Schedules a one-shot task after `delay` ms. Returns the internal timer id (`uid` + `setTimeout`).
