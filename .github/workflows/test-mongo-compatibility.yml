@@ -1,0 +1,84 @@
+name: Optional Mongo-compatible service tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  configured:
+    name: Check optional endpoint secrets
+    runs-on: ubuntu-latest
+    outputs:
+      cosmos: ${{ steps.check.outputs.cosmos }}
+      docdb: ${{ steps.check.outputs.docdb }}
+    steps:
+      - id: check
+        env:
+          COSMOS_MONGO_URL: ${{ secrets.COSMOS_MONGO_URL }}
+          DOCDB_URL: ${{ secrets.DOCDB_URL }}
+        run: |
+          if [ -n "$COSMOS_MONGO_URL" ]; then
+            echo 'cosmos=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'cosmos=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::COSMOS_MONGO_URL is not configured; Cosmos test skipped.'
+          fi
+          if [ -n "$DOCDB_URL" ]; then
+            echo 'docdb=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'docdb=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::DOCDB_URL is not configured; DocumentDB test skipped.'
+          fi
+
+  test-cosmos:
+    name: Azure Cosmos DB Mongo API / mongodb@7
+    if: needs.configured.outputs.cosmos == 'true'
+    needs: configured
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Pin MongoDB driver
+        run: npm install --no-save mongodb@7
+
+      - name: Mocha live tests (Cosmos DB Mongo API)
+        env:
+          MONGO_URL: ${{ secrets.COSMOS_MONGO_URL }}
+        run: npm run test:mongo
+
+  test-documentdb:
+    name: AWS DocumentDB / mongodb@7
+    if: needs.configured.outputs.docdb == 'true'
+    needs: configured
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Pin MongoDB driver
+        run: npm install --no-save mongodb@7
+
+      - name: Download AWS RDS CA bundle
+        run: curl -fsSLo "$RUNNER_TEMP/global-bundle.pem" https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+
+      - name: Mocha live tests (DocumentDB)
+        env:
+          MONGO_URL: ${{ secrets.DOCDB_URL }}
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/global-bundle.pem
+        run: npm run test:mongo
