@@ -116,7 +116,7 @@ Stops the internal revolving timer. Returns `true` the first time, `false` on su
 
 ### `shutdown({ timeout? })` → `Promise<boolean>`
 
-Since 6.4.0. Calls `destroy()`, waits up to `timeout` ms (default `10000`) for running handlers to call `ready()`, then hands unfinished interval claims back to storage (`executeAt = now`) so another instance runs them on its next poll, not after `zombieTime`. Resolves `true` if every handler finished in time. A late `ready()` from a handed-back run does not touch the schedule. Rejects on a negative or non-finite `timeout`. Keep `timeout` below the platform grace period (Kubernetes default 30s).
+Since 6.4.0. Calls `destroy()`, waits up to `timeout` ms (default `10000`) for running handlers to call `ready()`, then hands unfinished interval claims back to storage (`executeAt = now`) so another instance runs them on its next poll, not after `zombieTime`. Resolves `true` if every handler finished in time. A late `ready()` from a handed-back run does not touch the schedule. Repeated calls share the first shutdown attempt and timeout. At timeout, unfinished handlers are reported to `onError` (or `console.error`): interval claims are handed back, while one-shots are abandoned to preserve at-most-once behavior. Keep one-shot handlers idempotent, or set `timeout` above the longest one-shot runtime. Rejects on a negative or non-finite `timeout`. Keep `timeout` below the platform grace period (Kubernetes default 30s).
 
 ### `ping()` → `Promise<JoSkPingResult>`
 

@@ -418,7 +418,7 @@ Stops this instance's scheduler. After `destroy()`, only `clearTimeout()` and `c
 - `opts.timeout` {*Number*} - [Optional] Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
 - Returns: {*`Promise<boolean>`*} `true` if every running handler finished within `timeout`
 
-Calls `destroy()`, waits for running handlers, then hands unfinished interval claims back to storage so another instance runs them on its next poll instead of after `zombieTime`. A handler that calls `ready()` after its claim was handed back does not change the schedule. Keep `timeout` below your platform's termination grace period.
+Calls `destroy()`, waits for running handlers, then hands unfinished interval claims back to storage so another instance runs them on its next poll instead of after `zombieTime`. A handler that calls `ready()` after its claim was handed back does not change the schedule. Repeated calls share the first shutdown attempt and timeout; when it expires, JoSk reports every unfinished handler to `onError` (or `console.error`), hands interval claims back, and abandons one-shot tasks to preserve at-most-once behavior. Keep at-most-once handlers idempotent, or set `timeout` longer than the longest one-shot handler; keep it below your platform's termination grace period.
 
 ```js
 const shutdown = async () => {
