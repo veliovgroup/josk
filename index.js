@@ -198,8 +198,12 @@ class JoSk {
     this.__pausedAll = false;
     /** @internal @type {Set<string>} */
     this.__pausedTimerIds = new Set();
-    /** @internal @type {Map<string, { task: JoSkTask, released: boolean, settle: () => void, done: Promise<void> }>} */
+    /** @internal @type {Map<string, { task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
     this.__inFlight = new Map();
+    /** @internal @type {Set<{ task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
+    this.__running = new Set();
+    /** @internal */
+    this.__warnedMissingClaimLeaseId = false;
     /** @internal @type {JoSkTask[]} */
     this.__releaseQueue = [];
     /** @internal @type {Set<Promise<void>>} */
@@ -436,21 +440,20 @@ class JoSk {
       await this.__iteratePromise;
     }
 
-    if (this.__inFlight.size > 0) {
+    if (this.__running.size > 0) {
       let timer;
       const timedOut = new Promise((resolve) => {
         timer = setTimeout(resolve, timeout);
       });
-      await Promise.race([Promise.all([...this.__inFlight.values()].map((run) => run.done)), timedOut]);
+      await Promise.race([Promise.all([...this.__running].map((run) => run.done)), timedOut]);
       clearTimeout(timer);
     }
 
-    const unfinished = [...this.__inFlight.values()];
+    const unfinished = [...this.__running];
     for (const run of unfinished) {
       run.released = true;
-      this.__inFlight.delete(run.task.uid);
-      run.settle();
-      if (run.task.isInterval === true) {
+      this.__finishRun(run);
+      if (run.task.isInterval === true && !run.superseded) {
         this.__queueRelease(run.task);
       }
     }
@@ -780,6 +783,11 @@ class JoSk {
       return;
     }
 
+    if (task.isInterval === true && (typeof task.claimLeaseId !== 'string' || task.claimLeaseId === '') && !this.__warnedMissingClaimLeaseId && this.debug === true) {
+      this.__warnedMissingClaimLeaseId = true;
+      this._debug(`[${task.uid}] [__execute] claimed task has no claimLeaseId; late ready() calls can overwrite a newer cross-instance run unless adapter fences updates another way`);
+    }
+
     if (this.__isTaskPaused(task.uid)) {
       await this.__deferClaimedTask(task);
       return;
@@ -812,7 +820,7 @@ class JoSk {
         }
 
         try {
-          if (task.isInterval === true && !run.released) {
+          if (task.isInterval === true && !run.released && !run.superseded) {
             let nextExecuteAt = new Date(timestamp + task.delay);
             if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
               nextExecuteAt = readyArg1;
@@ -933,27 +941,28 @@ class JoSk {
   __trackRun(task) {
     const previous = this.__inFlight.get(task.uid);
     if (previous) {
-      this.__inFlight.delete(task.uid);
-      previous.settle();
+      previous.superseded = true;
     }
 
     let settle = () => {};
     const done = new Promise((resolve) => {
       settle = resolve;
     });
-    const run = { task, released: false, settle, done };
+    const run = { task, released: false, superseded: false, settle, done };
     this.__inFlight.set(task.uid, run);
+    this.__running.add(run);
     return run;
   }
 
   /**
    * @internal
-   * @param {{ task: JoSkTask, settle: () => void }} run
+   * @param {{ task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }} run
    */
   __finishRun(run) {
     if (this.__inFlight.get(run.task.uid) === run) {
       this.__inFlight.delete(run.task.uid);
     }
+    this.__running.delete(run);
     run.settle();
   }
 

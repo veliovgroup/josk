@@ -158,7 +158,8 @@ class BlankAdapter {
   /**
    * @async
    * @memberOf BlankAdapter
-   * Update next execution timestamp
+   * Update next execution timestamp. Apply the lease filter, schedule write, and
+   * claimLeaseId clear atomically; without a lease, preserve unconditional updates.
    * @name update
    * @param {object} task - Full object of task from storage
    * @param {Date} nextExecuteAt - Date defining time of next execution
@@ -178,10 +179,18 @@ class BlankAdapter {
     await this.ready();
 
     try {
-      return await this.requiredOption.update({
+      const filter = {
         scope: this.uniqueName,
-        uid: task.uid,
-        executeAt: +nextExecuteAt
+        uid: task.uid
+      };
+      if (typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '') {
+        filter.claimLeaseId = task.claimLeaseId;
+      }
+
+      return await this.requiredOption.update({
+        filter,
+        set: { executeAt: +nextExecuteAt },
+        unset: ['claimLeaseId']
       });
     } catch (opError) {
       this.joskInstance.__errorHandler(opError, '[StorageAdapter] [update] [opError]', 'Exception inside StorageAdapter#update() method', task.uid);
@@ -192,7 +201,7 @@ class BlankAdapter {
   /**
    * @async
    * @memberOf BlankAdapter
-   * Claim due tasks atomically and execute them
+   * Claim due tasks atomically, persist lock.leaseId as claimLeaseId, and execute them
    * @name iterate
    * @param {Date} nextExecuteAt - Date defining time of next execution for zombie recovery
    * @param {{ ownerId: string, leaseId: string }} lock
@@ -219,7 +228,7 @@ class BlankAdapter {
       }
 
       executed++;
-      this.joskInstance.__execute(task);
+      this.joskInstance.__execute({ ...task, claimLeaseId: lock.leaseId });
     }
 
     return executed;
