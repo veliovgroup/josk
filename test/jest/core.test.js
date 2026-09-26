@@ -491,6 +491,44 @@ describe('JoSk core', () => {
     info.mockRestore();
   });
 
+  it('supersedes earlier in-flight same-uid runs without claim leases', async () => {
+    const { job, adapter } = createJob();
+    const uid = 'recoveredsetInterval';
+    const olderTask = { uid, delay: 100, isInterval: true, isDeleted: false };
+    const newerTask = { uid, delay: 200, isInterval: true, isDeleted: false };
+    const readyFunctions = [];
+    job.tasks[uid] = (ready) => {
+      readyFunctions.push(ready);
+    };
+
+    await job.__execute(olderTask);
+    await job.__execute(newerTask);
+    await readyFunctions[0]();
+    await readyFunctions[1]();
+
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task).toBe(newerTask);
+  });
+
+  it('debugs missing claim leases once per instance', async () => {
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job } = createJob({ debug: true });
+    const uid = 'missing-lease-setInterval';
+    const task = { uid, delay: 100, isInterval: true, isDeleted: false };
+    job.tasks[uid] = () => {};
+
+    try {
+      await job.__execute({ ...task, claimLeaseId: 'lease-1' });
+      await job.__execute(task);
+      await job.__execute(task);
+
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info.mock.calls[0].join(' ')).toContain('claimLeaseId');
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('reschedules interval with custom Date from ready()', async () => {
     const { job, adapter } = createJob();
     const next = new Date(Date.now() + 5000);
