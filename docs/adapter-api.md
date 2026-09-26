@@ -11,7 +11,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 - Keep second-layer scheduler lock. Use owner-bound lease token. Never release foreign lease.
 - Derive lock lifetime from the lock object itself — prefer the relative `lock.leaseMs`; use `lock.expireAt` / `lock.expiresAtMs` only as a fallback for locks minted without it. Never substitute `zombieTime` (a substituted long TTL freezes the whole prefix for up to `zombieTime` when a holder dies uncleanly), and never re-derive a duration as `expiresAtMs - Date.now()` when `leaseMs` is present — that second app-clock read is distorted by any clock step between mint and acquire.
 - Claim due tasks atomically in storage. Do not `find all due -> update later`.
-- Fence `update()` on the claim: return `claimLeaseId: lock.leaseId` on claimed tasks, and when `update()` receives a task with `claimLeaseId`, write only if the stored lease still matches, then clear it. Otherwise a handler that finishes after zombie recovery overwrites the newer run's schedule. A task without `claimLeaseId` updates unconditionally. JoSk also calls `update(task, now)` to hand a claim back on `destroy()` / `shutdown()`.
+- Fence `update()` on the claim: atomically store and return `claimLeaseId: lock.leaseId`; `update()` must match that lease, update the schedule, and clear the lease in one write. Without a token, update unconditionally for compatibility. JoSk also suppresses a superseded run's late `ready()` write when a newer same-uid run starts in this process; cross-instance safety still needs adapter fencing. JoSk calls `update(task, now)` to hand a claim back on `destroy()` / `shutdown()`.
 - `iterate()` should claim and execute `one` or `batch` depending on `executeMode`.
 - `ready()` optional but recommended. Use it to finish schema/index/init work before first storage op.
 - Prefer storage-server time over client time when comparing lease expirations. Mixed client clocks across a cluster will cause incorrect lock ownership otherwise. See `adapters/postgres.js` (`CURRENT_TIMESTAMP` in `acquireLock`) for a reference pattern.
@@ -78,5 +78,22 @@ Inside `Adapter#iterate()` call `this.joskInstance.__execute(task)` with:
 3. Return pre-claim task payload with `claimLeaseId: lock.leaseId`.
 4. Call `this.joskInstance.__execute(task)`.
 5. Release scheduler lease only if owner token still matches.
+
+For example, atomically persist and return the claim token:
+
+```js
+return { ...task, claimLeaseId: lock.leaseId };
+```
+
+A Mongo-style atomic `update()` filters on the token when present, updates the schedule, and clears it. Without a token, it filters by task identity only:
+
+```js
+const filter = { uid: task.uid };
+if (task.claimLeaseId) filter.claimLeaseId = task.claimLeaseId;
+await collection.updateOne(filter, {
+  $set: { executeAt: nextExecuteAt },
+  $unset: { claimLeaseId: '' }
+});
+```
 
 Global lock alone is not enough for duplicate prevention. Atomic task claim is required.
