@@ -41,6 +41,33 @@ jobs.destroy();
   });
   process.stdout.write(output || 'Packed ESM and CJS declarations compile without unused drivers.\n');
 
+  // Bun projects typically use bundler resolution with `module: Preserve`.
+  writeFileSync(join(project, 'bun.ts'), `import { JoSk, PostgresAdapter } from 'josk';
+import type { JoSkShutdownOption } from 'josk';
+const opts: JoSkShutdownOption = { timeout: 1000 };
+const jobs = new JoSk({ adapter: new PostgresAdapter({ client: { query: async () => ({ rows: [], rowCount: 0 }) } }) });
+const drained: Promise<boolean> = jobs.shutdown(opts);
+void drained;
+`);
+  writeFileSync(join(project, 'tsconfig.bun.json'), JSON.stringify({
+    compilerOptions: {
+      target: 'ESNext',
+      module: 'Preserve',
+      moduleResolution: 'bundler',
+      verbatimModuleSyntax: true,
+      strict: true,
+      noEmit: true,
+      skipLibCheck: false,
+      types: []
+    },
+    files: ['bun.ts']
+  }));
+  execFileSync(process.execPath, [resolve('node_modules/typescript/bin/tsc'), '-p', 'tsconfig.bun.json'], {
+    cwd: project,
+    stdio: 'inherit'
+  });
+  console.log('Packed declarations resolve with bundler resolution (Bun).');
+
   let onUse;
   const assets = [];
   runInNewContext(readFileSync('package.js', 'utf8'), {
