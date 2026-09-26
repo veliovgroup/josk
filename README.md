@@ -66,7 +66,7 @@ __Note: JoSk is the server-only package.__
 ## Prerequisites
 
 - `node@>=20.9.0`
-- `redis-server@>=5.0.0`, KeyDB, or Valkey for `RedisAdapter`, with the `redis@^4` or `redis@^5` NPM package
+- `redis-server@>=5.0.0` or a single-writer KeyDB/Valkey server for `RedisAdapter`, with `redis@^4` or `redis@^5`. CI targets selected standalone images; see [Redis Adapter](#redis-adapter) for exact coverage.
 - `mongod@>=4.4` for `MongoAdapter`, with the official `mongodb` NPM package (only the official driver is tested)
 - `postgres@>=12` for `PostgresAdapter`, with `pg@>=8.0.3` (`pg@7` does not connect on Node 14+)
 - `bun@>=1.1.0` (optional), see [Bun runtime](#bun-runtime)
@@ -175,10 +175,10 @@ JoSk has no dependencies. Install the driver for your adapter: `redis`, `mongodb
 
 #### Redis Adapter
 
-`RedisAdapter` keeps due timestamps in a sorted set and task payloads in a hash, and claims due tasks with Lua scripts. It works with Redis, [KeyDB](https://docs.keydb.dev/), and Valkey.
+`RedisAdapter` keeps due timestamps in a sorted set and task payloads in a hash, and claims due tasks with Lua scripts. It uses the Redis-compatible commands shared by Redis, [KeyDB](https://docs.keydb.dev/), and Valkey; CI targets Redis 6/7/8, `eqalpha/keydb:latest`, and `valkey/valkey:8.1.9-alpine` in standalone mode using `redis@5`.
 
 - Use one writable primary. Do not route JoSk reads or writes to replicas; claims must be visible to all instances at once.
-- For Redis Cluster or KeyDB Cluster, pass `useHashTags: true`.
+- For Redis Cluster, pass `useHashTags: true`; CI tests a 3-master Redis Cluster. KeyDB/Valkey Cluster modes are not separately tested.
 - Avoid KeyDB active-replication (multi-master). Its conflict resolution can let two writers claim the same task.
 - For strict single-claim scheduling across data centers, use a strongly consistent store, or PostgreSQL with one write authority.
 
@@ -194,7 +194,7 @@ const jobs = new JoSk({
   adapter: new RedisAdapter({
     client: redisClient,
     prefix: 'app-scheduler',
-    // useHashTags: true, // Enable for Redis Cluster / KeyDB Cluster
+    // useHashTags: true, // Redis Cluster; KeyDB/Valkey Cluster not CI-tested
   }),
   onError(reason, details) {
     // Catches exceptions thrown inside scheduled tasks
@@ -589,7 +589,7 @@ DELETE FROM josk_locks WHERE lock_key = 'josk-cluster-scheduler.lock';
 
 ### MongoDB connection fine tuning
 
-Replica-set tuning, dedicated-DB advice, the index list, and Mongoose / CosmosDB / DocumentDB notes: [`docs/mongodb.md`](docs/mongodb.md).
+Replica-set tuning, dedicated-DB advice, the index list, and Mongo-compatible service notes: [`docs/mongodb.md`](docs/mongodb.md). Cosmos DB and DocumentDB aren't part of default CI; optional endpoint tests require configured secrets.
 
 ## Prefix mapping
 

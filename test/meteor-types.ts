@@ -1,6 +1,6 @@
 import { MongoInternals } from 'meteor/mongo';
 import { assert } from 'chai';
-import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
+import { JoSk, MongoAdapter, PostgresAdapter, RedisAdapter } from 'meteor/ostrio:cron-jobs';
 import type {
   JoSkAdapter,
   JoSkExecuteMode,
@@ -27,8 +27,14 @@ after(function () {
 describe('Meteor TypeScript — types compile-time checks', () => {
   it('Built-in adapters satisfy JoSkAdapter contract', () => {
     type _MongoAdapterIsJoSkAdapter = MongoAdapter extends JoSkAdapter ? true : never;
+    type _RedisAdapterIsJoSkAdapter = RedisAdapter extends JoSkAdapter ? true : never;
+    type _PostgresAdapterIsJoSkAdapter = PostgresAdapter extends JoSkAdapter ? true : never;
     const _mongoOk: _MongoAdapterIsJoSkAdapter = true;
+    const _redisOk: _RedisAdapterIsJoSkAdapter = true;
+    const _postgresOk: _PostgresAdapterIsJoSkAdapter = true;
     assert.equal(_mongoOk, true, 'MongoAdapter assignable to JoSkAdapter');
+    assert.equal(_redisOk, true, 'RedisAdapter assignable to JoSkAdapter');
+    assert.equal(_postgresOk, true, 'PostgresAdapter assignable to JoSkAdapter');
   });
 
   it('Hook aliases accept sync and async signatures', () => {
@@ -140,5 +146,15 @@ describe('Meteor TypeScript — runtime', function () {
     assert.equal(typedJobs.pause(intervalId), true, 'pause(timerId) returns boolean');
     assert.equal(typedJobs.resume(intervalId), true, 'resume(timerId) returns boolean');
     assert.equal(typedJobs.resume(), true, 'resume() returns boolean');
+  });
+
+  it('shutdown returns Promise<boolean>', async function () {
+    if (!typedJobs) {
+      assert.fail('typedJobs not initialized');
+      return;
+    }
+
+    const shutdownResult: Promise<boolean> = typedJobs.shutdown({ timeout: 1000 });
+    assert.isTrue(await shutdownResult, 'shutdown resolves true when no handlers are running');
   });
 });

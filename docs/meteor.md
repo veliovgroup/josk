@@ -1,6 +1,6 @@
 # JoSk usage within Meteor.js
 
-NPM `josk` package can be used in Meteor environment just perfectly fine since it's server-only Node.js package.
+The NPM `josk` package can run in Meteor server code. CI exercises Meteor 2.14–2.16 and 3.2/3.3.1/3.4 with adapter-specific package suites; see [test coverage](#requirements).
 
 If Meteor.js packages are preferred in your project/environment follow this document to install JoSk as `ostrio:cron-jobs` [Atmosphere](https://atmospherejs.com/ostrio/cron-jobs) or  [Packosphere](https://packosphere.com/ostrio/cron-jobs) package
 
@@ -100,7 +100,7 @@ const jobs = new JoSk({
 });
 ```
 
-Use one writable Redis/KeyDB primary. Do not route JoSk traffic to replicas. For Redis Cluster / KeyDB Cluster, set `useHashTags: true`.
+Use one writable Redis-compatible primary. Do not route JoSk traffic to replicas. For Redis Cluster, set `useHashTags: true`; KeyDB/Valkey Cluster also require it but are not covered by cluster CI. Meteor CI tests Redis 6/7/8 only; KeyDB and Valkey are not tested within Meteor.
 
 ### PostgreSQL Adapter
 
@@ -233,7 +233,7 @@ Meteor **2.14+** and **3.2+** supported (`api.versionsFrom(['2.14', '3.2'])`; mi
 | 14–17 | 2.x | `chai@4`, `cron-parser@4`, `pg@8.11` | `meteortesting:mocha@2.1.0` |
 | 18+ | 3.x | current majors | `meteortesting:mocha@3.3.0` |
 
-TypeScript tests (`meteor-types.ts`) always run. npm `devDependencies` unchanged for `npm test`.
+The default local suite includes `test/meteor-types.ts`. CI runs adapter-specific `meteor test-packages` suites for Meteor 2.14–2.16 and 3.2/3.3.1/3.4; one Meteor 3.4 / Redis 8 cell runs the default suite, including the TypeScript runtime tests and `shutdown()`. Meteor transpiles TypeScript without type-checking. Separately, `npm run test:types` runs `tsc` against the packaged Meteor declaration assets to check all built-in adapter contracts and the `shutdown()` signature through `meteor/ostrio:cron-jobs`. npm `devDependencies` stay unchanged for `npm test`.
 
 Do not commit `.versions` — it locks packages for one Meteor release and breaks multi-version CI. Pin the driver in `package.js` only; pass `--driver-package=meteortesting:mocha` on the CLI (`@x.y.z` on the CLI breaks `test-packages` on Meteor 3.x):
 

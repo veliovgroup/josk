@@ -90,9 +90,20 @@ void drained;
     mkdirSync(resolve(destination, '..'), { recursive: true });
     copyFileSync(asset, destination);
   }
-  writeFileSync(join(project, 'meteor.ts'), `import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
+  writeFileSync(join(project, 'meteor.ts'), `import { JoSk, MongoAdapter, RedisAdapter, PostgresAdapter } from 'meteor/ostrio:cron-jobs';
+import type { JoSkAdapter, JoSkShutdownOption } from 'meteor/ostrio:cron-jobs';
+type AssertAdapter<T extends JoSkAdapter> = T;
+type MongoContract = AssertAdapter<MongoAdapter>;
+type RedisContract = AssertAdapter<RedisAdapter>;
+type PostgresContract = AssertAdapter<PostgresAdapter>;
 const jobs = new JoSk({ adapter: new MongoAdapter({ db: { collection: () => ({}), command: async () => ({ ok: 1 }) } }) });
-jobs.destroy();
+const options: JoSkShutdownOption = { timeout: 1000 };
+const shutdownResult: Promise<boolean> = jobs.shutdown(options);
+void shutdownResult;
+// @ts-expect-error The shutdown timeout must be numeric.
+jobs.shutdown({ timeout: '1000' });
+// @ts-expect-error Shutdown is asynchronous, not a synchronous boolean.
+const synchronousResult: boolean = jobs.shutdown();
 `);
   writeFileSync(join(project, 'tsconfig.meteor.json'), JSON.stringify({
     compilerOptions: {
@@ -111,7 +122,7 @@ jobs.destroy();
     cwd: project,
     stdio: 'inherit'
   });
-  console.log('Meteor declaration assets resolve through the package import.');
+  console.log('Meteor declaration assets type-check all adapter contracts and shutdown through the package import.');
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

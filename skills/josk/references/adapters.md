@@ -59,15 +59,15 @@ The `{app}` braces are Redis hash tags that keep all adapter keys on the same Cl
 
 ### Engines: Redis, KeyDB, Valkey
 
-Same RESP client (`redis@^4 \|\| ^5`). JoSk is Lua-always (HASH + ZSET + `SET NX PX` + `cjson`). No `WATCH`. No RedisJSON / Streams / modules.
+Same RESP client (`redis@^4 \|\| ^5`). JoSk is Lua-always (HASH + ZSET + `SET NX PX` + `cjson`). No `WATCH`. No RedisJSON / Streams / modules. `Proven` lists exact CI targets, not all-version guarantees.
 
 | Engine | Standalone | Cluster | Proven |
 |---|---|---|---|
-| Redis | Yes | `useHashTags: true` | CI: Redis 6 / 7 / 8 standalone. No Cluster job |
-| KeyDB | Yes, as single-writer Redis | `useHashTags: true` | README: well-tested. No CI image |
-| Valkey | Yes (Redis 7.2 fork) | `useHashTags: true` | Not in CI; treat as Redis 7 |
+| Redis | Yes | `useHashTags: true` | CI targets Redis 6/7/8 standalone and a 3-master Redis Cluster (drivers 4/5) |
+| KeyDB | Yes, as single-writer Redis | `useHashTags: true` | CI targets `eqalpha/keydb:latest` standalone (Node 22, `redis@5`); no KeyDB Cluster job |
+| Valkey | Yes (Redis-compatible) | `useHashTags: true` | CI targets `valkey/valkey:8.1.9-alpine` standalone (Node 22, `redis@5`); no Valkey Cluster job |
 
-**Will run well:** one writable primary, or Cluster with `useHashTags: true`. JoSk itself is fine on Redis ≥ 5.
+**Topology guidance:** use one writable primary. Redis-compatible Cluster requires `useHashTags: true`; CI Cluster coverage uses Redis only. JoSk itself is fine on Redis ≥ 5.
 
 **Will not:** KeyDB active-replication / multi-master; Redis active-active (CRDT); replica reads; Cluster without `useHashTags` (`CROSSSLOT` on Lua). Multi-DC / mixed clocks → `PostgresAdapter`.
 
@@ -139,7 +139,7 @@ const options = {
 const client = await MongoClient.connect('mongodb://…', options);
 ```
 
-`MongoAdapter` is verified against the official `mongodb` NPM package only. CosmosDB, DocumentDB, Mongoose wrappers — flag as untested when recommending.
+`MongoAdapter` default CI tests official `mongodb@5/6/7` with `mongo:8`, plus `mongodb@7` with `mongo:6/7/8`. Cosmos DB for MongoDB and DocumentDB are excluded from default CI; the manual workflow tests configured endpoints only when secrets are present. Mongoose wrappers remain untested. Treat each cloud service/API version as unverified until its optional test passes.
 
 ## `PostgresAdapter`
 
