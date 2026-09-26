@@ -79,7 +79,8 @@ export class BlankAdapter {
     /**
      * @async
      * @memberOf BlankAdapter
-     * Update next execution timestamp
+     * Update next execution timestamp. Apply the lease filter, schedule write, and
+     * claimLeaseId clear atomically; without a lease, preserve unconditional updates.
      * @name update
      * @param {object} task - Full object of task from storage
      * @param {Date} nextExecuteAt - Date defining time of next execution
@@ -89,7 +90,7 @@ export class BlankAdapter {
     /**
      * @async
      * @memberOf BlankAdapter
-     * Claim due tasks atomically and execute them
+     * Claim due tasks atomically, persist lock.leaseId as claimLeaseId, and execute them
      * @name iterate
      * @param {Date} nextExecuteAt - Date defining time of next execution for zombie recovery
      * @param {{ ownerId: string, leaseId: string }} lock
