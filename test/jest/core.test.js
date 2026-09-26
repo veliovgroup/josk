@@ -1106,7 +1106,8 @@ describe('shutdown and claim release', () => {
   });
 
   it('releases unfinished interval claims after the timeout and ignores their late ready()', async () => {
-    const { job, adapter } = createJob();
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
     let finish;
     const task = intervalTask('stuck');
     job.tasks[task.uid] = (ready) => {
@@ -1116,6 +1117,10 @@ describe('shutdown and claim release', () => {
     await job.__execute(task);
     await expect(job.shutdown({ timeout: 10 })).resolves.toBe(false);
 
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][1].uid).toBe(task.uid);
+    expect(onError.mock.calls[0][1].description).toContain('interval');
+    expect(onError.mock.calls[0][1].description).toContain('handed back');
     expect(adapter.updateCalls).toHaveLength(1);
     expect(adapter.updateCalls[0].task).toBe(task);
     expect(+adapter.updateCalls[0].nextExecuteAt).toBeLessThanOrEqual(Date.now());
@@ -1124,15 +1129,130 @@ describe('shutdown and claim release', () => {
     expect(adapter.updateCalls).toHaveLength(1);
   });
 
-  it('does not release one-shot tasks, which storage already removed', async () => {
-    const { job, adapter } = createJob();
+  it('does not report one-shot work that finishes within timeout', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    let finish;
+    const uid = 'finishes-before-timeoutsetTimeout';
+    job.tasks[uid] = (ready) => {
+      finish = ready;
+    };
+    adapter.stored.set(uid, { uid });
+
+    await job.__execute({ uid, delay: 0, isInterval: false, isDeleted: false });
+    const shutdown = job.shutdown({ timeout: 100 });
+    setTimeout(() => finish(), 10);
+
+    await expect(shutdown).resolves.toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect(adapter.updateCalls).toHaveLength(0);
+    expect(adapter.addCalls).toHaveLength(0);
+  });
+
+  it('reports and abandons unfinished one-shot tasks without re-adding them', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    let finish;
     const uid = 'stuck-oncesetTimeout';
-    job.tasks[uid] = (_ready) => {};
+    job.tasks[uid] = (ready) => {
+      finish = ready;
+    };
     adapter.stored.set(uid, { uid });
 
     await job.__execute({ uid, delay: 0, isInterval: false, isDeleted: false });
     await expect(job.shutdown({ timeout: 10 })).resolves.toBe(false);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBe('[shutdown] timeout');
+    expect(onError.mock.calls[0][1].uid).toBe(uid);
+    expect(onError.mock.calls[0][1].description).toContain('one-shot');
+    expect(onError.mock.calls[0][1].description).toContain('abandoned');
+    expect(onError.mock.calls[0][1].error).toBeInstanceOf(Error);
+    expect(adapter.removeCalls).toEqual([uid]);
     expect(adapter.updateCalls).toHaveLength(0);
+    expect(adapter.addCalls).toHaveLength(0);
+
+    await expect(finish()).resolves.toBe(true);
+    expect(adapter.updateCalls).toHaveLength(0);
+    expect(adapter.addCalls).toHaveLength(0);
+  });
+
+  it('reports unfinished interval and one-shot outcomes separately', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    const interval = intervalTask('mixed-interval');
+    const oneShotUid = 'mixed-oneshotsetImmediate';
+    let finishInterval;
+    let finishOneShot;
+    job.tasks[interval.uid] = (ready) => {
+      finishInterval = ready;
+    };
+    job.tasks[oneShotUid] = (ready) => {
+      finishOneShot = ready;
+    };
+    adapter.stored.set(oneShotUid, { uid: oneShotUid });
+
+    await job.__execute(interval);
+    await job.__execute({ uid: oneShotUid, delay: 0, isInterval: false, isDeleted: false });
+    await expect(job.shutdown({ timeout: 10 })).resolves.toBe(false);
+
+    expect(onError).toHaveBeenCalledTimes(2);
+    const reports = onError.mock.calls.map(([, details]) => details);
+    expect(reports.map(({ uid }) => uid)).toEqual([interval.uid, oneShotUid]);
+    expect(reports[0].description).toContain('interval');
+    expect(reports[0].description).toContain('handed back');
+    expect(reports[1].description).toContain('one-shot');
+    expect(reports[1].description).toContain('abandoned');
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task).toBe(interval);
+    expect(+adapter.updateCalls[0].nextExecuteAt).toBeLessThanOrEqual(Date.now());
+    expect(adapter.removeCalls).toEqual([oneShotUid]);
+    expect(adapter.addCalls).toHaveLength(0);
+
+    await Promise.all([finishInterval(), finishOneShot()]);
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('shares timeout outcome and report when shutdown is called twice', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    let finish;
+    const uid = 'twice-oncesetTimeout';
+    job.tasks[uid] = (ready) => {
+      finish = ready;
+    };
+    adapter.stored.set(uid, { uid });
+
+    await job.__execute({ uid, delay: 0, isInterval: false, isDeleted: false });
+    const firstShutdown = job.shutdown({ timeout: 10 });
+    const secondShutdown = job.shutdown({ timeout: 100 });
+
+    await expect(firstShutdown).resolves.toBe(false);
+    await expect(secondShutdown).resolves.toBe(false);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][1].uid).toBe(uid);
+    expect(adapter.updateCalls).toHaveLength(0);
+    expect(adapter.addCalls).toHaveLength(0);
+
+    await expect(finish()).resolves.toBe(true);
+  });
+
+  it('reports an unfinished one-shot when timeout is zero', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    const uid = 'zero-timeoutsetImmediate';
+    job.tasks[uid] = (_ready) => {};
+    adapter.stored.set(uid, { uid });
+
+    await job.__execute({ uid, delay: 0, isInterval: false, isDeleted: false });
+    await expect(job.shutdown({ timeout: 0 })).resolves.toBe(false);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][1].uid).toBe(uid);
+    expect(onError.mock.calls[0][1].description).toContain('one-shot');
+    expect(onError.mock.calls[0][1].description).toContain('abandoned');
+    expect(adapter.updateCalls).toHaveLength(0);
+    expect(adapter.addCalls).toHaveLength(0);
   });
 
   it('releases a task claimed after destroy() without running its handler', async () => {
