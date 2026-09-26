@@ -420,7 +420,8 @@ class PostgresAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -446,8 +447,9 @@ class PostgresAdapter {
          WHERE prefix = $2
            AND uid = $3
            AND is_deleted = false
+           AND ($4::text IS NULL OR claim_lease_id = $4::text)
          RETURNING uid`,
-        [+nextExecuteAt, this.prefix, task.uid]
+        [+nextExecuteAt, this.prefix, task.uid, typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '' ? task.claimLeaseId : null]
       );
       return (res.rowCount || 0) >= 1;
     } catch (opError) {
@@ -477,7 +479,8 @@ class PostgresAdapter {
         delay: parseInt(task.delay, 10),
         executeAt: parseInt(task.execute_at, 10),
         isInterval: task.is_interval,
-        isDeleted: task.is_deleted
+        isDeleted: task.is_deleted,
+        claimLeaseId: lock.leaseId
       });
 
       return executed + 1;
@@ -497,7 +500,8 @@ class PostgresAdapter {
           delay: parseInt(task.delay, 10),
           executeAt: parseInt(task.execute_at, 10),
           isInterval: task.is_interval,
-          isDeleted: task.is_deleted
+          isDeleted: task.is_deleted,
+          claimLeaseId: lock.leaseId
         });
       }
 

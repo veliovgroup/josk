@@ -44,6 +44,12 @@ const jobs = new JoSk({
   }
 });
 
+const drained: Promise<boolean> = jobs.shutdown({ timeout: 1000 });
+void drained;
+void jobs.shutdown();
+// @ts-expect-error shutdown timeout must be a number
+void jobs.shutdown({ timeout: '1000' });
+
 void MongoAdapter;
 void PostgresAdapter;
 void RedisAdapter;

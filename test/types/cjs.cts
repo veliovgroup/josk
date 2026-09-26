@@ -44,6 +44,8 @@ jobs.pause('cjs-tasksetImmediate');
 jobs.resume();
 jobs.resume('cjs-tasksetImmediate');
 jobs.destroy();
+const drained: Promise<boolean> = jobs.shutdown({ timeout: 1000 });
+void drained;
 
 const adapterCtor = josk.PostgresAdapter;
 void adapterCtor;

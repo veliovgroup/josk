@@ -1065,3 +1065,133 @@ describe('pause/resume', () => {
     });
   });
 });
+
+describe('shutdown and claim release', () => {
+  afterEach(() => {
+    for (const job of jobs) {
+      job.destroy();
+    }
+    jobs.clear();
+  });
+
+  const intervalTask = (uid) => ({
+    uid: `${uid}setInterval`,
+    delay: 60000,
+    isInterval: true,
+    isDeleted: false,
+    claimLeaseId: `${uid}-lease`
+  });
+
+  const settleReleases = async (job) => {
+    await Promise.all([...job.__releasing]);
+  };
+
+  it('waits for running handlers to call ready() before resolving', async () => {
+    const { job, adapter } = createJob();
+    let finish;
+    const task = intervalTask('drained');
+    job.tasks[task.uid] = (ready) => {
+      finish = ready;
+    };
+
+    await job.__execute(task);
+    const before = Date.now();
+    const shutdown = job.shutdown({ timeout: 1000 });
+    setTimeout(() => finish(), 20);
+
+    await expect(shutdown).resolves.toBe(true);
+    expect(job.isDestroyed).toBe(true);
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThanOrEqual(before + task.delay);
+  });
+
+  it('releases unfinished interval claims after the timeout and ignores their late ready()', async () => {
+    const { job, adapter } = createJob();
+    let finish;
+    const task = intervalTask('stuck');
+    job.tasks[task.uid] = (ready) => {
+      finish = ready;
+    };
+
+    await job.__execute(task);
+    await expect(job.shutdown({ timeout: 10 })).resolves.toBe(false);
+
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task).toBe(task);
+    expect(+adapter.updateCalls[0].nextExecuteAt).toBeLessThanOrEqual(Date.now());
+
+    await expect(finish()).resolves.toBe(true);
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('does not release one-shot tasks, which storage already removed', async () => {
+    const { job, adapter } = createJob();
+    const uid = 'stuck-oncesetTimeout';
+    job.tasks[uid] = (_ready) => {};
+    adapter.stored.set(uid, { uid });
+
+    await job.__execute({ uid, delay: 0, isInterval: false, isDeleted: false });
+    await expect(job.shutdown({ timeout: 10 })).resolves.toBe(false);
+    expect(adapter.updateCalls).toHaveLength(0);
+  });
+
+  it('releases a task claimed after destroy() without running its handler', async () => {
+    const { job, adapter } = createJob();
+    const handler = jest.fn();
+    const task = intervalTask('late-claim');
+    job.tasks[task.uid] = handler;
+    job.destroy();
+
+    await job.__execute(task);
+    await settleReleases(job);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task).toBe(task);
+  });
+
+  it('releases tasks queued behind the concurrency cap on destroy()', async () => {
+    const { job, adapter } = createJob({ concurrency: 1 });
+    const running = intervalTask('running');
+    const queued = intervalTask('queued');
+    const queuedHandler = jest.fn();
+    job.tasks[running.uid] = (_ready) => {};
+    job.tasks[queued.uid] = queuedHandler;
+
+    job.__execute(running);
+    const queuedExecution = job.__execute(queued);
+    expect(job.__pendingTasks).toHaveLength(1);
+
+    job.destroy();
+    await queuedExecution;
+    await settleReleases(job);
+
+    expect(queuedHandler).not.toHaveBeenCalled();
+    expect(adapter.updateCalls.map((call) => call.task)).toEqual([queued]);
+  });
+
+  it('defers releases until the current iterate() returns so the same claim loop cannot re-claim them', async () => {
+    const { job, adapter } = createJob();
+    const task = intervalTask('mid-iterate');
+    job.tasks[task.uid] = jest.fn();
+    adapter.iterateImpl = async () => {
+      job.destroy();
+      job.__execute(task);
+      await Promise.resolve();
+      expect(adapter.updateCalls).toHaveLength(0);
+      return 1;
+    };
+
+    await job.__iterate();
+    await settleReleases(job);
+
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('validates the shutdown timeout', async () => {
+    const { job } = createJob();
+    await expect(job.shutdown({ timeout: -1 })).rejects.toThrow('[josk] [shutdown] timeout option must be a finite non-negative Number');
+    await expect(job.shutdown({ timeout: Infinity })).rejects.toThrow('[josk] [shutdown] timeout');
+    expect(job.isDestroyed).toBe(false);
+  });
+});

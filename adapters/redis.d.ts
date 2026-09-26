@@ -21,6 +21,7 @@ export type RedisClusterClient = {
     masters: readonly unknown[];
     getRandomNode: () => unknown;
     nodeClient: (...args: never[]) => unknown;
+    sendCommand?: ((firstKey: string, isReadonly: boolean, args: string[]) => Promise<unknown>) | undefined;
 };
 export type RedisClientLike = RedisBaseClient & (RedisStandaloneClient | RedisClusterClient);
 export type JoSk = import("../index.js").JoSk;
@@ -47,6 +48,7 @@ export type RedisTask = {
     executeAt: number;
     isInterval: boolean;
     isDeleted: boolean;
+    claimLeaseId?: string | undefined;
 };
 /**
  * Class representing Redis adapter for JoSk
@@ -103,12 +105,14 @@ export class RedisAdapter<C extends RedisClientLike = RedisClientLike> {
      */
     add(uid: string, isInterval: boolean, delay: number): Promise<boolean>;
     /**
-     * @param {{ uid: string }} task
+     * Skips the write when `task.claimLeaseId` no longer matches storage.
+     * @param {{ uid: string, claimLeaseId?: string }} task
      * @param {Date} nextExecuteAt
      * @returns {Promise<boolean>}
      */
     update(task: {
         uid: string;
+        claimLeaseId?: string;
     }, nextExecuteAt: Date): Promise<boolean>;
     /**
      * @param {Date} nextExecuteAt

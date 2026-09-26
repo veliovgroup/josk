@@ -13,6 +13,7 @@ import { createHash } from 'crypto';
  * @property {readonly unknown[]} masters
  * @property {() => unknown} getRandomNode
  * @property {(...args: never[]) => unknown} nodeClient
+ * @property {(firstKey: string, isReadonly: boolean, args: string[]) => Promise<unknown>} [sendCommand]
  * @typedef {RedisBaseClient & (RedisStandaloneClient | RedisClusterClient)} RedisClientLike
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
@@ -43,6 +44,7 @@ import { createHash } from 'crypto';
  * @property {number} executeAt
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
+ * @property {string} [claimLeaseId]
  */
 
 const VALID_PREFIX = /^[A-Za-z0-9_\-:.]+$/;
@@ -117,6 +119,10 @@ const UPDATE_TASK_SCRIPT = `
   if task.isDeleted then
     redis.call('HDEL', KEYS[2], ARGV[1])
     redis.call('ZREM', KEYS[1], ARGV[1])
+    return 0
+  end
+
+  if ARGV[3] and ARGV[3] ~= '' and task.claimLeaseId ~= ARGV[3] then
     return 0
   end
 
@@ -317,9 +323,9 @@ class RedisAdapter {
   async __setup() {
     if (this.resetOnInit) {
       await this.client.del([this.scheduleKey, this.tasksKey, this.lockKey]);
-      const scanClients = typeof this.client.scanIterator === 'function'
-        ? [this.client]
-        : await Promise.all(this.client.masters.map((node) => this.client.nodeClient(node)));
+      const scanClients = isClusterClient(this.client)
+        ? await Promise.all(this.client.masters.map((node) => this.client.nodeClient(node)))
+        : [this.client];
 
       for (const scanClient of scanClients) {
         const cursor = scanClient.scanIterator({
@@ -346,6 +352,21 @@ class RedisAdapter {
   async __runScript(scriptKey, options) {
     const sha = this.__scriptShas[scriptKey];
     const source = this.__scriptSources[scriptKey];
+
+    // redis@4 cluster eval()/evalSha() pick the node from the wrong argument
+    // and land on a random master. sendCommand() routes by the first key.
+    if (isClusterClient(this.client) && typeof this.client.sendCommand === 'function') {
+      const firstKey = options.keys[0];
+      const args = [`${options.keys.length}`, ...options.keys, ...options.arguments];
+      try {
+        return await this.client.sendCommand(firstKey, false, ['EVALSHA', sha, ...args]);
+      } catch (error) {
+        if (!isNoScriptError(error)) {
+          throw error;
+        }
+      }
+      return await this.client.sendCommand(firstKey, false, ['EVAL', source, ...args]);
+    }
 
     if (this.__loadedShas.has(sha) && typeof this.client.evalSha === 'function') {
       try {
@@ -396,9 +417,9 @@ class RedisAdapter {
 
     try {
       await this.ready();
-      const pingClient = typeof this.client.ping === 'function'
-        ? this.client
-        : await this.client.nodeClient(this.client.getRandomNode());
+      const pingClient = isClusterClient(this.client)
+        ? await this.client.nodeClient(this.client.getRandomNode())
+        : this.client;
       const ping = await pingClient.ping();
       if (ping === 'PONG') {
         return {
@@ -492,7 +513,8 @@ class RedisAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -512,7 +534,7 @@ class RedisAdapter {
     try {
       const exists = await this.__runScript('updateTask', {
         keys: [this.scheduleKey, this.tasksKey],
-        arguments: [task.uid, `${+nextExecuteAt}`]
+        arguments: [task.uid, `${+nextExecuteAt}`, typeof task.claimLeaseId === 'string' ? task.claimLeaseId : '']
       });
       return Number(exists) >= 1;
     } catch (opError) {
@@ -633,7 +655,8 @@ class RedisAdapter {
       delay: +task.delay,
       executeAt: +task.executeAt,
       isInterval: !!task.isInterval,
-      isDeleted: !!task.isDeleted
+      isDeleted: !!task.isDeleted,
+      ...(typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '' ? { claimLeaseId: task.claimLeaseId } : {})
     });
   }
 

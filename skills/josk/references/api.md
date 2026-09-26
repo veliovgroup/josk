@@ -114,7 +114,11 @@ Both clear methods are safe to call after `destroy()` — they're the only publi
 
 Stops the internal revolving timer. Returns `true` the first time, `false` on subsequent calls. Does **not** await handlers or remove their claims — other instances may wait until `zombieTime` to recover them. Methods other than `clearInterval` / `clearTimeout` on a destroyed instance trigger the `onError` hook (or a `_debug` log).
 
-Call this before `process.exit()` for clean shutdown, especially in tests.
+Tasks claimed but not started go back to storage. For process exit prefer `shutdown()`.
+
+### `shutdown({ timeout? })` → `Promise<boolean>`
+
+Since 6.4.0. Calls `destroy()`, waits up to `timeout` ms (default `10000`) for running handlers to call `ready()`, then hands unfinished interval claims back to storage (`executeAt = now`) so another instance runs them on its next poll, not after `zombieTime`. Resolves `true` if every handler finished in time. A late `ready()` from a handed-back run does not touch the schedule. Rejects on a negative or non-finite `timeout`. Keep `timeout` below the platform grace period (Kubernetes default 30s).
 
 ### `ping()` → `Promise<JoSkPingResult>`
 
@@ -245,6 +249,7 @@ interface JoSkAdapter {
 | `setInterval` / `setTimeout` / `setImmediate` | `string` timer id | Empty string `''` if called on a destroyed instance. |
 | `clearInterval` / `clearTimeout` | `boolean` | `false` if the task was not present. |
 | `destroy` | `boolean` | `false` on subsequent calls (idempotent). |
+| `shutdown` | `boolean` | `false` if some handlers were still running at `timeout` and their interval claims were handed back. |
 | `ping` | `JoSkPingResult` | `code: 200` on success. |
 
 ## Input validation errors (thrown)

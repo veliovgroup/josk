@@ -39,6 +39,7 @@
  * @property {Date} [executeAt]
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
+ * @property {string} [claimLeaseId]
  */
 
 const logError = (error, ...args) => {
@@ -359,7 +360,8 @@ class MongoAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -377,10 +379,12 @@ class MongoAdapter {
     await this.ready();
 
     try {
-      const updateResult = await this.collection.updateOne({
-        uid: task.uid,
-        isDeleted: false
-      }, {
+      const filter = { uid: task.uid, isDeleted: false };
+      if (typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '') {
+        filter.claimLeaseId = task.claimLeaseId;
+      }
+
+      const updateResult = await this.collection.updateOne(filter, {
         $set: { executeAt: nextExecuteAt },
         $unset: { claimLeaseId: '' }
       });
@@ -466,7 +470,7 @@ class MongoAdapter {
       });
 
       const task = result?._id ? result : result?.value;
-      return task || null;
+      return task ? { ...task, claimLeaseId: lock.leaseId } : null;
     } catch (mongoError) {
       this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [claim]', 'Exception inside MongoAdapter#__claimNextTask() method', null);
       return null;
@@ -531,7 +535,7 @@ class MongoAdapter {
       });
 
       if ((result.modifiedCount || 0) === tasks.length) {
-        return tasks;
+        return tasks.map((task) => ({ ...task, claimLeaseId: lock.leaseId }));
       }
 
       const claimed = await this.collection.find({
@@ -548,7 +552,9 @@ class MongoAdapter {
       }).toArray();
       const claimedIds = new Set(claimed.map((task) => String(task._id)));
 
-      return tasks.filter((task) => claimedIds.has(String(task._id)));
+      return tasks
+        .filter((task) => claimedIds.has(String(task._id)))
+        .map((task) => ({ ...task, claimLeaseId: lock.leaseId }));
     } catch (mongoError) {
       this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [batchClaim]', 'Exception inside MongoAdapter#__claimNextTasks() method', null);
       return [];

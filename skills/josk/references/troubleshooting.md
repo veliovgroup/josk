@@ -19,7 +19,8 @@ A task is a zombie when the instance that claimed it never called `ready()` and 
 Tuning:
 
 - `zombieTime` must exceed the slowest legitimate handler runtime plus a margin. Below 60s is not recommended.
-- Re-registering a claimed interval keeps its zombie deadline. An uncleanly killed handler can wait the full `zombieTime` (15 minutes by default) before recovery, rather than only `delay`; this avoids early overlap on rolling restarts. Lower `zombieTime` only if every legitimate handler finishes sooner.
+- Re-registering a claimed interval keeps its zombie deadline. An uncleanly killed handler can wait the full `zombieTime` (15 minutes by default) before recovery, rather than only `delay`; this avoids early overlap on rolling restarts. Call `await jobs.shutdown({ timeout })` on `SIGTERM` to hand running claims back. Lower `zombieTime` only if every legitimate handler finishes sooner.
+- Built-in adapters fence `update()` on the claim lease: a handler that finishes after its claim was recovered (or handed back by `shutdown()`) gets `false` and leaves the newer schedule alone.
 - Older records can carry a stale `claimLeaseId` after completion. The first new registration may preserve that date; the next `update()` clears it. Mixed-version peers can still shorten claims.
 - If a handler routinely hits `zombieTime`, either the handler is too slow or `zombieTime` is too tight. Split long work or move it off the scheduler.
 

@@ -11,6 +11,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 - Keep second-layer scheduler lock. Use owner-bound lease token. Never release foreign lease.
 - Derive lock lifetime from the lock object itself — prefer the relative `lock.leaseMs`; use `lock.expireAt` / `lock.expiresAtMs` only as a fallback for locks minted without it. Never substitute `zombieTime` (a substituted long TTL freezes the whole prefix for up to `zombieTime` when a holder dies uncleanly), and never re-derive a duration as `expiresAtMs - Date.now()` when `leaseMs` is present — that second app-clock read is distorted by any clock step between mint and acquire.
 - Claim due tasks atomically in storage. Do not `find all due -> update later`.
+- Fence `update()` on the claim: return `claimLeaseId: lock.leaseId` on claimed tasks, and when `update()` receives a task with `claimLeaseId`, write only if the stored lease still matches, then clear it. Otherwise a handler that finishes after zombie recovery overwrites the newer run's schedule. A task without `claimLeaseId` updates unconditionally. JoSk also calls `update(task, now)` to hand a claim back on `destroy()` / `shutdown()`.
 - `iterate()` should claim and execute `one` or `batch` depending on `executeMode`.
 - `ready()` optional but recommended. Use it to finish schema/index/init work before first storage op.
 - Prefer storage-server time over client time when comparing lease expirations. Mixed client clocks across a cluster will cause incorrect lock ownership otherwise. See `adapters/postgres.js` (`CURRENT_TIMESTAMP` in `acquireLock`) for a reference pattern.
@@ -43,8 +44,9 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
   - `{number} delay`
   - upsert; an unchanged unclaimed interval keeps an earlier stored `executeAt` and an active claim keeps its recovery deadline (see Design Rules)
 - async `Adapter#update(task, nextExecuteAt) - {Promise<boolean>}`
-  - `{object} task`
+  - `{object} task` claimed task; fence on `task.claimLeaseId` when present (see Design Rules)
   - `{Date} nextExecuteAt`
+  - `false` when the task is gone or its lease no longer matches
 - async `Adapter#iterate(nextExecuteAt, lock, executeMode) - {Promise<number|void>}`
   - `{Date} nextExecuteAt` zombie retry timestamp
   - `{object} lock` active scheduler lease
@@ -60,7 +62,8 @@ Inside `Adapter#iterate()` call `this.joskInstance.__execute(task)` with:
   delay: Number,
   executeAt: Number, // or Date — see "executeAt convention" below
   isInterval: Boolean,
-  isDeleted: Boolean
+  isDeleted: Boolean,
+  claimLeaseId: String // optional; `lock.leaseId` of the claim, used to fence update()
 })
 ```
 
@@ -72,7 +75,7 @@ Inside `Adapter#iterate()` call `this.joskInstance.__execute(task)` with:
 
 1. Acquire scheduler lease with owner-bound token.
 2. Atomically claim next due task by moving `executeAt` to `nextExecuteAt`.
-3. Return pre-claim task payload.
+3. Return pre-claim task payload with `claimLeaseId: lock.leaseId`.
 4. Call `this.joskInstance.__execute(task)`.
 5. Release scheduler lease only if owner token still matches.
 

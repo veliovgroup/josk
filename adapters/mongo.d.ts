@@ -26,6 +26,7 @@ export type MongoTask = {
     executeAt?: Date | undefined;
     isInterval: boolean;
     isDeleted: boolean;
+    claimLeaseId?: string | undefined;
 };
 /**
  * Class representing MongoDB adapter for JoSk
@@ -83,12 +84,14 @@ export class MongoAdapter<D extends MongoDbLike = MongoDbLike> {
      */
     add(uid: string, isInterval: boolean, delay: number): Promise<boolean>;
     /**
-     * @param {{ uid: string }} task
+     * Skips the write when `task.claimLeaseId` no longer matches storage.
+     * @param {{ uid: string, claimLeaseId?: string }} task
      * @param {Date} nextExecuteAt
      * @returns {Promise<boolean>}
      */
     update(task: {
         uid: string;
+        claimLeaseId?: string;
     }, nextExecuteAt: Date): Promise<boolean>;
     /**
      * @param {Date} nextExecuteAt

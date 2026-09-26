@@ -5,7 +5,7 @@ const { afterEach, describe, expect, it, jest } = testApi;
 
 import { MongoClient } from 'mongodb';
 import { Pool } from 'pg';
-import { createClient } from 'redis';
+import { createClient, createCluster } from 'redis';
 
 import { MongoAdapter, PostgresAdapter, RedisAdapter } from '../../index.js';
 
@@ -241,6 +241,35 @@ describe('RedisAdapter unit coverage', () => {
     await expect(adapter.ping()).resolves.toMatchObject({ code: 200 });
     expect(cluster.del).toHaveBeenCalledWith(['josk:{cluster}:task:legacy']);
     expect(cluster.nodeClient).toHaveBeenCalledWith(shard);
+  });
+
+  it('routes cluster scripts through sendCommand by first key and falls back to EVAL on NOSCRIPT', async () => {
+    const cluster = createRedisClient();
+    delete cluster.scanIterator;
+    delete cluster.ping;
+    cluster.masters = [];
+    cluster.getRandomNode = () => ({});
+    cluster.nodeClient = async () => createRedisClient();
+    const calls = [];
+    cluster.sendCommand = jest.fn(async (firstKey, isReadonly, args) => {
+      calls.push([firstKey, isReadonly, args[0]]);
+      if (calls.length === 1) {
+        throw new Error('NOSCRIPT No matching script');
+      }
+      return 1;
+    });
+    const adapter = new RedisAdapter({ client: cluster, prefix: 'route', useHashTags: true });
+    adapter.joskInstance = createHarness();
+
+    await expect(adapter.update({ uid: 'task' }, new Date())).resolves.toBe(true);
+    await expect(adapter.update({ uid: 'task' }, new Date())).resolves.toBe(true);
+
+    expect(calls).toEqual([
+      [adapter.scheduleKey, false, 'EVALSHA'],
+      [adapter.scheduleKey, false, 'EVAL'],
+      [adapter.scheduleKey, false, 'EVALSHA']
+    ]);
+    expect(cluster.eval).not.toHaveBeenCalled();
   });
 
   it('reports ping states before assignment and on unexpected replies', async () => {
@@ -968,7 +997,7 @@ describe('MongoAdapter unit coverage', () => {
     const nextExecuteAt = new Date(Date.now() + 1000);
 
     await expect(adapter.iterate(nextExecuteAt, lock, 'one')).resolves.toBe(0);
-    await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toBe(task);
+    await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toEqual({ ...task, claimLeaseId: lock.leaseId });
 
     expect(harness.__execute).not.toHaveBeenCalled();
   });
@@ -1013,7 +1042,7 @@ describe('MongoAdapter unit coverage', () => {
     const nextExecuteAt = new Date(Date.now() + 1000);
 
     await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toBeNull();
-    await expect(adapter.__claimNextTasks(nextExecuteAt, lock, 2)).resolves.toEqual([tasks[1]]);
+    await expect(adapter.__claimNextTasks(nextExecuteAt, lock, 2)).resolves.toEqual([{ ...tasks[1], claimLeaseId: lock.leaseId }]);
 
     const failing = await setupMongoAdapter({
       taskCollection: createMongoCollection({
@@ -1100,7 +1129,7 @@ describe('MongoAdapter unit coverage', () => {
 
     expect(taskCollection.findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(harness.__execute).toHaveBeenCalledTimes(1);
-    expect(harness.__execute.mock.calls[0][0]).toBe(claimed);
+    expect(harness.__execute.mock.calls[0][0]).toEqual({ ...claimed, claimLeaseId: lock.leaseId });
     expect(harness.__errorHandler).not.toHaveBeenCalled();
   });
 
@@ -1464,7 +1493,8 @@ describe('PostgresAdapter unit coverage', () => {
       delay: 1500,
       executeAt: Number(dueRow.execute_at),
       isInterval: dueRow.is_interval,
-      isDeleted: dueRow.is_deleted
+      isDeleted: dueRow.is_deleted,
+      claimLeaseId: lock.leaseId
     });
     expect(harness.__errorHandler).not.toHaveBeenCalled();
   });
@@ -1506,21 +1536,27 @@ describe('PostgresAdapter unit coverage', () => {
   });
 });
 
-const adapterSuites = [{
-  name: 'RedisAdapter',
-  enabled: !!process.env.REDIS_URL,
+const redisClusterUrls = (process.env.REDIS_CLUSTER_URLS || '').split(',').filter(Boolean);
+
+// redis@4 cluster connect() resolves to undefined, so keep the client reference.
+const connectRedisCluster = async () => {
+  const cluster = createCluster({
+    rootNodes: redisClusterUrls.map((url) => ({ url }))
+  });
+  await cluster.connect();
+  return cluster;
+};
+
+const redisSuite = ({ name, enabled, connect, useHashTags = false }) => ({
+  name,
+  enabled,
   async setup() {
-    const client = await createClient({
-      url: process.env.REDIS_URL,
-      socket: {
-        connectTimeout: 1000,
-        reconnectStrategy: false
-      }
-    }).connect();
+    const client = await connect();
     const adapter = new RedisAdapter({
       client,
       prefix: uniquePrefix('redis'),
-      resetOnInit: true
+      resetOnInit: true,
+      useHashTags
     });
 
     return {
@@ -1550,11 +1586,28 @@ const adapterSuites = [{
       },
       async cleanup() {
         await client.del([adapter.scheduleKey, adapter.tasksKey, adapter.lockKey]);
-        await client.quit();
+        await (typeof client.close === 'function' ? client.close() : client.quit());
       }
     };
   }
-}, {
+});
+
+const adapterSuites = [redisSuite({
+  name: 'RedisAdapter',
+  enabled: !!process.env.REDIS_URL,
+  connect: () => createClient({
+    url: process.env.REDIS_URL,
+    socket: {
+      connectTimeout: 1000,
+      reconnectStrategy: false
+    }
+  }).connect()
+}), redisSuite({
+  name: 'RedisAdapter (Cluster)',
+  enabled: redisClusterUrls.length > 0,
+  useHashTags: true,
+  connect: connectRedisCluster
+}), {
   name: 'MongoAdapter',
   enabled: !!process.env.MONGO_URL,
   async setup() {
@@ -1645,6 +1698,18 @@ const adapterSuites = [{
     };
   }
 }];
+
+(redisClusterUrls.length > 0 ? describe : describe.skip)('RedisAdapter (Cluster) guard', () => {
+  it('detects a real cluster client and requires useHashTags', async () => {
+    const cluster = await connectRedisCluster();
+
+    try {
+      expect(() => new RedisAdapter({ client: cluster })).toThrow(/useHashTags: true.*Redis Cluster/);
+    } finally {
+      await (typeof cluster.close === 'function' ? cluster.close() : cluster.quit());
+    }
+  });
+});
 
 for (const suite of adapterSuites) {
   const suiteDescribe = suite.enabled ? describe : describe.skip;
@@ -1853,6 +1918,29 @@ for (const suite of adapterSuites) {
       const task = await context.readTask('completed-interval');
       expectResetSchedule(task.executeAt, before);
       expect(task.claimLeaseId).toBeNull();
+    });
+
+    it('fences update() on the claim lease so a stale run cannot overwrite a newer claim', async () => {
+      const adapter = await setupAdapter();
+      await claimDueInterval(adapter, 'fenced-interval', Date.now() - 100);
+      const staleRun = harness.__execute.mock.calls[0][0];
+      expect(staleRun.claimLeaseId).toEqual(expect.any(String));
+
+      const heldUntil = Date.now() + 10 * INTERVAL_DELAY;
+      await expect(adapter.iterate(new Date(heldUntil), createLock('recovery'), 'one')).resolves.toBe(1);
+      const currentRun = harness.__execute.mock.calls[1][0];
+      expect(currentRun.claimLeaseId).not.toBe(staleRun.claimLeaseId);
+
+      await expect(adapter.update(staleRun, new Date(Date.now() + INTERVAL_DELAY))).resolves.toBe(false);
+      await expect(context.readTask('fenced-interval')).resolves.toMatchObject({
+        executeAt: heldUntil,
+        claimLeaseId: currentRun.claimLeaseId
+      });
+
+      const nextRun = Date.now() + INTERVAL_DELAY;
+      await expect(adapter.update(currentRun, new Date(nextRun))).resolves.toBe(true);
+      await expect(context.readTask('fenced-interval')).resolves.toMatchObject({ executeAt: nextRun, claimLeaseId: null });
+      await expect(adapter.update(currentRun, new Date(nextRun + 1000))).resolves.toBe(false);
     });
 
     it('re-registers a claimed one-shot from now without retaining its lease', async () => {

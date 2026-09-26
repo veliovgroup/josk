@@ -37,7 +37,7 @@ __Note: JoSk is the server-only package.__
   - [`setTimeout()`](#settimeoutfunc-delay-uid)
   - [`setImmediate()`](#setimmediatefunc-uid)
   - [`clearInterval()`](#clearintervaltimerid), [`clearTimeout()`](#cleartimeouttimerid)
-  - [`destroy()`](#destroy), [`ping()`](#ping)
+  - [`destroy()`](#destroy), [`shutdown()`](#shutdownopts), [`ping()`](#ping)
   - [`pause()`](#pause), [`resume()`](#resume)
 - [Execution semantics](#execution-semantics)
 - [TypeScript](#typescript)
@@ -409,11 +409,20 @@ await jobs.clearTimeout(timer);
 
 Stops this instance's scheduler. After `destroy()`, only `clearTimeout()` and `clearInterval()` work; other methods report an error to `onError` (or `stdout`).
 
-`destroy()` does not wait for running handlers and does not release their claims. An interval killed mid-run is recovered by another instance after `zombieTime`.
+`destroy()` does not wait for running handlers. Tasks this instance claimed but had not started go back to storage. An interval killed mid-run is recovered by another instance after `zombieTime`; use [`shutdown()`](#shutdownopts) before process exit to avoid that wait.
+
+### `shutdown(opts)`
+
+*Since* `v6.4.0`
+
+- `opts.timeout` {*Number*} - [Optional] Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
+- Returns: {*`Promise<boolean>`*} `true` if every running handler finished within `timeout`
+
+Calls `destroy()`, waits for running handlers, then hands unfinished interval claims back to storage so another instance runs them on its next poll instead of after `zombieTime`. A handler that calls `ready()` after its claim was handed back does not change the schedule. Keep `timeout` below your platform's termination grace period.
 
 ```js
-const shutdown = () => {
-  jobs.destroy();
+const shutdown = async () => {
+  await jobs.shutdown({ timeout: 10000 });
   process.exit(0);
 };
 
@@ -472,7 +481,7 @@ Queue-polling pattern: after winning a tick, claim rows from your own queue, cal
 | `setTimeout`, `setImmediate` | **At-most-once** across the cluster | Task is removed from storage *before* the handler runs. If the process dies mid-run, the run is lost. |
 | `setInterval` | **At-least-once** per tick (until cleared) | Task stays in storage while running. If `ready()` is not called within `zombieTime`, another instance may claim and run it again. Make handlers idempotent. |
 
-`zombieTime` (default 15 minutes) is the safety net for stuck handlers. Set it above your slowest legitimate handler plus storage latency. Restarting an app does not shorten a running interval's hold. So after an unclean kill, recovery waits the full `zombieTime`, not `delay`, but a rolling deploy cannot start a second copy of a handler that is still running. See [monitoring and recovery](docs/monitoring.md).
+`zombieTime` (default 15 minutes) is the safety net for stuck handlers. Set it above your slowest legitimate handler plus storage latency. Restarting an app does not shorten a running interval's hold. So after an unclean kill, recovery waits the full `zombieTime`, not `delay`, but a rolling deploy cannot start a second copy of a handler that is still running. Call [`shutdown()`](#shutdownopts) on `SIGTERM` to hand running claims back instead of leaving them to `zombieTime`. A handler that finishes after its claim was recovered cannot overwrite the newer run's schedule. See [monitoring and recovery](docs/monitoring.md).
 
 - `execute: 'batch'` (default) claims all due tasks under one lease, for throughput. `execute: 'one'` claims one task per lease, for smaller bursts and fairer spread across instances.
 - `concurrency` caps parallel handlers in this instance. Default `Infinity`, like Node's timers. Set a limit when handlers share DB connections or API rate limits.
