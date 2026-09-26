@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { closeMongoClient, destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
+import { getMongoDatabaseName } from './mongo-url.js';
 import { registerIntervalRestartTests } from './interval-restart-tests.js';
 import { registerPauseResumeTests } from './pause-resume-tests.js';
 
@@ -32,7 +33,7 @@ const racingJoSkOpts = {
 };
 
 const mongoAddr = (process.env.MONGO_URL || '');
-const dbName = mongoAddr.split('/').pop().replace(/\/$/, '');
+const dbName = getMongoDatabaseName(mongoAddr);
 
 const callbacks = {};
 const exceptions = {};
