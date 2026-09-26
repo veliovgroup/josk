@@ -200,6 +200,8 @@ class JoSk {
     this.__pausedTimerIds = new Set();
     /** @internal @type {Map<string, { task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
     this.__inFlight = new Map();
+    /** @internal @type {Promise<boolean> | null} */
+    this.__shutdownPromise = null;
     /** @internal @type {Set<{ task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
     this.__running = new Set();
     /** @internal */
@@ -424,7 +426,8 @@ class JoSk {
    * @memberOf JoSk
    * Destroy the instance, wait for running handlers to call `ready()`, then
    * hand unfinished interval claims back to storage so another instance can
-   * run them without waiting for `zombieTime`. Call before process exit.
+   * run them without waiting for `zombieTime`. Report unfinished runs at timeout;
+   * abandon one-shot tasks to preserve at-most-once execution. Call before exit.
    * @name shutdown
    * @param {JoSkShutdownOption} [opts]
    * @returns {Promise<boolean>} - `true` if every running handler finished within `timeout`
@@ -435,6 +438,15 @@ class JoSk {
       throw new Error(errors.shutdownTimeout);
     }
 
+    if (!this.__shutdownPromise) {
+      this.__shutdownPromise = this.__shutdown(timeout);
+    }
+
+    return await this.__shutdownPromise;
+  }
+
+  /** @internal */
+  async __shutdown(timeout) {
     this.destroy();
     if (this.__iteratePromise) {
       await this.__iteratePromise;
@@ -453,9 +465,24 @@ class JoSk {
     for (const run of unfinished) {
       run.released = true;
       this.__finishRun(run);
-      if (run.task.isInterval === true && !run.superseded) {
+
+      const isInterval = run.task.isInterval === true;
+      const kind = isInterval ? 'interval' : 'one-shot';
+      let outcome = 'abandoned to preserve at-most-once execution';
+      if (isInterval) {
+        outcome = run.superseded
+          ? 'superseded claim left unchanged'
+          : 'claim queued to be handed back to storage';
+      }
+      if (isInterval && !run.superseded) {
         this.__queueRelease(run.task);
       }
+      this.__errorHandler(
+        new Error(`${kind} task ${run.task.uid} did not finish within shutdown timeout; ${outcome}`),
+        '[shutdown] timeout',
+        `Unfinished ${kind} task; ${outcome}`,
+        run.task.uid
+      );
     }
 
     this.__flushReleases();

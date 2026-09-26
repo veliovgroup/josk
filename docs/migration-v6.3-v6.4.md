@@ -23,7 +23,7 @@ process.on('SIGTERM', async () => {
 });
 ```
 
-`destroy()` still returns immediately. It now hands back tasks this instance claimed but had not started.
+`destroy()` still returns immediately. It now hands back tasks this instance claimed but had not started. Repeated `shutdown()` calls share the first attempt and timeout. If it times out, unfinished runs are reported through `onError` (or `console.error`); interval claims are handed back, while one-shots are abandoned to preserve at-most-once behavior. Keep one-shot handlers idempotent, or set `timeout` above their longest runtime.
 
 ## Stale `ready()` calls
 
