@@ -235,6 +235,12 @@ const isNoScriptError = (error) => {
 };
 
 /**
+ * @param {object} client
+ * @returns {boolean}
+ */
+const isClusterClient = (client) => typeof client.nodeClient === 'function' && typeof client.scanIterator !== 'function';
+
+/**
  * Class representing Redis adapter for JoSk
  * @template {RedisClientLike} [C=RedisClientLike]
  */
@@ -264,6 +270,10 @@ class RedisAdapter {
       throw new Error('{client} option is required for RedisAdapter', {
         description: 'Redis database requires {client} option, e.g. returned from `redis.createClient()` or `redis.createCluster()` method'
       });
+    }
+
+    if (!this.useHashTags && isClusterClient(opts.client)) {
+      throw new Error('{useHashTags: true} option is required for RedisAdapter with a Redis Cluster client. Without hash tags, adapter keys land in different slots and every Lua script fails with CROSSSLOT.');
     }
 
     /** @type {C} */

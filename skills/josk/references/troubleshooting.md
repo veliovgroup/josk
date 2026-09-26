@@ -90,7 +90,7 @@ In order of likelihood:
 
 - **Reading JoSk state from a Mongo secondary or a Redis / KeyDB / Valkey replica.** Lease writes must be immediately visible. Use the primary.
 - **Active-active Redis / KeyDB active-replication / multi-master.** Conflict resolution can allow duplicate claims. Use a single writable primary, or `PostgresAdapter`.
-- **Redis / KeyDB / Valkey Cluster without `useHashTags: true`.** Lua touches `schedule` + `tasks` + `lock`. Untagged keys hash to different slots → `CROSSSLOT`.
+- **Redis / KeyDB / Valkey Cluster without `useHashTags: true`.** Lua touches `schedule` + `tasks` + `lock`. Untagged keys hash to different slots → `CROSSSLOT`. `RedisAdapter` constructor throws for a cluster client (`nodeClient`, no `scanIterator`) without it.
 - **MailTime with only one side tagged.** `RedisQueue({ useHashTags })` and JoSk `useHashTags` must match. MailTime queue layout is not a JoSk key rename — see `mail-time` skill.
 - **MongoDB without `w: 'majority'`.** A claim that's only on the primary can vanish on failover. Use majority writes and `readConcern: 'majority'`.
 - **Postgres read replicas.** Same rule — no scheduler reads on replicas.

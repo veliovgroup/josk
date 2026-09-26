@@ -39,7 +39,7 @@ const jobs = new JoSk({
 | `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` or `redis@^5` client. Either `RedisClientType` or `RedisClusterType`. |
 | `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+$/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
 | `resetOnInit` | `boolean` | `false` | Deletes all keys under this prefix on init. Local-dev / single-instance recovery only. Disastrous in clustered prod. |
-| `useHashTags` | `boolean` | `false` | Redis / KeyDB / Valkey Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps standalone keys (`josk:prefix:*`). |
+| `useHashTags` | `boolean` | `false` | Redis / KeyDB / Valkey Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps standalone keys (`josk:prefix:*`). Cluster client without it → constructor throws. |
 
 ### Keys created (for `prefix: 'app'`)
 

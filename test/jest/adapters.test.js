@@ -382,6 +382,23 @@ describe('RedisAdapter unit coverage', () => {
     expect(new RedisAdapter({ client: createRedisClient(), useHashTags: undefined }).useHashTags).toBe(false);
   });
 
+  it('requires useHashTags for Redis Cluster clients', () => {
+    const createCluster = () => {
+      const cluster = createRedisClient();
+      delete cluster.scanIterator;
+      delete cluster.ping;
+      cluster.masters = [];
+      cluster.getRandomNode = () => ({});
+      cluster.nodeClient = async () => createRedisClient();
+      return cluster;
+    };
+
+    expect(() => new RedisAdapter({ client: createCluster() })).toThrow(/useHashTags: true.*Redis Cluster/);
+    expect(() => new RedisAdapter({ client: createCluster(), useHashTags: false })).toThrow(/CROSSSLOT/);
+    expect(new RedisAdapter({ client: createCluster(), useHashTags: true }).useHashTags).toBe(true);
+    expect(new RedisAdapter({ client: createRedisClient() }).useHashTags).toBe(false);
+  });
+
   it('falls back to the default prefix when none is provided or the value is empty', async () => {
     const a = new RedisAdapter({ client: createRedisClient() });
     const b = new RedisAdapter({ client: createRedisClient(), prefix: '' });
