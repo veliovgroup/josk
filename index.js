@@ -261,7 +261,8 @@ class JoSk {
    * @memberOf JoSk
    * Create recurring task (loop). Re-registering a stored task with the same
    * `delay` (e.g. on process boot) keeps its next run when that is earlier than
-   * `now + delay`; otherwise the next run is `now + delay`.
+   * `now + delay`; otherwise the next run is `now + delay`. A task another
+   * instance is running keeps its `zombieTime` hold.
    * @name setInterval
    * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {number} delay - Delay between task execution in milliseconds
