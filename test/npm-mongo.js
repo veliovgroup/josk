@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { closeMongoClient, destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerIntervalRestartTests } from './interval-restart-tests.js';
 import { registerPauseResumeTests } from './pause-resume-tests.js';
 
 if (!process.env.MONGO_URL) {
@@ -1160,6 +1161,17 @@ describe('Mongo - JoSk', function () {
         }, 384);
       });
     });
+  });
+
+  registerIntervalRestartTests('Mongo', {
+    createJob: (prefix, resetOnInit) => new JoSk({
+      adapter: new MongoAdapter({ db, prefix, resetOnInit }),
+      ...racingJoSkOpts
+    }),
+    cleanup: async (prefix) => {
+      await db.collection(`__JobTasks__${prefix}`).drop().catch(() => {});
+      await db.collection('__JobTasks__.lock').deleteMany({ uniqueName: `__JobTasks__${prefix}` });
+    }
   });
 
   registerPauseResumeTests('Mongo', {

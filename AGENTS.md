@@ -13,7 +13,7 @@ Single cluster-wide claim per scheduled tick in horizontally scaled Node.js/Bun.
 - `*.d.ts`: Generated from JSDoc in `index.js` + adapters via `tsc --emitDeclarationOnly` on `prepublishOnly`. Do not edit manually.
 - `docs/adapter-api.md`: full adapter contract.
 - `docs/README.md`: docs index (additional guides + migration list). `docs/migration-v{4-v5,v5-v6,v6-v6.1,v6.1-v6.2}.md`: version upgrade guides.
-- `skills/josk/`: Agent Skill source (open cross-tool standard) — `SKILL.md` + `references/{api,adapters,patterns,meteor,troubleshooting}.md`. Installed cross-tool via `npx skills add veliovgroup/josk` (Claude Code, Codex, Cursor, Copilot, Windsurf, Cline, Continue, Goose, Aider, +50 more). Excluded from npm tarball via `.npmignore`. Keep in sync with public API: when adding/changing options, methods, adapter constructors, execution semantics, or migration notes, update the matching reference file. `description` frontmatter in `SKILL.md` must stay ≤ 1024 chars.
+- `skills/josk/`: Agent Skill source (open cross-tool standard) — `SKILL.md` + `references/{api,adapters,patterns,meteor,troubleshooting,legacy-v5}.md` (`legacy-v5.md` = frozen 5.0.0 surface for Node 14–16; never update it for new features). Installed cross-tool via `npx skills add veliovgroup/josk` (Claude Code, Codex, Cursor, Copilot, Windsurf, Cline, Continue, Goose, Aider, +50 more). Excluded from npm tarball via `.npmignore`. Keep in sync with public API: when adding/changing options, methods, adapter constructors, execution semantics, or migration notes, update the matching reference file. `description` frontmatter in `SKILL.md` must stay ≤ 1024 chars.
 - README.md, CHANGELOG.md, package.json (exports map, types, prepublishOnly now includes tsc).
 
 ## Code Style

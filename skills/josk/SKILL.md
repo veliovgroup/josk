@@ -1,12 +1,16 @@
 ---
 name: josk
-description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster / Valkey `useHashTags`, KeyDB active-replication, MailTime RedisQueue pairing, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `lockLeaseTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ."
+description: "Use when integrating, comparing, or debugging JoSk distributed scheduling in Node.js/Bun, including recurring or multi-instance jobs, Redis/KeyDB/MongoDB/PostgreSQL adapters, or legacy JoSk 5.x on Node 14/16."
 ---
 
 # JoSk
 
 Distributed `setInterval` / `setTimeout` / `setImmediate` for Node ≥20.9 and Bun ≥1.1.
 Server-only. Schedule in Redis, MongoDB, or PostgreSQL; lease + atomic claim limit duplicate ticks.
+
+## Version gate — check first
+
+If `package.json` pins `josk` below `6.0.0`, or the runtime is Node < 20.9 (Node 14/16 hosts), stop here and read [references/legacy-v5.md](references/legacy-v5.md). Everything else in this skill describes 6.x and names exports, methods, and options that do not exist in 5.x (`PostgresAdapter`, `pause()`/`resume()`, `concurrency`, `execute`, `lockLeaseTime`, `useHashTags`, auto-`ready()` for sync handlers).
 
 ## Quick start
 
@@ -37,6 +41,7 @@ await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m')
 | Handlers, CRON, concurrency, shutdown | [references/patterns.md](references/patterns.md) |
 | Meteor / `ostrio:cron-jobs` | [references/meteor.md](references/meteor.md) |
 | Zombies, jitter, migrations, KeyDB / Valkey | [references/troubleshooting.md](references/troubleshooting.md) |
+| `josk@5` and older on Node 14/16 | [references/legacy-v5.md](references/legacy-v5.md) |
 | Email queue on JoSk (`mail-time`) | **REQUIRED** `mail-time` skill (`npx skills add veliovgroup/mail-time`) |
 
 ## Mental model

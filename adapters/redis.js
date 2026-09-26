@@ -45,13 +45,16 @@ const RELEASE_LOCK_SCRIPT = `
   return 0
 `;
 
+// Re-registering an existing interval with the same delay keeps its stored
+// executeAt when that is earlier than the new one, so process restarts do not
+// push the next run back by a full delay. Hash and schedule ZSET get the same value.
 const ADD_TASK_SCRIPT = `
   local payload = redis.call('HGET', KEYS[2], ARGV[1])
+  local delay = tonumber(ARGV[2])
+  local executeAt = tonumber(ARGV[3])
+  local isInterval = ARGV[4] == '1'
   local task = payload and cjson.decode(payload) or {
     uid = ARGV[1],
-    delay = tonumber(ARGV[2]),
-    executeAt = tonumber(ARGV[3]),
-    isInterval = ARGV[4] == '1',
     isDeleted = false
   }
 
@@ -59,13 +62,20 @@ const ADD_TASK_SCRIPT = `
     return 0
   end
 
-  task.delay = tonumber(ARGV[2])
-  task.executeAt = tonumber(ARGV[3])
-  task.isInterval = ARGV[4] == '1'
+  if payload and isInterval and task.isInterval == true and tonumber(task.delay) == delay then
+    local storedExecuteAt = tonumber(task.executeAt)
+    if storedExecuteAt and storedExecuteAt < executeAt then
+      executeAt = storedExecuteAt
+    end
+  end
+
+  task.delay = delay
+  task.executeAt = executeAt
+  task.isInterval = isInterval
   task.isDeleted = false
 
   redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
-  redis.call('ZADD', KEYS[1], tonumber(ARGV[3]), ARGV[1])
+  redis.call('ZADD', KEYS[1], executeAt, ARGV[1])
   return 1
 `;
 

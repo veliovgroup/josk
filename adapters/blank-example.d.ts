@@ -66,7 +66,9 @@ export class BlankAdapter {
     /**
      * @async
      * @memberOf BlankAdapter
-     * Upsert task in storage
+     * Upsert task in storage. An existing, non-deleted interval re-registered with the
+     * same delay must keep its stored executeAt when that is earlier than now + delay,
+     * in one atomic operation (see docs/adapter-api.md); this example always resets
      * @name add
      * @param {string} uid - Unique ID of task
      * @param {boolean} isInterval - true/false defining loop or one-time task

@@ -351,11 +351,13 @@ jobs.setInterval(task, 2 * 60000, 'task-2m'); // every two minutes
 ### `setInterval(func, delay, uid)`
 
 - `func` {*Function*} - Function to call on schedule
-- `delay` {*Number*} - Delay for the first run and interval between further executions in milliseconds
+- `delay` {*Number*} - Delay for the first run of a new task and interval between further executions in milliseconds
 - `uid` {*String*} - Unique app-wide task id
 - Returns: {*`Promise<string>`*}
 
 *Set task into interval execution loop.* `ready()` *callback is passed as the first argument into a task function.*
+
+When an active interval with a valid stored `executeAt` is registered again with the same `delay`, JoSk schedules the earlier of that timestamp and `now + delay`. A due or past-due interval becomes eligible on the first scheduler revolution after boot. New intervals and intervals registered with a different `delay` start at `now + delay`. `setTimeout()` and `setImmediate()` schedule from registration time. To restart an interval's countdown, clear it before registering it again or change its `delay`. The [CRON helper](#cron) computes a new delay on each boot and schedules the next CRON occurrence.
 
 In the example below, the next task __will not be scheduled__ until the current is ready:
 

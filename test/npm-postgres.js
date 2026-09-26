@@ -4,6 +4,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { it, describe, before, after } from 'mocha';
 import { assert } from 'chai';
 import { destroyJobs, uniqueId, wait, waitUntil } from './helpers.js';
+import { registerIntervalRestartTests } from './interval-restart-tests.js';
 import { registerPauseResumeTests } from './pause-resume-tests.js';
 
 if (!process.env.PG_URL) {
@@ -564,6 +565,17 @@ describePostgres('PostgresAdapter + JoSk', function () {
     zombieTime: ZOMBIE_TIME,
     execute: 'one'
   };
+
+  registerIntervalRestartTests('Postgres', {
+    createJob: (prefix, resetOnInit) => new JoSk({
+      adapter: new PostgresAdapter({ client: pool, prefix, resetOnInit }),
+      ...racingJoSkOpts
+    }),
+    cleanup: async (prefix) => {
+      await pool.query('DELETE FROM josk_tasks WHERE prefix = $1', [prefix]);
+      await pool.query('DELETE FROM josk_locks WHERE lock_key = $1', [`josk-${prefix}.lock`]);
+    }
+  });
 
   registerPauseResumeTests('Postgres', {
     createJob: (prefix, resetOnInit) => new JoSk({
