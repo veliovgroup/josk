@@ -1143,6 +1143,41 @@ describe('shutdown and claim release', () => {
     expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThanOrEqual(before + task.delay);
   });
 
+  it('waits for superseded handlers without overwriting the latest schedule', async () => {
+    const { job, adapter } = createJob();
+    const task = intervalTask('superseded-drain');
+    const finishes = [];
+    job.tasks[task.uid] = (ready) => { finishes.push(ready); };
+    await job.__execute(task);
+    await job.__execute({ ...task, claimLeaseId: 'newer' });
+    await finishes[1]();
+
+    let resolved = false;
+    const shutdown = job.shutdown({ timeout: 1000 }).then((result) => {
+      resolved = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(resolved).toBe(false);
+    await finishes[0]();
+    await expect(shutdown).resolves.toBe(true);
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('returns false for an unfinished superseded handler without releasing its stale claim', async () => {
+    const { job, adapter } = createJob({ onError: () => {} });
+    const task = intervalTask('superseded-timeout');
+    const finishes = [];
+    job.tasks[task.uid] = (ready) => { finishes.push(ready); };
+    await job.__execute(task);
+    await job.__execute({ ...task, claimLeaseId: 'newer' });
+    await finishes[1]();
+
+    await expect(job.shutdown({ timeout: 0 })).resolves.toBe(false);
+    await finishes[0]();
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
   it('releases unfinished interval claims after the timeout and ignores their late ready()', async () => {
     const { job, adapter } = createJob();
     let finish;

@@ -29,6 +29,8 @@ process.on('SIGTERM', async () => {
 
 JoSk skips a late `ready()` write when a newer same-uid run starts in the same process. Built-in adapters also fence writes after recovery by another instance. Custom adapters without claim-lease or equivalent update fencing remain compatible, but a late handler on another process can overwrite the newer schedule.
 
+Shutdown still waits for superseded handlers to finish. If one remains unfinished at timeout, shutdown returns `false`, but does not hand its obsolete claim back or change the newer run's schedule.
+
 ## Rollout
 
 - Upgrade all instances. A v6.3 peer still resets claimed intervals to `now + delay` on boot.

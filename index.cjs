@@ -2043,6 +2043,8 @@ class JoSk {
     this.__pausedTimerIds = new Set();
     /** @internal @type {Map<string, { task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
     this.__inFlight = new Map();
+    /** @internal @type {Set<{ task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
+    this.__running = new Set();
     /** @internal */
     this.__warnedMissingClaimLeaseId = false;
     /** @internal @type {JoSkTask[]} */
@@ -2281,21 +2283,20 @@ class JoSk {
       await this.__iteratePromise;
     }
 
-    if (this.__inFlight.size > 0) {
+    if (this.__running.size > 0) {
       let timer;
       const timedOut = new Promise((resolve) => {
         timer = setTimeout(resolve, timeout);
       });
-      await Promise.race([Promise.all([...this.__inFlight.values()].map((run) => run.done)), timedOut]);
+      await Promise.race([Promise.all([...this.__running].map((run) => run.done)), timedOut]);
       clearTimeout(timer);
     }
 
-    const unfinished = [...this.__inFlight.values()];
+    const unfinished = [...this.__running];
     for (const run of unfinished) {
       run.released = true;
-      this.__inFlight.delete(run.task.uid);
-      run.settle();
-      if (run.task.isInterval === true) {
+      this.__finishRun(run);
+      if (run.task.isInterval === true && !run.superseded) {
         this.__queueRelease(run.task);
       }
     }
@@ -2784,8 +2785,6 @@ class JoSk {
     const previous = this.__inFlight.get(task.uid);
     if (previous) {
       previous.superseded = true;
-      this.__inFlight.delete(task.uid);
-      previous.settle();
     }
 
     let settle = () => {};
@@ -2794,17 +2793,19 @@ class JoSk {
     });
     const run = { task, released: false, superseded: false, settle, done };
     this.__inFlight.set(task.uid, run);
+    this.__running.add(run);
     return run;
   }
 
   /**
    * @internal
-   * @param {{ task: JoSkTask, settle: () => void }} run
+   * @param {{ task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }} run
    */
   __finishRun(run) {
     if (this.__inFlight.get(run.task.uid) === run) {
       this.__inFlight.delete(run.task.uid);
     }
+    this.__running.delete(run);
     run.settle();
   }
 
