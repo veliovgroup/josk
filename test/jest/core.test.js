@@ -491,6 +491,44 @@ describe('JoSk core', () => {
     info.mockRestore();
   });
 
+  it('supersedes earlier in-flight same-uid runs without claim leases', async () => {
+    const { job, adapter } = createJob();
+    const uid = 'recoveredsetInterval';
+    const olderTask = { uid, delay: 100, isInterval: true, isDeleted: false };
+    const newerTask = { uid, delay: 200, isInterval: true, isDeleted: false };
+    const readyFunctions = [];
+    job.tasks[uid] = (ready) => {
+      readyFunctions.push(ready);
+    };
+
+    await job.__execute(olderTask);
+    await job.__execute(newerTask);
+    await readyFunctions[0]();
+    await readyFunctions[1]();
+
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task).toBe(newerTask);
+  });
+
+  it('debugs missing claim leases once per instance', async () => {
+    const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const { job } = createJob({ debug: true });
+    const uid = 'missing-lease-setInterval';
+    const task = { uid, delay: 100, isInterval: true, isDeleted: false };
+    job.tasks[uid] = () => {};
+
+    try {
+      await job.__execute({ ...task, claimLeaseId: 'lease-1' });
+      await job.__execute(task);
+      await job.__execute(task);
+
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info.mock.calls[0].join(' ')).toContain('claimLeaseId');
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('reschedules interval with custom Date from ready()', async () => {
     const { job, adapter } = createJob();
     const next = new Date(Date.now() + 5000);
@@ -1103,6 +1141,45 @@ describe('shutdown and claim release', () => {
     expect(job.isDestroyed).toBe(true);
     expect(adapter.updateCalls).toHaveLength(1);
     expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThanOrEqual(before + task.delay);
+  });
+
+  it('waits for superseded handlers without overwriting the latest schedule', async () => {
+    const { job, adapter } = createJob();
+    const task = intervalTask('superseded-drain');
+    const finishes = [];
+    job.tasks[task.uid] = (ready) => { finishes.push(ready); };
+    await job.__execute(task);
+    await job.__execute({ ...task, claimLeaseId: 'newer' });
+    await finishes[1]();
+
+    let resolved = false;
+    const shutdown = job.shutdown({ timeout: 1000 }).then((result) => {
+      resolved = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(resolved).toBe(false);
+    await finishes[0]();
+    await expect(shutdown).resolves.toBe(true);
+    expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('returns false for an unfinished superseded handler without releasing its stale claim', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    const task = intervalTask('superseded-timeout');
+    const finishes = [];
+    job.tasks[task.uid] = (ready) => { finishes.push(ready); };
+    await job.__execute(task);
+    await job.__execute({ ...task, claimLeaseId: 'newer' });
+    await finishes[1]();
+
+    await expect(job.shutdown({ timeout: 0 })).resolves.toBe(false);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][1].description).toContain('superseded');
+    expect(onError.mock.calls[0][1].description).not.toContain('handed back');
+    await finishes[0]();
+    expect(adapter.updateCalls).toHaveLength(1);
   });
 
   it('releases unfinished interval claims after the timeout and ignores their late ready()', async () => {

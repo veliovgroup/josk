@@ -27,7 +27,9 @@ process.on('SIGTERM', async () => {
 
 ## Stale `ready()` calls
 
-A handler that calls `ready()` after its claim was recovered by another instance no longer overwrites the newer run's schedule.
+JoSk skips a late `ready()` write when a newer same-uid run starts in the same process. Built-in adapters also fence writes after recovery by another instance. Custom adapters without claim-lease or equivalent update fencing remain compatible, but a late handler on another process can overwrite the newer schedule.
+
+Shutdown still waits for superseded handlers to finish. If one remains unfinished at timeout, shutdown returns `false`, but does not hand its obsolete claim back or change the newer run's schedule.
 
 ## Rollout
 
@@ -45,4 +47,4 @@ Declarations no longer import `redis` or `mongodb`, so projects with `skipLibChe
 
 ## Custom adapters
 
-Optional, recommended: return `claimLeaseId: lock.leaseId` on claimed tasks and make `update()` write only while the stored lease matches, then clear it. See [adapter-api.md](adapter-api.md). Adapters that ignore the field keep working without fencing.
+Optional, recommended: return `claimLeaseId: lock.leaseId` on claimed tasks and make `update()` match the stored lease, update the schedule, and clear it atomically. JoSk already suppresses late updates from superseded same-process runs. Adapters that ignore the field keep working, but need equivalent storage fencing for cross-instance protection. See [adapter-api.md](adapter-api.md).
