@@ -1,6 +1,6 @@
 ---
 name: josk
-description: "Guides JoSk integration for horizontally scaled Node.js and Bun apps — cluster-wide scheduling via Redis, MongoDB, or PostgreSQL so each tick runs on one instance. Use when writing or reviewing recurring jobs, cron-style tasks, `setInterval`/`setTimeout`/`setImmediate` work, periodic background jobs (queues, sync, polling, cleanup), multi-instance / Kubernetes / PM2 / Meteor deployments, the `josk` npm package, or `ostrio:cron-jobs`. Also when the user names JoSk, `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, Redis Cluster / KeyDB Cluster / Valkey `useHashTags`, KeyDB active-replication, MailTime RedisQueue pairing, at-least-once / at-most-once semantics, zombie recovery, leases, `zombieTime`, `lockLeaseTime`, `execute`, `concurrency`, `pause()`/`resume()` instance backpressure, or comparisons to Agenda, Bree, node-cron, Bull, or BullMQ. Also covers legacy josk 5.x pinned on Node 14/16."
+description: "Use when integrating, comparing, or debugging JoSk distributed scheduling in Node.js/Bun, including recurring or multi-instance jobs, Redis/KeyDB/MongoDB/PostgreSQL adapters, or legacy JoSk 5.x on Node 14/16."
 ---
 
 # JoSk
