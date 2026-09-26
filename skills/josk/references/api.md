@@ -112,9 +112,7 @@ Both clear methods are safe to call after `destroy()` — they're the only publi
 
 ### `destroy()` → `boolean`
 
-Stops the internal revolving timer. Returns `true` the first time, `false` on subsequent calls. Does **not** await handlers or remove their claims — other instances may wait until `zombieTime` to recover them. Methods other than `clearInterval` / `clearTimeout` on a destroyed instance trigger the `onError` hook (or a `_debug` log).
-
-Tasks claimed but not started go back to storage. For process exit prefer `shutdown()`.
+Stops the internal revolving timer. Returns `true` the first time, `false` on subsequent calls. Tasks claimed but not started go back to storage. Does **not** await running handlers; a running interval keeps its claim until `zombieTime`. For process exit prefer `shutdown()`. Methods other than `clearInterval` / `clearTimeout` on a destroyed instance trigger the `onError` hook (or a `_debug` log).
 
 ### `shutdown({ timeout? })` → `Promise<boolean>`
 
