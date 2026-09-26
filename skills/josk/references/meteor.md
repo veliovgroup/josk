@@ -58,6 +58,8 @@ The scheduler shares the app's Mongo replica set — zero extra connections.
 
 Same `RedisAdapter` / `PostgresAdapter` setup as `adapters.md` (Redis-compatible servers: one writable primary; Cluster needs `useHashTags: true`). Meteor CI tests Redis only; KeyDB/Valkey are not tested within Meteor. Install drivers via `meteor npm install redis` or `meteor npm install pg`, then import from `meteor/ostrio:cron-jobs` instead of `josk`.
 
+Meteor package tests transpile TypeScript but do not type-check it. `npm run test:types` separately checks all adapter contracts and `shutdown()` through the Meteor declaration import with `tsc`.
+
 ## Meteor-specific notes
 
 - **Server-only.** Put JoSk code in `server/` or behind `Meteor.isServer`. Never import it on the client.

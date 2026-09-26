@@ -233,7 +233,7 @@ Meteor **2.14+** and **3.2+** supported (`api.versionsFrom(['2.14', '3.2'])`; mi
 | 14–17 | 2.x | `chai@4`, `cron-parser@4`, `pg@8.11` | `meteortesting:mocha@2.1.0` |
 | 18+ | 3.x | current majors | `meteortesting:mocha@3.3.0` |
 
-The default local suite includes `test/meteor-types.ts`. CI runs adapter-specific `meteor test-packages` suites for Meteor 2.14–2.16 and 3.2/3.3.1/3.4; one Meteor 3.4 / Redis 8 cell runs the default suite, which includes the type file. It checks all built-in adapter contracts and `shutdown()`. npm `devDependencies` stay unchanged for `npm test`.
+The default local suite includes `test/meteor-types.ts`. CI runs adapter-specific `meteor test-packages` suites for Meteor 2.14–2.16 and 3.2/3.3.1/3.4; one Meteor 3.4 / Redis 8 cell runs the default suite, including the TypeScript runtime tests and `shutdown()`. Meteor transpiles TypeScript without type-checking. Separately, `npm run test:types` runs `tsc` against the packaged Meteor declaration assets to check all built-in adapter contracts and the `shutdown()` signature through `meteor/ostrio:cron-jobs`. npm `devDependencies` stay unchanged for `npm test`.
 
 Do not commit `.versions` — it locks packages for one Meteor release and breaks multi-version CI. Pin the driver in `package.js` only; pass `--driver-package=meteortesting:mocha` on the CLI (`@x.y.z` on the CLI breaks `test-packages` on Meteor 3.x):
 
