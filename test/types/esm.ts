@@ -1,6 +1,10 @@
 import { JoSk, MongoAdapter, PostgresAdapter, RedisAdapter } from 'josk';
 import type { JoSkAdapter, JoSkOnError, JoSkOnExecuted } from 'josk';
-import type { RedisClientType } from 'redis';
+import type { RedisClientType, RedisClusterType } from 'redis';
+import type { RedisClientType as Redis4ClientType, RedisClusterType as Redis4ClusterType } from 'redis4';
+import type { Db as Mongo5Db } from 'mongodb5';
+import type { Db as Mongo6Db } from 'mongodb6';
+import type { Db as Mongo7Db } from 'mongodb';
 
 const adapter = {
   async acquireLock(_lock: { ownerId: string; leaseId: string; expireAt: Date; expiresAtMs: number }) {
@@ -40,6 +44,12 @@ const jobs = new JoSk({
   }
 });
 
+const drained: Promise<boolean> = jobs.shutdown({ timeout: 1000 });
+void drained;
+void jobs.shutdown();
+// @ts-expect-error shutdown timeout must be a number
+void jobs.shutdown({ timeout: '1000' });
+
 void MongoAdapter;
 void PostgresAdapter;
 void RedisAdapter;
@@ -60,6 +70,25 @@ void new RedisAdapter({
   prefix: 'cluster',
   useHashTags: true
 });
+
+const redis5 = new RedisAdapter({ client: {} as RedisClientType });
+const redis5Cluster = new RedisAdapter({ client: {} as RedisClusterType });
+const redis4 = new RedisAdapter({ client: {} as Redis4ClientType });
+const redis4Cluster = new RedisAdapter({ client: {} as Redis4ClusterType });
+void redis5.client.hGet;
+void redis5Cluster.client.hGet;
+void redis4.client.hGet;
+void redis4Cluster.client.hGet;
+
+const mongo5 = new MongoAdapter({ db: {} as Mongo5Db });
+const mongo6 = new MongoAdapter({ db: {} as Mongo6Db });
+const mongo7 = new MongoAdapter({ db: {} as Mongo7Db });
+const names: string[] = [mongo5.db.databaseName, mongo6.db.databaseName, mongo7.db.databaseName];
+void names;
+// @ts-expect-error MongoDB adapter requires a collection-capable database
+new MongoAdapter({ db: { command: async () => ({ ok: 1 }) } });
+// @ts-expect-error Redis adapter requires either standalone scan/ping or cluster node access
+new RedisAdapter({ client: { del: async () => 0, eval: async () => null } });
 const thenable: PromiseLike<boolean> = {
   then(onfulfilled) {
     return Promise.resolve(true).then(onfulfilled);

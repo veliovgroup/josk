@@ -10,8 +10,9 @@ const crypto = require('crypto');
 // `Db.command()`, and `Collection` APIs, but are not officially supported.
 
 /**
- * @typedef {import('mongodb').Collection} Collection
- * @typedef {import('mongodb').Db} Db
+ * @typedef {object} MongoDbLike
+ * @property {(name: string) => object} collection
+ * @property {(command: { ping: number }) => Promise<unknown>} command
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
  * @typedef {import('../index.js').JoSkLock} JoSkLock
@@ -26,8 +27,9 @@ const crypto = require('crypto');
  */
 
 /**
+ * @template {MongoDbLike} [D=MongoDbLike]
  * @typedef {object} MongoAdapterOption
- * @property {Db} db
+ * @property {D} db
  * @property {string} [lockCollectionName]
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
@@ -41,6 +43,7 @@ const crypto = require('crypto');
  * @property {Date} [executeAt]
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
+ * @property {string} [claimLeaseId]
  */
 
 const logError = (error, ...args) => {
@@ -50,7 +53,7 @@ const logError = (error, ...args) => {
 };
 
 /**
- * @param {Collection} collection
+ * @param {object} collection
  * @param {object} keys
  * @param {object} opts
  * @returns {Promise<void>}
@@ -90,40 +93,58 @@ const ensureIndex = async (collection, keys, opts) => {
 };
 
 /**
- * Update pipeline for re-registering an interval. Keeps the stored `executeAt`
- * when the task is an existing, non-deleted interval with the same `delay` and
- * the stored time is earlier than `executeAt`; otherwise schedules `executeAt`.
+ * Update pipeline for re-registering an interval. Preserve a claimed task's
+ * recovery deadline; otherwise keep an unchanged interval's earlier schedule.
  * Field references inside one `$set` stage read the pre-update document.
  * @param {string} uid
  * @param {number} delay
  * @param {Date} executeAt
  * @returns {object[]}
  */
-const intervalUpsertPipeline = (uid, delay, executeAt) => [{
-  $set: {
-    executeAt: {
-      $cond: [{
-        $and: [
-          { $eq: ['$isInterval', true] },
-          { $eq: ['$isDeleted', false] },
-          { $eq: ['$delay', { $literal: delay }] },
-          { $eq: [{ $type: '$executeAt' }, 'date'] },
-          { $lt: ['$executeAt', { $literal: executeAt }] }
-        ]
-      }, '$executeAt', { $literal: executeAt }]
-    },
-    uid: { $literal: uid },
-    delay: { $literal: delay },
-    isInterval: true,
-    isDeleted: false
-  }
-}];
+const intervalUpsertPipeline = (uid, delay, executeAt) => {
+  const existingInterval = [
+    { $eq: ['$isInterval', true] },
+    { $eq: ['$isDeleted', false] },
+    { $eq: [{ $type: '$executeAt' }, 'date'] }
+  ];
+  const activeClaim = {
+    $and: [
+      ...existingInterval,
+      { $eq: [{ $type: '$claimLeaseId' }, 'string'] },
+      { $ne: ['$claimLeaseId', ''] }
+    ]
+  };
 
-/** Class representing MongoDB adapter for JoSk */
+  return [{
+    $set: {
+      executeAt: {
+        $cond: [activeClaim, '$executeAt', {
+          $cond: [{
+            $and: [
+              ...existingInterval,
+              { $eq: ['$delay', { $literal: delay }] },
+              { $lt: ['$executeAt', { $literal: executeAt }] }
+            ]
+          }, '$executeAt', { $literal: executeAt }]
+        }]
+      },
+      claimLeaseId: { $cond: [activeClaim, '$claimLeaseId', '$$REMOVE'] },
+      uid: { $literal: uid },
+      delay: { $literal: delay },
+      isInterval: true,
+      isDeleted: false
+    }
+  }];
+};
+
+/**
+ * Class representing MongoDB adapter for JoSk
+ * @template {MongoDbLike} [D=MongoDbLike]
+ */
 class MongoAdapter {
   /**
    * Create a MongoAdapter instance
-   * @param {MongoAdapterOption} opts - configuration object
+   * @param {MongoAdapterOption<D>} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'mongo';
@@ -137,12 +158,12 @@ class MongoAdapter {
       });
     }
 
-    /** @type {Db} */
+    /** @type {D} */
     this.db = opts.db;
     this.uniqueName = `__JobTasks__${this.prefix}`;
-    /** @type {Collection} */
+    /** @type {ReturnType<D['collection']>} */
     this.collection = opts.db.collection(this.uniqueName);
-    /** @type {Collection} */
+    /** @type {ReturnType<D['collection']>} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
@@ -330,7 +351,8 @@ class MongoAdapter {
           executeAt,
           isInterval,
           isDeleted: false
-        }
+        },
+        $unset: { claimLeaseId: '' }
       }, {
         upsert: true
       });
@@ -342,7 +364,8 @@ class MongoAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -360,13 +383,14 @@ class MongoAdapter {
     await this.ready();
 
     try {
-      const updateResult = await this.collection.updateOne({
-        uid: task.uid,
-        isDeleted: false
-      }, {
-        $set: {
-          executeAt: nextExecuteAt
-        }
+      const filter = { uid: task.uid, isDeleted: false };
+      if (typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '') {
+        filter.claimLeaseId = task.claimLeaseId;
+      }
+
+      const updateResult = await this.collection.updateOne(filter, {
+        $set: { executeAt: nextExecuteAt },
+        $unset: { claimLeaseId: '' }
       });
       return (updateResult?.matchedCount || 0) >= 1;
     } catch (opError) {
@@ -450,7 +474,7 @@ class MongoAdapter {
       });
 
       const task = result?._id ? result : result?.value;
-      return task || null;
+      return task ? { ...task, claimLeaseId: lock.leaseId } : null;
     } catch (mongoError) {
       this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [claim]', 'Exception inside MongoAdapter#__claimNextTask() method', null);
       return null;
@@ -515,7 +539,7 @@ class MongoAdapter {
       });
 
       if ((result.modifiedCount || 0) === tasks.length) {
-        return tasks;
+        return tasks.map((task) => ({ ...task, claimLeaseId: lock.leaseId }));
       }
 
       const claimed = await this.collection.find({
@@ -532,7 +556,9 @@ class MongoAdapter {
       }).toArray();
       const claimedIds = new Set(claimed.map((task) => String(task._id)));
 
-      return tasks.filter((task) => claimedIds.has(String(task._id)));
+      return tasks
+        .filter((task) => claimedIds.has(String(task._id)))
+        .map((task) => ({ ...task, claimLeaseId: lock.leaseId }));
     } catch (mongoError) {
       this.joskInstance.__errorHandler(mongoError, '[MongoAdapter] [iterate] [batchClaim]', 'Exception inside MongoAdapter#__claimNextTasks() method', null);
       return [];
@@ -541,7 +567,20 @@ class MongoAdapter {
 }
 
 /**
- * @typedef {import('redis').RedisClientType | import('redis').RedisClusterType} RedisClient
+ * @typedef {object} RedisBaseClient
+ * @property {(keys: string[]) => Promise<unknown>} del
+ * @property {(script: string, options: { keys: string[], arguments: string[] }) => Promise<unknown>} eval
+ * @property {(script: string) => Promise<string>} [scriptLoad]
+ * @property {(sha: string, options: { keys: string[], arguments: string[] }) => Promise<unknown>} [evalSha]
+ * @typedef {object} RedisStandaloneClient
+ * @property {(options: { MATCH: string, COUNT: number }) => AsyncIterable<string | string[]>} scanIterator
+ * @property {() => Promise<string>} ping
+ * @typedef {object} RedisClusterClient
+ * @property {readonly unknown[]} masters
+ * @property {() => unknown} getRandomNode
+ * @property {(...args: never[]) => unknown} nodeClient
+ * @property {(firstKey: string, isReadonly: boolean, args: string[]) => Promise<unknown>} [sendCommand]
+ * @typedef {RedisBaseClient & (RedisStandaloneClient | RedisClusterClient)} RedisClientLike
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
  * @typedef {import('../index.js').JoSkLock} JoSkLock
@@ -556,8 +595,9 @@ class MongoAdapter {
  */
 
 /**
+ * @template {RedisClientLike} [C=RedisClientLike]
  * @typedef {object} RedisAdapterOption
- * @property {RedisClient} client
+ * @property {C} client
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
  * @property {boolean} [useHashTags] - Use Redis Cluster hash-tag keys (`josk:{prefix}:*`). Default keeps existing `josk:prefix:*` keys.
@@ -570,6 +610,7 @@ class MongoAdapter {
  * @property {number} executeAt
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
+ * @property {string} [claimLeaseId]
  */
 
 const VALID_PREFIX = /^[A-Za-z0-9_\-:.]+$/;
@@ -585,9 +626,8 @@ const RELEASE_LOCK_SCRIPT = `
   return 0
 `;
 
-// Re-registering an existing interval with the same delay keeps its stored
-// executeAt when that is earlier than the new one, so process restarts do not
-// push the next run back by a full delay. Hash and schedule ZSET get the same value.
+// Keep a claimed interval's recovery deadline; otherwise keep an unchanged
+// interval's earlier schedule. Hash and schedule ZSET get the same value.
 const ADD_TASK_SCRIPT = `
   local payload = redis.call('HGET', KEYS[2], ARGV[1])
   local delay = tonumber(ARGV[2])
@@ -602,7 +642,13 @@ const ADD_TASK_SCRIPT = `
     return 0
   end
 
-  if payload and isInterval and task.isInterval == true and tonumber(task.delay) == delay then
+  local wasClaimed = payload and isInterval and task.isInterval == true
+    and type(task.claimLeaseId) == 'string' and task.claimLeaseId ~= ''
+    and tonumber(task.executeAt)
+
+  if wasClaimed then
+    executeAt = tonumber(task.executeAt)
+  elseif payload and isInterval and task.isInterval == true and tonumber(task.delay) == delay then
     local storedExecuteAt = tonumber(task.executeAt)
     if storedExecuteAt and storedExecuteAt < executeAt then
       executeAt = storedExecuteAt
@@ -613,6 +659,9 @@ const ADD_TASK_SCRIPT = `
   task.executeAt = executeAt
   task.isInterval = isInterval
   task.isDeleted = false
+  if not wasClaimed then
+    task.claimLeaseId = nil
+  end
 
   redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
   redis.call('ZADD', KEYS[1], executeAt, ARGV[1])
@@ -639,7 +688,12 @@ const UPDATE_TASK_SCRIPT = `
     return 0
   end
 
+  if ARGV[3] and ARGV[3] ~= '' and task.claimLeaseId ~= ARGV[3] then
+    return 0
+  end
+
   task.executeAt = tonumber(ARGV[2])
+  task.claimLeaseId = nil
   redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
   redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[1])
   return 1
@@ -752,11 +806,20 @@ const isNoScriptError = (error) => {
   return message.indexOf('NOSCRIPT') !== -1 || error.code === 'NOSCRIPT';
 };
 
-/** Class representing Redis adapter for JoSk */
+/**
+ * @param {object} client
+ * @returns {boolean}
+ */
+const isClusterClient = (client) => typeof client.nodeClient === 'function' && typeof client.scanIterator !== 'function';
+
+/**
+ * Class representing Redis adapter for JoSk
+ * @template {RedisClientLike} [C=RedisClientLike]
+ */
 class RedisAdapter {
   /**
    * Create a RedisAdapter instance
-   * @param {RedisAdapterOption} opts - configuration object
+   * @param {RedisAdapterOption<C>} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'redis';
@@ -781,7 +844,11 @@ class RedisAdapter {
       });
     }
 
-    /** @type {RedisClient} */
+    if (!this.useHashTags && isClusterClient(opts.client)) {
+      throw new Error('{useHashTags: true} option is required for RedisAdapter with a Redis Cluster client. Without hash tags, adapter keys land in different slots and every Lua script fails with CROSSSLOT.');
+    }
+
+    /** @type {C} */
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
@@ -822,15 +889,21 @@ class RedisAdapter {
   async __setup() {
     if (this.resetOnInit) {
       await this.client.del([this.scheduleKey, this.tasksKey, this.lockKey]);
-      const cursor = this.client.scanIterator({
-        MATCH: `${this.uniqueName}:task:*`,
-        COUNT: 9999
-      });
+      const scanClients = isClusterClient(this.client)
+        ? await Promise.all(this.client.masters.map((node) => this.client.nodeClient(node)))
+        : [this.client];
 
-      for await (const batch of cursor) {
-        const keys = Array.isArray(batch) ? batch : [batch];
-        if (keys.length) {
-          await this.client.del(keys);
+      for (const scanClient of scanClients) {
+        const cursor = scanClient.scanIterator({
+          MATCH: `${this.uniqueName}:task:*`,
+          COUNT: 9999
+        });
+
+        for await (const batch of cursor) {
+          const keys = Array.isArray(batch) ? batch : [batch];
+          if (keys.length) {
+            await this.client.del(keys);
+          }
         }
       }
     }
@@ -845,6 +918,21 @@ class RedisAdapter {
   async __runScript(scriptKey, options) {
     const sha = this.__scriptShas[scriptKey];
     const source = this.__scriptSources[scriptKey];
+
+    // redis@4 cluster eval()/evalSha() pick the node from the wrong argument
+    // and land on a random master. sendCommand() routes by the first key.
+    if (isClusterClient(this.client) && typeof this.client.sendCommand === 'function') {
+      const firstKey = options.keys[0];
+      const args = [`${options.keys.length}`, ...options.keys, ...options.arguments];
+      try {
+        return await this.client.sendCommand(firstKey, false, ['EVALSHA', sha, ...args]);
+      } catch (error) {
+        if (!isNoScriptError(error)) {
+          throw error;
+        }
+      }
+      return await this.client.sendCommand(firstKey, false, ['EVAL', source, ...args]);
+    }
 
     if (this.__loadedShas.has(sha) && typeof this.client.evalSha === 'function') {
       try {
@@ -895,7 +983,10 @@ class RedisAdapter {
 
     try {
       await this.ready();
-      const ping = await this.client.ping();
+      const pingClient = isClusterClient(this.client)
+        ? await this.client.nodeClient(this.client.getRandomNode())
+        : this.client;
+      const ping = await pingClient.ping();
       if (ping === 'PONG') {
         return {
           status: 'OK',
@@ -988,7 +1079,8 @@ class RedisAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -1008,7 +1100,7 @@ class RedisAdapter {
     try {
       const exists = await this.__runScript('updateTask', {
         keys: [this.scheduleKey, this.tasksKey],
-        arguments: [task.uid, `${+nextExecuteAt}`]
+        arguments: [task.uid, `${+nextExecuteAt}`, typeof task.claimLeaseId === 'string' ? task.claimLeaseId : '']
       });
       return Number(exists) >= 1;
     } catch (opError) {
@@ -1129,7 +1221,8 @@ class RedisAdapter {
       delay: +task.delay,
       executeAt: +task.executeAt,
       isInterval: !!task.isInterval,
-      isDeleted: !!task.isDeleted
+      isDeleted: !!task.isDeleted,
+      ...(typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '' ? { claimLeaseId: task.claimLeaseId } : {})
     });
   }
 
@@ -1531,9 +1624,8 @@ class PostgresAdapter {
     await this.ready();
 
     try {
-      // Re-registering an existing interval with the same delay keeps its
-      // stored execute_at when that is earlier, so process restarts do not
-      // push the next run back by a full delay. SET expressions read the old row.
+      // Preserve claimed intervals until their recovery deadline; otherwise
+      // keep unchanged intervals' earlier schedule. SET reads the old row.
       const res = await this.client.query(
         `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -1543,10 +1635,25 @@ class PostgresAdapter {
              WHEN EXCLUDED.is_interval = true
               AND josk_tasks.is_interval = true
               AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.execute_at
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
               AND josk_tasks.delay = EXCLUDED.delay
               AND josk_tasks.execute_at < EXCLUDED.execute_at
              THEN josk_tasks.execute_at
              ELSE EXCLUDED.execute_at
+           END,
+           claim_lease_id = CASE
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.claim_lease_id
+             ELSE NULL
            END,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
@@ -1562,7 +1669,8 @@ class PostgresAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -1583,12 +1691,14 @@ class PostgresAdapter {
       const res = await this.client.query(
         `UPDATE josk_tasks
          SET execute_at = $1,
+             claim_lease_id = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE prefix = $2
            AND uid = $3
            AND is_deleted = false
+           AND ($4::text IS NULL OR claim_lease_id = $4::text)
          RETURNING uid`,
-        [+nextExecuteAt, this.prefix, task.uid]
+        [+nextExecuteAt, this.prefix, task.uid, typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '' ? task.claimLeaseId : null]
       );
       return (res.rowCount || 0) >= 1;
     } catch (opError) {
@@ -1618,7 +1728,8 @@ class PostgresAdapter {
         delay: parseInt(task.delay, 10),
         executeAt: parseInt(task.execute_at, 10),
         isInterval: task.is_interval,
-        isDeleted: task.is_deleted
+        isDeleted: task.is_deleted,
+        claimLeaseId: lock.leaseId
       });
 
       return executed + 1;
@@ -1638,7 +1749,8 @@ class PostgresAdapter {
           delay: parseInt(task.delay, 10),
           executeAt: parseInt(task.execute_at, 10),
           isInterval: task.is_interval,
-          isDeleted: task.is_deleted
+          isDeleted: task.is_deleted,
+          claimLeaseId: lock.leaseId
         });
       }
 
@@ -1775,6 +1887,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
  * @property {Date | number} [executeAt]
+ * @property {string} [claimLeaseId] Lease written by the claim; adapters fence `update()` on it when present
  */
 
 /**
@@ -1856,10 +1969,16 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {number} [concurrency]
  */
 
+/**
+ * @typedef {object} JoSkShutdownOption
+ * @property {number} [timeout] Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
+ */
+
 const errors = {
   execute: '[josk] [execute] option must be either "batch" or "one"!',
   concurrency: '[josk] [concurrency] option must be a positive integer or Infinity',
   lockLeaseTime: '[josk] [lockLeaseTime] option must be a positive finite Number',
+  shutdownTimeout: '[josk] [shutdown] timeout option must be a finite non-negative Number',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be a finite non-negative Number!',
@@ -1922,6 +2041,16 @@ class JoSk {
     this.__pausedAll = false;
     /** @internal @type {Set<string>} */
     this.__pausedTimerIds = new Set();
+    /** @internal @type {Map<string, { task: JoSkTask, released: boolean, settle: () => void, done: Promise<void> }>} */
+    this.__inFlight = new Map();
+    /** @internal @type {JoSkTask[]} */
+    this.__releaseQueue = [];
+    /** @internal @type {Set<Promise<void>>} */
+    this.__releasing = new Set();
+    /** @internal */
+    this.__iterating = false;
+    /** @internal @type {Promise<void> | null} */
+    this.__iteratePromise = null;
 
     if (!validExecuteModes.has(this.execute)) {
       throw new Error(errors.execute);
@@ -1975,7 +2104,8 @@ class JoSk {
    * @memberOf JoSk
    * Create recurring task (loop). Re-registering a stored task with the same
    * `delay` (e.g. on process boot) keeps its next run when that is earlier than
-   * `now + delay`; otherwise the next run is `now + delay`.
+   * `now + delay`; otherwise the next run is `now + delay`. A task another
+   * instance is running keeps its `zombieTime` hold.
    * @name setInterval
    * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {number} delay - Delay between task execution in milliseconds
@@ -2117,9 +2247,60 @@ class JoSk {
         clearTimeout(this.nextRevolutionTimeout);
         this.nextRevolutionTimeout = null;
       }
+
+      const pending = this.__pendingTasks.splice(0);
+      for (const entry of pending) {
+        this.__queueRelease(entry.task);
+        entry.resolve();
+      }
       return true;
     }
     return false;
+  }
+
+  /**
+   * @async
+   * @memberOf JoSk
+   * Destroy the instance, wait for running handlers to call `ready()`, then
+   * hand unfinished interval claims back to storage so another instance can
+   * run them without waiting for `zombieTime`. Call before process exit.
+   * @name shutdown
+   * @param {JoSkShutdownOption} [opts]
+   * @returns {Promise<boolean>} - `true` if every running handler finished within `timeout`
+   */
+  async shutdown(opts = {}) {
+    const timeout = opts.timeout === void 0 ? 10000 : opts.timeout;
+    if (!isValidDelay(timeout)) {
+      throw new Error(errors.shutdownTimeout);
+    }
+
+    this.destroy();
+    if (this.__iteratePromise) {
+      await this.__iteratePromise;
+    }
+
+    if (this.__inFlight.size > 0) {
+      let timer;
+      const timedOut = new Promise((resolve) => {
+        timer = setTimeout(resolve, timeout);
+      });
+      await Promise.race([Promise.all([...this.__inFlight.values()].map((run) => run.done)), timedOut]);
+      clearTimeout(timer);
+    }
+
+    const unfinished = [...this.__inFlight.values()];
+    for (const run of unfinished) {
+      run.released = true;
+      this.__inFlight.delete(run.task.uid);
+      run.settle();
+      if (run.task.isInterval === true) {
+        this.__queueRelease(run.task);
+      }
+    }
+
+    this.__flushReleases();
+    await Promise.all([...this.__releasing]);
+    return unfinished.length === 0;
   }
 
   /**
@@ -2205,6 +2386,51 @@ class JoSk {
     }
 
     this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), 0);
+  }
+
+  /**
+   * Hand a claimed task back to storage as due soon.
+   * @internal
+   * @param {JoSkTask} task
+   * @returns {void}
+   */
+  __queueRelease(task) {
+    if (!task || typeof task.uid !== 'string' || task.isDeleted === true) {
+      return;
+    }
+
+    this.__releaseQueue.push(task);
+    if (!this.__iterating) {
+      this.__flushReleases();
+    }
+  }
+
+  /**
+   * Released tasks are due immediately, so flush only after `iterate()`
+   * returns; otherwise the same claim loop would pick them up again.
+   * @internal
+   * @returns {void}
+   */
+  __flushReleases() {
+    const tasks = this.__releaseQueue.splice(0);
+    if (tasks.length === 0) {
+      return;
+    }
+
+    const promise = (async () => {
+      await this.__adapterReady();
+      await Promise.all(tasks.map(async (task) => {
+        try {
+          await this.adapter.update(task, new Date());
+        } catch (releaseError) {
+          this.__errorHandler(releaseError, '[__flushReleases] releaseError', 'Failed to release claimed task', task.uid);
+        }
+      }));
+    })().catch((releaseError) => {
+      this.__errorHandler(releaseError, '[__flushReleases] releaseError', 'Failed to release claimed tasks', null);
+    });
+    this.__releasing.add(promise);
+    promise.finally(() => this.__releasing.delete(promise));
   }
 
   /** @internal */
@@ -2374,7 +2600,12 @@ class JoSk {
    * @returns {Promise<void>}
    */
   async __doExecute(task) {
-    if (this.isDestroyed || task?.isDeleted === true) {
+    if (task?.isDeleted === true) {
+      return;
+    }
+
+    if (this.isDestroyed) {
+      this.__queueRelease(task);
       return;
     }
 
@@ -2404,6 +2635,7 @@ class JoSk {
         return;
       }
 
+      const run = this.__trackRun(task);
       const ready = async (readyArg1) => {
         executionsQty++;
         if (executionsQty >= 2) {
@@ -2422,14 +2654,22 @@ class JoSk {
           readyArg1(void 0, true);
         }
 
-        if (task.isInterval === true) {
-          if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
-            await this.adapter.update(task, readyArg1);
-          } else if (typeof readyArg1 === 'number' && readyArg1 >= timestamp) {
-            await this.adapter.update(task, new Date(readyArg1));
-          } else {
-            await this.adapter.update(task, new Date(timestamp + task.delay));
+        try {
+          if (task.isInterval === true && !run.released) {
+            let nextExecuteAt = new Date(timestamp + task.delay);
+            if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
+              nextExecuteAt = readyArg1;
+            } else if (typeof readyArg1 === 'number' && readyArg1 >= timestamp) {
+              nextExecuteAt = new Date(readyArg1);
+            }
+
+            const isUpdated = await this.adapter.update(task, nextExecuteAt);
+            if (!isUpdated) {
+              this._debug(`[${task.uid}] [ready] schedule not updated; task was removed or re-claimed by another run`);
+            }
           }
+        } finally {
+          this.__finishRun(run);
         }
 
         if (this.onExecuted) {
@@ -2479,6 +2719,7 @@ class JoSk {
         // setTimeout/setImmediate handler skipped because remove() failed or
         // the task was claimed elsewhere. Do not auto-ready: that would fire
         // onExecuted for a run that never happened.
+        this.__finishRun(run);
         return;
       }
 
@@ -2528,8 +2769,45 @@ class JoSk {
     }
   }
 
+  /**
+   * @internal
+   * @param {JoSkTask} task
+   */
+  __trackRun(task) {
+    const previous = this.__inFlight.get(task.uid);
+    if (previous) {
+      this.__inFlight.delete(task.uid);
+      previous.settle();
+    }
+
+    let settle = () => {};
+    const done = new Promise((resolve) => {
+      settle = resolve;
+    });
+    const run = { task, released: false, settle, done };
+    this.__inFlight.set(task.uid, run);
+    return run;
+  }
+
+  /**
+   * @internal
+   * @param {{ task: JoSkTask, settle: () => void }} run
+   */
+  __finishRun(run) {
+    if (this.__inFlight.get(run.task.uid) === run) {
+      this.__inFlight.delete(run.task.uid);
+    }
+    run.settle();
+  }
+
   /** @internal */
-  async __iterate() {
+  __iterate() {
+    this.__iteratePromise = this.__iterateOnce();
+    return this.__iteratePromise;
+  }
+
+  /** @internal */
+  async __iterateOnce() {
     if (this.isDestroyed) {
       return;
     }
@@ -2541,6 +2819,7 @@ class JoSk {
 
     let isAcquired = false;
     let lock;
+    this.__iterating = true;
 
     try {
       await this.__adapterReady();
@@ -2560,6 +2839,8 @@ class JoSk {
           this.__errorHandler(releaseError, '[__iterate] [releaseLock] releaseError:', 'adapter.releaseLock has returned an error', null);
         }
       }
+      this.__iterating = false;
+      this.__flushReleases();
       this.__tick();
     }
   }

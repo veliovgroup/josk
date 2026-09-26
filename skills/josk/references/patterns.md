@@ -24,10 +24,12 @@ const setCron = async (uniqueName, cronExpr, task) => {
   // Guard against clock skew: the parsed "next" can land in the recent past.
   const initialDelay = Math.max(0, +next - Date.now());
 
-  return jobsCron.setInterval((ready) => {
-    const upcoming = CronExpressionParser.parse(cronExpr).next().toDate();
-    ready(upcoming);     // schedule the *next* tick at the parsed CRON time
-    task();              // and run the user's work
+  return jobsCron.setInterval(async (ready) => {
+    try {
+      await task();
+    } finally {
+      await ready(CronExpressionParser.parse(cronExpr).next().toDate());
+    }
   }, initialDelay, uniqueName);
 };
 
@@ -307,7 +309,7 @@ Without this hook, exceptions inside handlers go to `console.error` and "missing
 const jobs = new JoSk({ /* … */ });
 
 const shutdown = async () => {
-  jobs.destroy();                  // stop the revolving timer
+  await jobs.shutdown({ timeout: 10_000 }); // stop polling, wait for handlers, hand back unfinished claims
   // any of your own cleanup
   process.exit(0);
 };
@@ -321,7 +323,7 @@ process.on('uncaughtException', (err) => {
 });
 ```
 
-`destroy()` is idempotent. After it, only `clearInterval` / `clearTimeout` remain useful — other methods send a "destroyed" notice through `onError`. Tasks held by this instance keep their lease until it expires (`zombieTime`); other live JoSk instances pick them up.
+`shutdown()` calls `destroy()`, which is idempotent. After it, only `clearInterval` / `clearTimeout` remain useful — other methods send a "destroyed" notice through `onError`. Without `shutdown()`, an interval killed mid-run keeps its claim until `zombieTime`; with it, other instances pick the task up on their next poll.
 
 For tests, `await jobs.destroy()` is unnecessary (it's sync), but **always** call it, and close the underlying Redis / Mongo / pg client afterwards.
 

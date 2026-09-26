@@ -27,7 +27,7 @@
     "test:jest:adapters": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand test/jest/adapters.test.js",
     "test:bun": "bun test ./test/jest/core.test.js ./test/jest/adapters.test.js",
     "test:coverage": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs --coverage",
-    "test:types": "tsc -p ./tsconfig.types.json",
+    "test:types": "tsc -p ./tsconfig.types.json && node ./test/types/packed.mjs",
     "test:redis": "mocha ./test/npm-redis.js",
     "test:mongo": "mocha ./test/npm-mongo.js",
     "test:postgres": "mocha ./test/npm-postgres.js"
@@ -106,8 +106,11 @@
     "jest": "^30.4.2",
     "mocha": "^11.7.5",
     "mongodb": "^7.2.0",
+    "mongodb5": "npm:mongodb@^5.9.2",
+    "mongodb6": "npm:mongodb@^6.21.0",
     "pg": "^8.20.0",
     "redis": "^5.12.1",
+    "redis4": "npm:redis@^4.7.1",
     "rollup": "^4.60.4",
     "typescript": "^6.0.3"
   }

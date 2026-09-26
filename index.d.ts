@@ -22,6 +22,10 @@ export type JoSkTask = {
     isInterval: boolean;
     isDeleted: boolean;
     executeAt?: number | Date | undefined;
+    /**
+     * Lease written by the claim; adapters fence `update()` on it when present
+     */
+    claimLeaseId?: string | undefined;
 };
 export type JoSkExecuteMode = "batch" | "one";
 export type JoSkLock = {
@@ -67,6 +71,12 @@ export type JoSkOption = {
     lockOwnerId?: string | undefined;
     concurrency?: number | undefined;
 };
+export type JoSkShutdownOption = {
+    /**
+     * Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
+     */
+    timeout?: number | undefined;
+};
 /** Class representing a JoSk task runner (cron). */
 export class JoSk {
     /**
@@ -101,7 +111,8 @@ export class JoSk {
      * @memberOf JoSk
      * Create recurring task (loop). Re-registering a stored task with the same
      * `delay` (e.g. on process boot) keeps its next run when that is earlier than
-     * `now + delay`; otherwise the next run is `now + delay`.
+     * `now + delay`; otherwise the next run is `now + delay`. A task another
+     * instance is running keeps its `zombieTime` hold.
      * @name setInterval
      * @param {JoSkTaskHandler} func - Function (task) to execute
      * @param {number} delay - Delay between task execution in milliseconds
@@ -161,6 +172,17 @@ export class JoSk {
      * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
      */
     destroy(): boolean;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Destroy the instance, wait for running handlers to call `ready()`, then
+     * hand unfinished interval claims back to storage so another instance can
+     * run them without waiting for `zombieTime`. Call before process exit.
+     * @name shutdown
+     * @param {JoSkShutdownOption} [opts]
+     * @returns {Promise<boolean>} - `true` if every running handler finished within `timeout`
+     */
+    shutdown(opts?: JoSkShutdownOption): Promise<boolean>;
     /**
      * Pause this instance from competing for scheduler work.
      * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to pause all tasks on this instance

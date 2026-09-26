@@ -145,6 +145,51 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: npm run test:redis
 
+  # Redis Cluster (3 masters, useHashTags) × redis driver 4|5
+  test-redis-cluster:
+    name: Redis Cluster / redis@${{ matrix.redis-driver }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        redis-driver: ['4', '5']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Pin redis@${{ matrix.redis-driver }}
+        run: |
+          npm install --no-save redis@${{ matrix.redis-driver }}
+          node -e "console.log('redis driver:', require('redis/package.json').version)"
+
+      - name: Start Redis Cluster
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-server
+          for port in 7001 7002 7003; do
+            mkdir -p /tmp/redis-cluster/$port
+            redis-server --port $port --cluster-enabled yes \
+              --cluster-config-file /tmp/redis-cluster/$port/nodes.conf \
+              --dir /tmp/redis-cluster/$port --save '' --appendonly no --daemonize yes
+          done
+          sleep 1
+          redis-cli --cluster create 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 --cluster-replicas 0 --cluster-yes
+          timeout 30 sh -c "until redis-cli -p 7001 cluster info | grep -q 'cluster_state:ok'; do sleep 1; done"
+
+      - name: Jest live tests (Redis Cluster)
+        env:
+          REDIS_CLUSTER_URLS: redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003
+        run: npm run test:jest:adapters -- -t Cluster
+
   # Node 20/22/24 × mongodb driver 5|6|7
   test-mongo:
     name: Node ${{ matrix.node }} / mongo@${{ matrix.mongodb-driver }}

@@ -63,6 +63,6 @@ Same `RedisAdapter` / `PostgresAdapter` setup as `adapters.md` (Redis / KeyDB / 
 - **Server-only.** Put JoSk code in `server/` or behind `Meteor.isServer`. Never import it on the client.
 - **Replica set guidance still applies.** Use `writeConcern: { j: true, w: 'majority' }` / `readConcern: { level: 'majority' }` / `readPreference: 'primary'` on the Mongo URL when configuring Meteor against a replica set. JoSk depends on primary-visibility for lease ownership.
 - **Galaxy / autoscale.** When Galaxy scales the app horizontally, every container shares the same MongoDB. That's what JoSk's `MongoAdapter` is for — each due tick is claimed by one container; method guarantees still apply.
-- **`destroy()` on shutdown.** Hook into `process.on('SIGTERM', …)` to call `jobs.destroy()` before Galaxy stops the container, so the scheduler releases its lease cleanly.
+- **`shutdown()` on exit.** Hook into `process.on('SIGTERM', …)` to `await jobs.shutdown({ timeout })` before Galaxy stops the container. It waits for running handlers and hands unfinished interval claims back, so another container runs them without waiting for `zombieTime`.
 
 All options and methods are identical to the NPM API — see `api.md` and `patterns.md`. Meteor 3's async-first server path needs no handler migration; the async / Promise-returning style is already supported.

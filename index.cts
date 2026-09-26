@@ -30,5 +30,6 @@ export type {
   JoSkReady,
   JoSkReadyCallback,
   JoSkTaskHandler,
-  JoSkStoredTask
+  JoSkStoredTask,
+  JoSkShutdownOption
 } from './index.js';

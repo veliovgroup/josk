@@ -173,15 +173,18 @@ const setCron = async (uniqueName, cronTask, task) => {
   const next = CronExpressionParser.parse(cronTask).next().toDate();
   const initialDelay = Math.max(0, +next - Date.now());
 
-  return await jobsCron.setInterval(function (ready) {
-    ready(CronExpressionParser.parse(cronTask).next().toDate());
-    task();
+  return await jobsCron.setInterval(async (ready) => {
+    try {
+      await task();
+    } finally {
+      await ready(CronExpressionParser.parse(cronTask).next().toDate());
+    }
   }, initialDelay, uniqueName);
 };
 
 // SCHEDULE A TASK
 setCron('Run every two seconds cron', '*/2 * * * * *', function () {
-  console.log(new Date);
+  console.log(new Date());
 });
 ```
 

@@ -44,6 +44,7 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {boolean} isInterval
  * @property {boolean} isDeleted
  * @property {Date | number} [executeAt]
+ * @property {string} [claimLeaseId] Lease written by the claim; adapters fence `update()` on it when present
  */
 
 /**
@@ -125,10 +126,16 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  * @property {number} [concurrency]
  */
 
+/**
+ * @typedef {object} JoSkShutdownOption
+ * @property {number} [timeout] Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
+ */
+
 const errors = {
   execute: '[josk] [execute] option must be either "batch" or "one"!',
   concurrency: '[josk] [concurrency] option must be a positive integer or Infinity',
   lockLeaseTime: '[josk] [lockLeaseTime] option must be a positive finite Number',
+  shutdownTimeout: '[josk] [shutdown] timeout option must be a finite non-negative Number',
   setInterval: {
     func: '[josk] [setInterval] the first argument must be a function!',
     delay: '[josk] [setInterval] delay must be a finite non-negative Number!',
@@ -191,6 +198,16 @@ class JoSk {
     this.__pausedAll = false;
     /** @internal @type {Set<string>} */
     this.__pausedTimerIds = new Set();
+    /** @internal @type {Map<string, { task: JoSkTask, released: boolean, settle: () => void, done: Promise<void> }>} */
+    this.__inFlight = new Map();
+    /** @internal @type {JoSkTask[]} */
+    this.__releaseQueue = [];
+    /** @internal @type {Set<Promise<void>>} */
+    this.__releasing = new Set();
+    /** @internal */
+    this.__iterating = false;
+    /** @internal @type {Promise<void> | null} */
+    this.__iteratePromise = null;
 
     if (!validExecuteModes.has(this.execute)) {
       throw new Error(errors.execute);
@@ -244,7 +261,8 @@ class JoSk {
    * @memberOf JoSk
    * Create recurring task (loop). Re-registering a stored task with the same
    * `delay` (e.g. on process boot) keeps its next run when that is earlier than
-   * `now + delay`; otherwise the next run is `now + delay`.
+   * `now + delay`; otherwise the next run is `now + delay`. A task another
+   * instance is running keeps its `zombieTime` hold.
    * @name setInterval
    * @param {JoSkTaskHandler} func - Function (task) to execute
    * @param {number} delay - Delay between task execution in milliseconds
@@ -386,9 +404,60 @@ class JoSk {
         clearTimeout(this.nextRevolutionTimeout);
         this.nextRevolutionTimeout = null;
       }
+
+      const pending = this.__pendingTasks.splice(0);
+      for (const entry of pending) {
+        this.__queueRelease(entry.task);
+        entry.resolve();
+      }
       return true;
     }
     return false;
+  }
+
+  /**
+   * @async
+   * @memberOf JoSk
+   * Destroy the instance, wait for running handlers to call `ready()`, then
+   * hand unfinished interval claims back to storage so another instance can
+   * run them without waiting for `zombieTime`. Call before process exit.
+   * @name shutdown
+   * @param {JoSkShutdownOption} [opts]
+   * @returns {Promise<boolean>} - `true` if every running handler finished within `timeout`
+   */
+  async shutdown(opts = {}) {
+    const timeout = opts.timeout === void 0 ? 10000 : opts.timeout;
+    if (!isValidDelay(timeout)) {
+      throw new Error(errors.shutdownTimeout);
+    }
+
+    this.destroy();
+    if (this.__iteratePromise) {
+      await this.__iteratePromise;
+    }
+
+    if (this.__inFlight.size > 0) {
+      let timer;
+      const timedOut = new Promise((resolve) => {
+        timer = setTimeout(resolve, timeout);
+      });
+      await Promise.race([Promise.all([...this.__inFlight.values()].map((run) => run.done)), timedOut]);
+      clearTimeout(timer);
+    }
+
+    const unfinished = [...this.__inFlight.values()];
+    for (const run of unfinished) {
+      run.released = true;
+      this.__inFlight.delete(run.task.uid);
+      run.settle();
+      if (run.task.isInterval === true) {
+        this.__queueRelease(run.task);
+      }
+    }
+
+    this.__flushReleases();
+    await Promise.all([...this.__releasing]);
+    return unfinished.length === 0;
   }
 
   /**
@@ -474,6 +543,51 @@ class JoSk {
     }
 
     this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), 0);
+  }
+
+  /**
+   * Hand a claimed task back to storage as due soon.
+   * @internal
+   * @param {JoSkTask} task
+   * @returns {void}
+   */
+  __queueRelease(task) {
+    if (!task || typeof task.uid !== 'string' || task.isDeleted === true) {
+      return;
+    }
+
+    this.__releaseQueue.push(task);
+    if (!this.__iterating) {
+      this.__flushReleases();
+    }
+  }
+
+  /**
+   * Released tasks are due immediately, so flush only after `iterate()`
+   * returns; otherwise the same claim loop would pick them up again.
+   * @internal
+   * @returns {void}
+   */
+  __flushReleases() {
+    const tasks = this.__releaseQueue.splice(0);
+    if (tasks.length === 0) {
+      return;
+    }
+
+    const promise = (async () => {
+      await this.__adapterReady();
+      await Promise.all(tasks.map(async (task) => {
+        try {
+          await this.adapter.update(task, new Date());
+        } catch (releaseError) {
+          this.__errorHandler(releaseError, '[__flushReleases] releaseError', 'Failed to release claimed task', task.uid);
+        }
+      }));
+    })().catch((releaseError) => {
+      this.__errorHandler(releaseError, '[__flushReleases] releaseError', 'Failed to release claimed tasks', null);
+    });
+    this.__releasing.add(promise);
+    promise.finally(() => this.__releasing.delete(promise));
   }
 
   /** @internal */
@@ -643,7 +757,12 @@ class JoSk {
    * @returns {Promise<void>}
    */
   async __doExecute(task) {
-    if (this.isDestroyed || task?.isDeleted === true) {
+    if (task?.isDeleted === true) {
+      return;
+    }
+
+    if (this.isDestroyed) {
+      this.__queueRelease(task);
       return;
     }
 
@@ -673,6 +792,7 @@ class JoSk {
         return;
       }
 
+      const run = this.__trackRun(task);
       const ready = async (readyArg1) => {
         executionsQty++;
         if (executionsQty >= 2) {
@@ -691,14 +811,22 @@ class JoSk {
           readyArg1(void 0, true);
         }
 
-        if (task.isInterval === true) {
-          if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
-            await this.adapter.update(task, readyArg1);
-          } else if (typeof readyArg1 === 'number' && readyArg1 >= timestamp) {
-            await this.adapter.update(task, new Date(readyArg1));
-          } else {
-            await this.adapter.update(task, new Date(timestamp + task.delay));
+        try {
+          if (task.isInterval === true && !run.released) {
+            let nextExecuteAt = new Date(timestamp + task.delay);
+            if (typeof readyArg1 === 'object' && readyArg1 instanceof Date && +readyArg1 >= timestamp) {
+              nextExecuteAt = readyArg1;
+            } else if (typeof readyArg1 === 'number' && readyArg1 >= timestamp) {
+              nextExecuteAt = new Date(readyArg1);
+            }
+
+            const isUpdated = await this.adapter.update(task, nextExecuteAt);
+            if (!isUpdated) {
+              this._debug(`[${task.uid}] [ready] schedule not updated; task was removed or re-claimed by another run`);
+            }
           }
+        } finally {
+          this.__finishRun(run);
         }
 
         if (this.onExecuted) {
@@ -748,6 +876,7 @@ class JoSk {
         // setTimeout/setImmediate handler skipped because remove() failed or
         // the task was claimed elsewhere. Do not auto-ready: that would fire
         // onExecuted for a run that never happened.
+        this.__finishRun(run);
         return;
       }
 
@@ -797,8 +926,45 @@ class JoSk {
     }
   }
 
+  /**
+   * @internal
+   * @param {JoSkTask} task
+   */
+  __trackRun(task) {
+    const previous = this.__inFlight.get(task.uid);
+    if (previous) {
+      this.__inFlight.delete(task.uid);
+      previous.settle();
+    }
+
+    let settle = () => {};
+    const done = new Promise((resolve) => {
+      settle = resolve;
+    });
+    const run = { task, released: false, settle, done };
+    this.__inFlight.set(task.uid, run);
+    return run;
+  }
+
+  /**
+   * @internal
+   * @param {{ task: JoSkTask, settle: () => void }} run
+   */
+  __finishRun(run) {
+    if (this.__inFlight.get(run.task.uid) === run) {
+      this.__inFlight.delete(run.task.uid);
+    }
+    run.settle();
+  }
+
   /** @internal */
-  async __iterate() {
+  __iterate() {
+    this.__iteratePromise = this.__iterateOnce();
+    return this.__iteratePromise;
+  }
+
+  /** @internal */
+  async __iterateOnce() {
     if (this.isDestroyed) {
       return;
     }
@@ -810,6 +976,7 @@ class JoSk {
 
     let isAcquired = false;
     let lock;
+    this.__iterating = true;
 
     try {
       await this.__adapterReady();
@@ -829,6 +996,8 @@ class JoSk {
           this.__errorHandler(releaseError, '[__iterate] [releaseLock] releaseError:', 'adapter.releaseLock has returned an error', null);
         }
       }
+      this.__iterating = false;
+      this.__flushReleases();
       this.__tick();
     }
   }

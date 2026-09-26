@@ -1,5 +1,6 @@
 .cursor
 .cursorignore
+.superpowers
 .claude
 .github
 .gitignore
@@ -22,7 +23,6 @@ HISTORY.md
 index.cjs
 index.cts
 index.d.cts
-LICENSE
 docs
 test
 package.json

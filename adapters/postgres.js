@@ -375,9 +375,8 @@ class PostgresAdapter {
     await this.ready();
 
     try {
-      // Re-registering an existing interval with the same delay keeps its
-      // stored execute_at when that is earlier, so process restarts do not
-      // push the next run back by a full delay. SET expressions read the old row.
+      // Preserve claimed intervals until their recovery deadline; otherwise
+      // keep unchanged intervals' earlier schedule. SET reads the old row.
       const res = await this.client.query(
         `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -387,10 +386,25 @@ class PostgresAdapter {
              WHEN EXCLUDED.is_interval = true
               AND josk_tasks.is_interval = true
               AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.execute_at
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
               AND josk_tasks.delay = EXCLUDED.delay
               AND josk_tasks.execute_at < EXCLUDED.execute_at
              THEN josk_tasks.execute_at
              ELSE EXCLUDED.execute_at
+           END,
+           claim_lease_id = CASE
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.claim_lease_id
+             ELSE NULL
            END,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
@@ -406,7 +420,8 @@ class PostgresAdapter {
   }
 
   /**
-   * @param {{ uid: string }} task
+   * Skips the write when `task.claimLeaseId` no longer matches storage.
+   * @param {{ uid: string, claimLeaseId?: string }} task
    * @param {Date} nextExecuteAt
    * @returns {Promise<boolean>}
    */
@@ -427,12 +442,14 @@ class PostgresAdapter {
       const res = await this.client.query(
         `UPDATE josk_tasks
          SET execute_at = $1,
+             claim_lease_id = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE prefix = $2
            AND uid = $3
            AND is_deleted = false
+           AND ($4::text IS NULL OR claim_lease_id = $4::text)
          RETURNING uid`,
-        [+nextExecuteAt, this.prefix, task.uid]
+        [+nextExecuteAt, this.prefix, task.uid, typeof task.claimLeaseId === 'string' && task.claimLeaseId !== '' ? task.claimLeaseId : null]
       );
       return (res.rowCount || 0) >= 1;
     } catch (opError) {
@@ -462,7 +479,8 @@ class PostgresAdapter {
         delay: parseInt(task.delay, 10),
         executeAt: parseInt(task.execute_at, 10),
         isInterval: task.is_interval,
-        isDeleted: task.is_deleted
+        isDeleted: task.is_deleted,
+        claimLeaseId: lock.leaseId
       });
 
       return executed + 1;
@@ -482,7 +500,8 @@ class PostgresAdapter {
           delay: parseInt(task.delay, 10),
           executeAt: parseInt(task.execute_at, 10),
           isInterval: task.is_interval,
-          isDeleted: task.is_deleted
+          isDeleted: task.is_deleted,
+          claimLeaseId: lock.leaseId
         });
       }
 

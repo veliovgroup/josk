@@ -19,43 +19,14 @@ A task is a zombie when the instance that claimed it never called `ready()` and 
 Tuning:
 
 - `zombieTime` must exceed the slowest legitimate handler runtime plus a margin. Below 60s is not recommended.
-- If a handler routinely hits `zombieTime`, either the handler is too slow or `zombieTime` is too tight. Don't paper over by raising it past hours — split the work or move it off the scheduler.
+- Re-registering a claimed interval keeps its zombie deadline. An uncleanly killed handler can wait the full `zombieTime` (15 minutes by default) before recovery, rather than only `delay`; this avoids early overlap on rolling restarts. Call `await jobs.shutdown({ timeout })` on `SIGTERM` to hand running claims back. Lower `zombieTime` only if every legitimate handler finishes sooner.
+- Built-in adapters fence `update()` on the claim lease: a handler that finishes after its claim was recovered (or handed back by `shutdown()`) gets `false` and leaves the newer schedule alone.
+- Older records can carry a stale `claimLeaseId` after completion. The first new registration may preserve that date; the next `update()` clears it. Mixed-version peers can still shorten claims.
+- If a handler routinely hits `zombieTime`, either the handler is too slow or `zombieTime` is too tight. Split long work or move it off the scheduler.
 
 ## Monitoring stuck tasks
 
-JoSk surfaces stuck tasks two ways:
-
-1. **`onError` "One of your tasks is missing"** — fired when a task exists in storage but no in-memory handler is registered on this instance. Only fired when `autoClear: false`.
-2. **Direct storage queries** — what you reach for when you want active observability without `autoClear` noise.
-
-### Redis
-
-```
-HLEN josk:prefix:tasks
-ZRANGEBYSCORE josk:prefix:schedule -inf <now-ms>
-
-# If RedisAdapter({ useHashTags: true })
-HLEN josk:{prefix}:tasks
-ZRANGEBYSCORE josk:{prefix}:schedule -inf <now-ms>
-```
-
-### MongoDB
-
-```js
-db.__JobTasks__<prefix>.countDocuments({
-  executeAt: { $lt: new Date() },
-});
-```
-
-### PostgreSQL
-
-```sql
-SELECT COUNT(*) FROM josk_tasks
-WHERE prefix = '<prefix>'
-  AND execute_at < (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT;
-```
-
-Add a small healthcheck route that calls `jobs.ping()` and exposes the adapter status to your existing monitoring.
+`onError('One of your tasks is missing')` means this instance claimed a task without a registered in-memory handler; it does **not** detect a stuck registered handler. Past-due timestamps alone measure backlog. Inspect intervals with a non-empty `claimLeaseId` (Postgres `claim_lease_id`) and `executeAt` approaching recovery; this indicates a claim near expiry, not proof of a stalled handler. Redis: iterate the task hash with `HSCAN` and parse payloads. Mongo: filter the task collection on `claimLeaseId` and `executeAt`. Postgres: filter `josk_tasks` on `claim_lease_id` and `execute_at`. See [monitoring and recovery](https://github.com/veliovgroup/josk/blob/master/docs/monitoring.md) for queries and caveats. Use `jobs.ping()` for adapter connectivity.
 
 ## Jitter / accuracy
 
@@ -120,7 +91,8 @@ In order of likelihood:
 
 - **Reading JoSk state from a Mongo secondary or a Redis / KeyDB / Valkey replica.** Lease writes must be immediately visible. Use the primary.
 - **Active-active Redis / KeyDB active-replication / multi-master.** Conflict resolution can allow duplicate claims. Use a single writable primary, or `PostgresAdapter`.
-- **Redis / KeyDB / Valkey Cluster without `useHashTags: true`.** Lua touches `schedule` + `tasks` + `lock`. Untagged keys hash to different slots → `CROSSSLOT`.
+- **`MOVED` errors with `redis@4` Cluster on josk ≤ 6.3.** The `redis@4` cluster client routes `EVAL` to a random master (~4% failures with 3 masters); a failed `ready()` write parks the interval until `zombieTime`. 6.4 sends scripts via `sendCommand(firstKey)`. Upgrade.
+- **Redis / KeyDB / Valkey Cluster without `useHashTags: true`.** Lua touches `schedule` + `tasks` + `lock`. Untagged keys hash to different slots → `CROSSSLOT`. `RedisAdapter` constructor throws for a cluster client (`nodeClient`, no `scanIterator`) without it.
 - **MailTime with only one side tagged.** `RedisQueue({ useHashTags })` and JoSk `useHashTags` must match. MailTime queue layout is not a JoSk key rename — see `mail-time` skill.
 - **MongoDB without `w: 'majority'`.** A claim that's only on the primary can vanish on failover. Use majority writes and `readConcern: 'majority'`.
 - **Postgres read replicas.** Same rule — no scheduler reads on replicas.

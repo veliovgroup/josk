@@ -5,7 +5,7 @@ const { afterEach, describe, expect, it, jest } = testApi;
 
 import { MongoClient } from 'mongodb';
 import { Pool } from 'pg';
-import { createClient } from 'redis';
+import { createClient, createCluster } from 'redis';
 
 import { MongoAdapter, PostgresAdapter, RedisAdapter } from '../../index.js';
 
@@ -225,6 +225,53 @@ describe('RedisAdapter unit coverage', () => {
     expect(client.del).toHaveBeenCalledWith(['josk:reset-v5:task:a', 'josk:reset-v5:task:b']);
   });
 
+  it('resets legacy keys and pings through a Redis Cluster node without root scanIterator/ping', async () => {
+    const cluster = createRedisClient();
+    const shard = { id: 'shard' };
+    const node = createRedisClient({ scanKeys: ['josk:{cluster}:task:legacy'] });
+    delete cluster.scanIterator;
+    delete cluster.ping;
+    cluster.masters = [shard];
+    cluster.getRandomNode = () => shard;
+    cluster.nodeClient = jest.fn(async () => node);
+    const adapter = new RedisAdapter({ client: cluster, prefix: 'cluster', useHashTags: true, resetOnInit: true });
+    adapter.joskInstance = createHarness();
+
+    await adapter.ready();
+    await expect(adapter.ping()).resolves.toMatchObject({ code: 200 });
+    expect(cluster.del).toHaveBeenCalledWith(['josk:{cluster}:task:legacy']);
+    expect(cluster.nodeClient).toHaveBeenCalledWith(shard);
+  });
+
+  it('routes cluster scripts through sendCommand by first key and falls back to EVAL on NOSCRIPT', async () => {
+    const cluster = createRedisClient();
+    delete cluster.scanIterator;
+    delete cluster.ping;
+    cluster.masters = [];
+    cluster.getRandomNode = () => ({});
+    cluster.nodeClient = async () => createRedisClient();
+    const calls = [];
+    cluster.sendCommand = jest.fn(async (firstKey, isReadonly, args) => {
+      calls.push([firstKey, isReadonly, args[0]]);
+      if (calls.length === 1) {
+        throw new Error('NOSCRIPT No matching script');
+      }
+      return 1;
+    });
+    const adapter = new RedisAdapter({ client: cluster, prefix: 'route', useHashTags: true });
+    adapter.joskInstance = createHarness();
+
+    await expect(adapter.update({ uid: 'task' }, new Date())).resolves.toBe(true);
+    await expect(adapter.update({ uid: 'task' }, new Date())).resolves.toBe(true);
+
+    expect(calls).toEqual([
+      [adapter.scheduleKey, false, 'EVALSHA'],
+      [adapter.scheduleKey, false, 'EVAL'],
+      [adapter.scheduleKey, false, 'EVALSHA']
+    ]);
+    expect(cluster.eval).not.toHaveBeenCalled();
+  });
+
   it('reports ping states before assignment and on unexpected replies', async () => {
     const client = createRedisClient();
     const unassigned = new RedisAdapter({
@@ -362,6 +409,23 @@ describe('RedisAdapter unit coverage', () => {
     expect(() => new RedisAdapter({ client: createRedisClient(), useHashTags: null })).toThrow(/useHashTags.*boolean/);
     expect(new RedisAdapter({ client: createRedisClient() }).useHashTags).toBe(false);
     expect(new RedisAdapter({ client: createRedisClient(), useHashTags: undefined }).useHashTags).toBe(false);
+  });
+
+  it('requires useHashTags for Redis Cluster clients', () => {
+    const createCluster = () => {
+      const cluster = createRedisClient();
+      delete cluster.scanIterator;
+      delete cluster.ping;
+      cluster.masters = [];
+      cluster.getRandomNode = () => ({});
+      cluster.nodeClient = async () => createRedisClient();
+      return cluster;
+    };
+
+    expect(() => new RedisAdapter({ client: createCluster() })).toThrow(/useHashTags: true.*Redis Cluster/);
+    expect(() => new RedisAdapter({ client: createCluster(), useHashTags: false })).toThrow(/CROSSSLOT/);
+    expect(new RedisAdapter({ client: createCluster(), useHashTags: true }).useHashTags).toBe(true);
+    expect(new RedisAdapter({ client: createRedisClient() }).useHashTags).toBe(false);
   });
 
   it('falls back to the default prefix when none is provided or the value is empty', async () => {
@@ -880,18 +944,16 @@ describe('MongoAdapter unit coverage', () => {
     expect(stage.isInterval).toBe(true);
     expect(stage.isDeleted).toBe(false);
 
-    const [condition, keep, fallback] = stage.executeAt.$cond;
-    const next = fallback.$literal;
-    expect(keep).toBe('$executeAt');
+    const [activeClaim, keepClaimed, unclaimedSchedule] = stage.executeAt.$cond;
+    const [unchangedInterval, keepEarlier, resetSchedule] = unclaimedSchedule.$cond;
+    const next = resetSchedule.$literal;
+    expect(activeClaim.$and).toContainEqual({ $eq: [{ $type: '$claimLeaseId' }, 'string'] });
+    expect(keepClaimed).toBe('$executeAt');
+    expect(keepEarlier).toBe('$executeAt');
+    expect(unchangedInterval.$and).toContainEqual({ $eq: ['$delay', { $literal: INTERVAL_DELAY }] });
+    expect(stage.claimLeaseId.$cond).toEqual([activeClaim, '$claimLeaseId', '$$REMOVE']);
     expect(next).toBeInstanceOf(Date);
     expectResetSchedule(+next, before);
-    expect(condition.$and).toEqual([
-      { $eq: ['$isInterval', true] },
-      { $eq: ['$isDeleted', false] },
-      { $eq: ['$delay', { $literal: INTERVAL_DELAY }] },
-      { $eq: [{ $type: '$executeAt' }, 'date'] },
-      { $lt: ['$executeAt', { $literal: next }] }
-    ]);
   });
 
   it('add(timeout) keeps the plain $set upsert that always resets executeAt', async () => {
@@ -935,7 +997,7 @@ describe('MongoAdapter unit coverage', () => {
     const nextExecuteAt = new Date(Date.now() + 1000);
 
     await expect(adapter.iterate(nextExecuteAt, lock, 'one')).resolves.toBe(0);
-    await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toBe(task);
+    await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toEqual({ ...task, claimLeaseId: lock.leaseId });
 
     expect(harness.__execute).not.toHaveBeenCalled();
   });
@@ -980,7 +1042,7 @@ describe('MongoAdapter unit coverage', () => {
     const nextExecuteAt = new Date(Date.now() + 1000);
 
     await expect(adapter.__claimNextTask(nextExecuteAt, lock)).resolves.toBeNull();
-    await expect(adapter.__claimNextTasks(nextExecuteAt, lock, 2)).resolves.toEqual([tasks[1]]);
+    await expect(adapter.__claimNextTasks(nextExecuteAt, lock, 2)).resolves.toEqual([{ ...tasks[1], claimLeaseId: lock.leaseId }]);
 
     const failing = await setupMongoAdapter({
       taskCollection: createMongoCollection({
@@ -1067,7 +1129,7 @@ describe('MongoAdapter unit coverage', () => {
 
     expect(taskCollection.findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(harness.__execute).toHaveBeenCalledTimes(1);
-    expect(harness.__execute.mock.calls[0][0]).toBe(claimed);
+    expect(harness.__execute.mock.calls[0][0]).toEqual({ ...claimed, claimLeaseId: lock.leaseId });
     expect(harness.__errorHandler).not.toHaveBeenCalled();
   });
 
@@ -1262,7 +1324,9 @@ describe('PostgresAdapter unit coverage', () => {
     const [intervalQuery, timeoutQuery] = addQueries;
     const sql = intervalQuery.sql.replace(/\s+/g, ' ');
     expect(sql).toContain('ON CONFLICT (prefix, uid) DO UPDATE SET');
-    expect(sql).toContain('execute_at = CASE WHEN EXCLUDED.is_interval = true AND josk_tasks.is_interval = true AND josk_tasks.is_deleted = false AND josk_tasks.delay = EXCLUDED.delay AND josk_tasks.execute_at < EXCLUDED.execute_at THEN josk_tasks.execute_at ELSE EXCLUDED.execute_at END');
+    expect(sql).toContain("josk_tasks.claim_lease_id IS NOT NULL AND josk_tasks.claim_lease_id <> '' THEN josk_tasks.execute_at");
+    expect(sql).toContain('josk_tasks.delay = EXCLUDED.delay AND josk_tasks.execute_at < EXCLUDED.execute_at THEN josk_tasks.execute_at');
+    expect(sql).toContain('claim_lease_id = CASE');
     expect(intervalQuery.values.slice(0, 3)).toEqual([adapter.prefix, 'postgres-add-interval', INTERVAL_DELAY]);
     expectResetSchedule(intervalQuery.values[3], before);
     expect(intervalQuery.values[4]).toBe(true);
@@ -1429,7 +1493,8 @@ describe('PostgresAdapter unit coverage', () => {
       delay: 1500,
       executeAt: Number(dueRow.execute_at),
       isInterval: dueRow.is_interval,
-      isDeleted: dueRow.is_deleted
+      isDeleted: dueRow.is_deleted,
+      claimLeaseId: lock.leaseId
     });
     expect(harness.__errorHandler).not.toHaveBeenCalled();
   });
@@ -1471,21 +1536,27 @@ describe('PostgresAdapter unit coverage', () => {
   });
 });
 
-const adapterSuites = [{
-  name: 'RedisAdapter',
-  enabled: !!process.env.REDIS_URL,
+const redisClusterUrls = (process.env.REDIS_CLUSTER_URLS || '').split(',').filter(Boolean);
+
+// redis@4 cluster connect() resolves to undefined, so keep the client reference.
+const connectRedisCluster = async () => {
+  const cluster = createCluster({
+    rootNodes: redisClusterUrls.map((url) => ({ url }))
+  });
+  await cluster.connect();
+  return cluster;
+};
+
+const redisSuite = ({ name, enabled, connect, useHashTags = false }) => ({
+  name,
+  enabled,
   async setup() {
-    const client = await createClient({
-      url: process.env.REDIS_URL,
-      socket: {
-        connectTimeout: 1000,
-        reconnectStrategy: false
-      }
-    }).connect();
+    const client = await connect();
     const adapter = new RedisAdapter({
       client,
       prefix: uniquePrefix('redis'),
-      resetOnInit: true
+      resetOnInit: true,
+      useHashTags
     });
 
     return {
@@ -1503,6 +1574,7 @@ const adapterSuites = [{
           delay: Number(task.delay),
           executeAt: Number(task.executeAt),
           scheduledAt: score === null ? null : Number(score),
+          claimLeaseId: task.claimLeaseId ?? null,
           isInterval: task.isInterval === true,
           isDeleted: task.isDeleted === true
         };
@@ -1514,11 +1586,28 @@ const adapterSuites = [{
       },
       async cleanup() {
         await client.del([adapter.scheduleKey, adapter.tasksKey, adapter.lockKey]);
-        await client.quit();
+        await (typeof client.close === 'function' ? client.close() : client.quit());
       }
     };
   }
-}, {
+});
+
+const adapterSuites = [redisSuite({
+  name: 'RedisAdapter',
+  enabled: !!process.env.REDIS_URL,
+  connect: () => createClient({
+    url: process.env.REDIS_URL,
+    socket: {
+      connectTimeout: 1000,
+      reconnectStrategy: false
+    }
+  }).connect()
+}), redisSuite({
+  name: 'RedisAdapter (Cluster)',
+  enabled: redisClusterUrls.length > 0,
+  useHashTags: true,
+  connect: connectRedisCluster
+}), {
   name: 'MongoAdapter',
   enabled: !!process.env.MONGO_URL,
   async setup() {
@@ -1546,6 +1635,7 @@ const adapterSuites = [{
           delay: Number(task.delay),
           executeAt: +task.executeAt,
           scheduledAt: +task.executeAt,
+          claimLeaseId: task.claimLeaseId ?? null,
           isInterval: task.isInterval === true,
           isDeleted: task.isDeleted === true
         };
@@ -1581,7 +1671,7 @@ const adapterSuites = [{
       revivesDeletedTasks: true,
       async readTask(uid) {
         const res = await client.query(
-          'SELECT delay, execute_at, is_interval, is_deleted FROM josk_tasks WHERE prefix = $1 AND uid = $2',
+          'SELECT delay, execute_at, is_interval, is_deleted, claim_lease_id FROM josk_tasks WHERE prefix = $1 AND uid = $2',
           [adapter.prefix, uid]
         );
         const task = res.rows[0];
@@ -1592,6 +1682,7 @@ const adapterSuites = [{
           delay: Number(task.delay),
           executeAt: Number(task.execute_at),
           scheduledAt: Number(task.execute_at),
+          claimLeaseId: task.claim_lease_id,
           isInterval: task.is_interval === true,
           isDeleted: task.is_deleted === true
         };
@@ -1607,6 +1698,18 @@ const adapterSuites = [{
     };
   }
 }];
+
+(redisClusterUrls.length > 0 ? describe : describe.skip)('RedisAdapter (Cluster) guard', () => {
+  it('detects a real cluster client and requires useHashTags', async () => {
+    const cluster = await connectRedisCluster();
+
+    try {
+      expect(() => new RedisAdapter({ client: cluster })).toThrow(/useHashTags: true.*Redis Cluster/);
+    } finally {
+      await (typeof cluster.close === 'function' ? cluster.close() : cluster.quit());
+    }
+  });
+});
 
 for (const suite of adapterSuites) {
   const suiteDescribe = suite.enabled ? describe : describe.skip;
@@ -1747,6 +1850,110 @@ for (const suite of adapterSuites) {
       const task = await context.readTask('interval-later');
       expectResetSchedule(task.executeAt, before);
       expect(task.scheduledAt).toBe(task.executeAt);
+    });
+
+    const claimDueInterval = async (adapter, uid, heldUntil) => {
+      await expect(adapter.add(uid, true, INTERVAL_DELAY)).resolves.toBe(true);
+      await expect(adapter.update({ uid }, new Date(Date.now() - 1000))).resolves.toBe(true);
+      await expect(adapter.iterate(new Date(heldUntil), createLock('running-owner'), 'one')).resolves.toBe(1);
+      return await context.readTask(uid);
+    };
+
+    it('keeps a claimed interval parked during re-registration so a peer cannot run it early', async () => {
+      const adapter = await setupAdapter();
+      const heldUntil = Date.now() + 10 * INTERVAL_DELAY;
+      const claimed = await claimDueInterval(adapter, 'claimed-interval', heldUntil);
+      expect(claimed.claimLeaseId).toEqual(expect.any(String));
+
+      await expect(adapter.add('claimed-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      await expect(context.readTask('claimed-interval')).resolves.toMatchObject({
+        executeAt: heldUntil,
+        scheduledAt: heldUntil,
+        claimLeaseId: claimed.claimLeaseId
+      });
+      await expect(adapter.iterate(new Date(Date.now() + INTERVAL_DELAY), createLock('peer'), 'one')).resolves.toBe(0);
+      expect(harness.__execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves an active claim when the interval delay changes', async () => {
+      const adapter = await setupAdapter();
+      const heldUntil = Date.now() + 10 * INTERVAL_DELAY;
+      const claimed = await claimDueInterval(adapter, 'claimed-new-delay', heldUntil);
+
+      await expect(adapter.add('claimed-new-delay', true, INTERVAL_DELAY * 2)).resolves.toBe(true);
+
+      await expect(context.readTask('claimed-new-delay')).resolves.toMatchObject({
+        delay: INTERVAL_DELAY * 2,
+        executeAt: heldUntil,
+        scheduledAt: heldUntil,
+        claimLeaseId: claimed.claimLeaseId
+      });
+    });
+
+    it('leaves an expired claim due after a delay change', async () => {
+      const adapter = await setupAdapter();
+      const expiredAt = Date.now() - 100;
+      await claimDueInterval(adapter, 'expired-claim', expiredAt);
+
+      await expect(adapter.add('expired-claim', true, INTERVAL_DELAY * 2)).resolves.toBe(true);
+      await expect(context.readTask('expired-claim')).resolves.toMatchObject({
+        delay: INTERVAL_DELAY * 2,
+        executeAt: expiredAt,
+        scheduledAt: expiredAt
+      });
+      await expect(adapter.iterate(new Date(Date.now() + 10 * INTERVAL_DELAY), createLock('recovery'), 'one')).resolves.toBe(1);
+      expect(harness.__execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears the claim on update so a completed interval can reset its schedule', async () => {
+      const adapter = await setupAdapter();
+      await claimDueInterval(adapter, 'completed-interval', Date.now() + 10 * INTERVAL_DELAY);
+      await expect(adapter.update({ uid: 'completed-interval' }, new Date(Date.now() + 10 * INTERVAL_DELAY))).resolves.toBe(true);
+      await expect(context.readTask('completed-interval')).resolves.toMatchObject({ claimLeaseId: null });
+      const before = Date.now();
+
+      await expect(adapter.add('completed-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const task = await context.readTask('completed-interval');
+      expectResetSchedule(task.executeAt, before);
+      expect(task.claimLeaseId).toBeNull();
+    });
+
+    it('fences update() on the claim lease so a stale run cannot overwrite a newer claim', async () => {
+      const adapter = await setupAdapter();
+      await claimDueInterval(adapter, 'fenced-interval', Date.now() - 100);
+      const staleRun = harness.__execute.mock.calls[0][0];
+      expect(staleRun.claimLeaseId).toEqual(expect.any(String));
+
+      const heldUntil = Date.now() + 10 * INTERVAL_DELAY;
+      await expect(adapter.iterate(new Date(heldUntil), createLock('recovery'), 'one')).resolves.toBe(1);
+      const currentRun = harness.__execute.mock.calls[1][0];
+      expect(currentRun.claimLeaseId).not.toBe(staleRun.claimLeaseId);
+
+      await expect(adapter.update(staleRun, new Date(Date.now() + INTERVAL_DELAY))).resolves.toBe(false);
+      await expect(context.readTask('fenced-interval')).resolves.toMatchObject({
+        executeAt: heldUntil,
+        claimLeaseId: currentRun.claimLeaseId
+      });
+
+      const nextRun = Date.now() + INTERVAL_DELAY;
+      await expect(adapter.update(currentRun, new Date(nextRun))).resolves.toBe(true);
+      await expect(context.readTask('fenced-interval')).resolves.toMatchObject({ executeAt: nextRun, claimLeaseId: null });
+      await expect(adapter.update(currentRun, new Date(nextRun + 1000))).resolves.toBe(false);
+    });
+
+    it('re-registers a claimed one-shot from now without retaining its lease', async () => {
+      const adapter = await setupAdapter();
+      await expect(adapter.add('claimed-timeout', false, -1000)).resolves.toBe(true);
+      await expect(adapter.iterate(new Date(Date.now() + 10 * INTERVAL_DELAY), createLock('one-shot'), 'one')).resolves.toBe(1);
+      const before = Date.now();
+
+      await expect(adapter.add('claimed-timeout', false, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const task = await context.readTask('claimed-timeout');
+      expectResetSchedule(task.executeAt, before);
+      expect(task.claimLeaseId).toBeNull();
     });
 
     it('resets to now + delay when an interval re-registers with a different delay', async () => {

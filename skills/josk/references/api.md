@@ -21,7 +21,7 @@ Constructs the scheduler and starts the first revolving tick from the constructo
 | `adapter` | `JoSkAdapter` | — | **Required.** Instance of `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, or a custom adapter that implements the contract. Throws if absent or not an object. |
 | `debug` | `boolean` | `false` | Emit `[DEBUG] [josk] …` logs to `console.info` during development. |
 | `onError` | `JoSkOnError` | `false` | Hook called instead of `console.error` for runtime exceptions and "task is missing" notices. `(title, { description, error, uid, task? }) => void \| Promise<void>`. **Strongly recommended.** |
-| `onExecuted` | `JoSkOnExecuted` | `false` | Informational hook called after each successful task run. `(uid, { uid, date, delay, timestamp }) => void \| Promise<void>`. The first `uid` argument has the `setInterval`/`setTimeout`/`setImmediate` suffix stripped; the inner one is the internal timer id. |
+| `onExecuted` | `JoSkOnExecuted` | `false` | Informational hook called after handler resolution, including after a caught error; it is not a success signal. `(uid, { uid, date, delay, timestamp }) => void \| Promise<void>`. The first `uid` argument has the `setInterval`/`setTimeout`/`setImmediate` suffix stripped; the inner one is the internal timer id. |
 | `autoClear` | `boolean` | `false` | When a task is found in storage but not in this instance's in-memory `tasks` map, remove it from storage. Useful when running multiple app versions with diverging task lists; risky if processes briefly out-of-sync should not delete each other's work. |
 | `zombieTime` | `number` (ms) | `900000` (15 min) | Time after which a held task is re-claimable. Sets the upper bound for handler runtime. Do not go below `60000`. |
 | `lockLeaseTime` | `number` (ms) | `min(zombieTime, 30000)` | TTL of the scheduler lease taken per claiming cycle. Floored at `2 * maxRevolvingDelay + 1000`. Keeps an uncleanly-dead lease holder from freezing the prefix for up to `zombieTime`; per-task atomic claims (governed by `zombieTime`) still prevent duplicate runs. Throws if not a positive finite number. |
@@ -81,7 +81,7 @@ Schedules a recurring task. The returned string is the internal timer id (the `u
 
 **Execution guarantee:** at-least-once per scheduled tick. The storage row for the task stays during execution; if the handler does not signal completion within `zombieTime`, the task is re-claimed and may run again. Make recurring handlers idempotent.
 
-**Re-registration:** every boot calls `setInterval` again. An existing interval with the same `delay` keeps its stored next run when that is earlier than `now + delay`, so restarts and rolling deploys do not postpone it. A past-due task runs on the first revolution after boot, and one instance claims it. New tasks and a changed `delay` schedule at `now + delay`. `josk@6.3.0` and earlier reset to `now + delay` on every call. CRON helpers pass a fresh `delay` each boot, so they move to the next CRON time as before.
+**Re-registration:** every boot calls `setInterval` again. An **unclaimed** interval with the same `delay` keeps its earlier stored next run, so restarts do not postpone it. A past-due task remains due. A **claimed** interval keeps its zombie recovery date even if the delay changes; after a kill, recovery may take the full `zombieTime`, not just `delay`. New tasks and changed-delay unclaimed tasks schedule at `now + delay`. If the delay changes during a run, that run's `ready()` can schedule one next tick using its captured old delay; later runs use the new delay. `josk@6.3.0` and earlier reset to `now + delay` on every call. CRON helpers should compute the next date after work finishes.
 
 ### `setTimeout(handler, delay, uid)` → `Promise<string>`
 
@@ -112,9 +112,11 @@ Both clear methods are safe to call after `destroy()` — they're the only publi
 
 ### `destroy()` → `boolean`
 
-Stops the internal revolving timer. Returns `true` the first time, `false` on subsequent calls. Does **not** remove tasks from storage — other live JoSk instances pick up the schedule. Methods other than `clearInterval` / `clearTimeout` on a destroyed instance trigger the `onError` hook (or a `_debug` log).
+Stops the internal revolving timer. Returns `true` the first time, `false` on subsequent calls. Tasks claimed but not started go back to storage. Does **not** await running handlers; a running interval keeps its claim until `zombieTime`. For process exit prefer `shutdown()`. Methods other than `clearInterval` / `clearTimeout` on a destroyed instance trigger the `onError` hook (or a `_debug` log).
 
-Call this before `process.exit()` for clean shutdown, especially in tests.
+### `shutdown({ timeout? })` → `Promise<boolean>`
+
+Since 6.4.0. Calls `destroy()`, waits up to `timeout` ms (default `10000`) for running handlers to call `ready()`, then hands unfinished interval claims back to storage (`executeAt = now`) so another instance runs them on its next poll, not after `zombieTime`. Resolves `true` if every handler finished in time. A late `ready()` from a handed-back run does not touch the schedule. Rejects on a negative or non-finite `timeout`. Keep `timeout` below the platform grace period (Kubernetes default 30s).
 
 ### `ping()` → `Promise<JoSkPingResult>`
 
@@ -156,8 +158,8 @@ The handler can be:
 
 - Call `ready()` with no args to mark the run complete and reschedule the next tick at `now + delay` (for intervals).
 - Call `ready(dateOrMs)` on an interval handler to override the next fire time — this is the hook used for CRON schedules.
-- Call `ready(callback)` to receive `(error: Error | undefined, success: boolean)` after the storage write — rarely needed.
-- Calling `ready` more than once throws `Resolution method is overspecified`. If a callback was passed, it's invoked with the error instead.
+- Call `ready(callback)` to receive `(error: Error | undefined, success: boolean)` immediately, before the interval storage write. Await the returned Promise if you need to know when the write completes.
+- Calling `ready` more than once rejects its Promise with `Resolution method is overspecified`. If a callback was passed, it's invoked with the error instead.
 
 `ready` returns a `Promise<boolean>` that resolves once the storage update has been written. Awaiting it is optional.
 
@@ -245,6 +247,7 @@ interface JoSkAdapter {
 | `setInterval` / `setTimeout` / `setImmediate` | `string` timer id | Empty string `''` if called on a destroyed instance. |
 | `clearInterval` / `clearTimeout` | `boolean` | `false` if the task was not present. |
 | `destroy` | `boolean` | `false` on subsequent calls (idempotent). |
+| `shutdown` | `boolean` | `false` if some handlers were still running at `timeout` and their interval claims were handed back. |
 | `ping` | `JoSkPingResult` | `code: 200` on success. |
 
 ## Input validation errors (thrown)
@@ -255,4 +258,4 @@ interface JoSkAdapter {
 | `setTimeout` | same as above |
 | `setImmediate` | first arg is not a function, `uid` is not a string |
 
-These are thrown synchronously *before* the returned Promise.
+These `async` methods reject the returned Promise; they do not throw synchronously.

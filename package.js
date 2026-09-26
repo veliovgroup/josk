@@ -46,8 +46,13 @@ Package.onUse((api) => {
   api.use('ecmascript', 'server');
   // TypeScript setup
   api.use(['zodern:types@1.0.13', 'typescript'], ['client', 'server'], { weak: true });
-  // For zodern:types to pick up our published types.
-  api.addAssets('index.d.ts', ['client', 'server']);
+  // Keep the root declaration and its relative adapter imports together.
+  api.addAssets([
+    'index.d.ts',
+    'adapters/mongo.d.ts',
+    'adapters/redis.d.ts',
+    'adapters/postgres.d.ts'
+  ], ['client', 'server']);
   api.mainModule('index.js', 'server');
 });
 

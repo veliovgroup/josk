@@ -8,6 +8,7 @@ CLAUDE.md
 .claude/
 .cursor/
 .cursorignore
+.superpowers/
 
 # Agent Skills source — distributed cross-tool via `npx skills add veliovgroup/josk` from GitHub, not in the npm tarball
 skills/

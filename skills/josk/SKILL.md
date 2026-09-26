@@ -14,7 +14,7 @@ If `package.json` pins `josk` below `6.0.0`, or the runtime is Node < 20.9 (Node
 
 ## Quick start
 
-JoSk does not open connections — pass a connected client. Always wire `onError` and `destroy()` on shutdown. Read [references/](references/) lazily; do not guess v4/v5/v6 semantics from memory.
+JoSk does not open connections — pass a connected client. Always wire `onError` and `await jobs.shutdown()` on process exit. Read [references/](references/) lazily; do not guess v4/v5/v6 semantics from memory.
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -29,7 +29,7 @@ const jobs = new JoSk({
 });
 
 await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m');
-// jobs.pause() / jobs.resume() / jobs.destroy()
+// jobs.pause() / jobs.resume() / await jobs.shutdown({ timeout: 10_000 })
 ```
 
 ## Reference map

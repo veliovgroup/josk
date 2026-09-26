@@ -39,7 +39,7 @@ const jobs = new JoSk({
 | `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` or `redis@^5` client. Either `RedisClientType` or `RedisClusterType`. |
 | `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+$/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
 | `resetOnInit` | `boolean` | `false` | Deletes all keys under this prefix on init. Local-dev / single-instance recovery only. Disastrous in clustered prod. |
-| `useHashTags` | `boolean` | `false` | Redis / KeyDB / Valkey Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps standalone keys (`josk:prefix:*`). |
+| `useHashTags` | `boolean` | `false` | Redis / KeyDB / Valkey Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps standalone keys (`josk:prefix:*`). Cluster client without it → constructor throws. |
 
 ### Keys created (for `prefix: 'app'`)
 
@@ -253,7 +253,7 @@ interface JoSkAdapter {
 - **Atomic due-task claim.** Do not `find all due → update later`. Use a single atomic operation (Lua, `FOR UPDATE SKIP LOCKED`, atomic `findOneAndUpdate`) to claim and return the task in one round-trip.
 - **`iterate(nextExecuteAt, lock, executeMode)`** is the entry point JoSk calls each tick. Claim one task (for `executeMode === 'one'`) or as many as the lease lets you (`executeMode === 'batch'`) and call `this.joskInstance.__execute(task)` **fire-and-forget** for each — JoSk handles internal concurrency and error wrapping.
 - **Storage-server time** for lease comparisons. Mixed client clocks across a cluster cause incorrect lock ownership. See `adapters/postgres.js` for the `CURRENT_TIMESTAMP` pattern.
-- **`add()` keeps an unchanged interval's schedule.** When an existing, non-deleted interval re-registers with the same `delay`, keep its stored `executeAt` if it is earlier than `now + delay`; otherwise store `now + delay`. Do it in one atomic operation and update every copy of the schedule (the Redis adapter writes the task hash and the schedule ZSET). One-shot tasks always store `now + delay`. Unconditional resets let restarts of any instance postpone intervals cluster-wide.
+- **`add()` keeps an unchanged unclaimed interval's earlier schedule.** Built-in adapters also preserve a claimed interval's zombie deadline on re-registration, regardless of delay, using the existing `claimLeaseId`/`claim_lease_id` marker. `update()` clears that marker with the new schedule. Custom adapters need not use this field but should avoid shortening active claims. Update every stored copy of the schedule atomically (Redis hash and ZSET). One-shot tasks store `now + delay`.
 - **`ready()`** is optional but recommended for adapters that need to create schemas, indexes, or run migrations before the first storage op.
 
 ### Task object shape (what to pass to `__execute`)

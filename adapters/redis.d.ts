@@ -1,4 +1,29 @@
-export type RedisClient = import("redis").RedisClientType | import("redis").RedisClusterType;
+export type RedisBaseClient = {
+    del: (keys: string[]) => Promise<unknown>;
+    eval: (script: string, options: {
+        keys: string[];
+        arguments: string[];
+    }) => Promise<unknown>;
+    scriptLoad?: ((script: string) => Promise<string>) | undefined;
+    evalSha?: ((sha: string, options: {
+        keys: string[];
+        arguments: string[];
+    }) => Promise<unknown>) | undefined;
+};
+export type RedisStandaloneClient = {
+    scanIterator: (options: {
+        MATCH: string;
+        COUNT: number;
+    }) => AsyncIterable<string | string[]>;
+    ping: () => Promise<string>;
+};
+export type RedisClusterClient = {
+    masters: readonly unknown[];
+    getRandomNode: () => unknown;
+    nodeClient: (...args: never[]) => unknown;
+    sendCommand?: ((firstKey: string, isReadonly: boolean, args: string[]) => Promise<unknown>) | undefined;
+};
+export type RedisClientLike = RedisBaseClient & (RedisStandaloneClient | RedisClusterClient);
 export type JoSk = import("../index.js").JoSk;
 export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
 export type JoSkLock = import("../index.js").JoSkLock;
@@ -8,8 +33,8 @@ export type AdapterPingResult = {
     statusCode: number;
     error?: unknown;
 };
-export type RedisAdapterOption = {
-    client: RedisClient;
+export type RedisAdapterOption<C extends RedisClientLike = RedisClientLike> = {
+    client: C;
     prefix?: string | undefined;
     resetOnInit?: boolean | undefined;
     /**
@@ -23,14 +48,18 @@ export type RedisTask = {
     executeAt: number;
     isInterval: boolean;
     isDeleted: boolean;
+    claimLeaseId?: string | undefined;
 };
-/** Class representing Redis adapter for JoSk */
-export class RedisAdapter {
+/**
+ * Class representing Redis adapter for JoSk
+ * @template {RedisClientLike} [C=RedisClientLike]
+ */
+export class RedisAdapter<C extends RedisClientLike = RedisClientLike> {
     /**
      * Create a RedisAdapter instance
-     * @param {RedisAdapterOption} opts - configuration object
+     * @param {RedisAdapterOption<C>} opts - configuration object
      */
-    constructor(opts?: RedisAdapterOption);
+    constructor(opts?: RedisAdapterOption<C>);
     name: string;
     prefix: string;
     useHashTags: boolean;
@@ -39,8 +68,8 @@ export class RedisAdapter {
     scheduleKey: string;
     tasksKey: string;
     resetOnInit: boolean;
-    /** @type {RedisClient} */
-    client: RedisClient;
+    /** @type {C} */
+    client: C;
     /**
      * @returns {Promise<void>}
      */
@@ -76,12 +105,14 @@ export class RedisAdapter {
      */
     add(uid: string, isInterval: boolean, delay: number): Promise<boolean>;
     /**
-     * @param {{ uid: string }} task
+     * Skips the write when `task.claimLeaseId` no longer matches storage.
+     * @param {{ uid: string, claimLeaseId?: string }} task
      * @param {Date} nextExecuteAt
      * @returns {Promise<boolean>}
      */
     update(task: {
         uid: string;
+        claimLeaseId?: string;
     }, nextExecuteAt: Date): Promise<boolean>;
     /**
      * @param {Date} nextExecuteAt
