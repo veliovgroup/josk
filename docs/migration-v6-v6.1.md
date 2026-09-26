@@ -16,7 +16,7 @@ If you ran v5/v6.0 on a Redis Cluster or KeyDB Cluster: opt into `useHashTags: t
 
 ## When to enable `useHashTags`
 
-Use `useHashTags: true` when JoSk runs against **Redis Cluster** or **KeyDB Cluster**, so Lua scripts that touch `schedule`, `tasks`, and `lock` keys stay in one hash slot. Standalone Redis / single-primary KeyDB can keep the default (`false`).
+Use `useHashTags: true` when JoSk runs against Redis Cluster so Lua scripts that touch `schedule`, `tasks`, and `lock` keys stay in one hash slot. The same requirement applies to KeyDB/Valkey Cluster, but CI cluster coverage uses Redis only. Standalone Redis-compatible servers can keep the default (`false`).
 
 ## Key migration
 
