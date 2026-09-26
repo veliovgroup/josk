@@ -1,4 +1,28 @@
-export type RedisClient = import("redis").RedisClientType | import("redis").RedisClusterType;
+export type RedisBaseClient = {
+    del: (keys: string[]) => Promise<unknown>;
+    eval: (script: string, options: {
+        keys: string[];
+        arguments: string[];
+    }) => Promise<unknown>;
+    scriptLoad?: ((script: string) => Promise<string>) | undefined;
+    evalSha?: ((sha: string, options: {
+        keys: string[];
+        arguments: string[];
+    }) => Promise<unknown>) | undefined;
+};
+export type RedisStandaloneClient = {
+    scanIterator: (options: {
+        MATCH: string;
+        COUNT: number;
+    }) => AsyncIterable<string | string[]>;
+    ping: () => Promise<string>;
+};
+export type RedisClusterClient = {
+    masters: readonly unknown[];
+    getRandomNode: () => unknown;
+    nodeClient: (...args: never[]) => unknown;
+};
+export type RedisClientLike = RedisBaseClient & (RedisStandaloneClient | RedisClusterClient);
 export type JoSk = import("../index.js").JoSk;
 export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
 export type JoSkLock = import("../index.js").JoSkLock;
@@ -8,8 +32,8 @@ export type AdapterPingResult = {
     statusCode: number;
     error?: unknown;
 };
-export type RedisAdapterOption = {
-    client: RedisClient;
+export type RedisAdapterOption<C extends RedisClientLike = RedisClientLike> = {
+    client: C;
     prefix?: string | undefined;
     resetOnInit?: boolean | undefined;
     /**
@@ -24,13 +48,16 @@ export type RedisTask = {
     isInterval: boolean;
     isDeleted: boolean;
 };
-/** Class representing Redis adapter for JoSk */
-export class RedisAdapter {
+/**
+ * Class representing Redis adapter for JoSk
+ * @template {RedisClientLike} [C=RedisClientLike]
+ */
+export class RedisAdapter<C extends RedisClientLike = RedisClientLike> {
     /**
      * Create a RedisAdapter instance
-     * @param {RedisAdapterOption} opts - configuration object
+     * @param {RedisAdapterOption<C>} opts - configuration object
      */
-    constructor(opts?: RedisAdapterOption);
+    constructor(opts?: RedisAdapterOption<C>);
     name: string;
     prefix: string;
     useHashTags: boolean;
@@ -39,8 +66,8 @@ export class RedisAdapter {
     scheduleKey: string;
     tasksKey: string;
     resetOnInit: boolean;
-    /** @type {RedisClient} */
-    client: RedisClient;
+    /** @type {C} */
+    client: C;
     /**
      * @returns {Promise<void>}
      */

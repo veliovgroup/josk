@@ -24,10 +24,12 @@ const setCron = async (uniqueName, cronExpr, task) => {
   // Guard against clock skew: the parsed "next" can land in the recent past.
   const initialDelay = Math.max(0, +next - Date.now());
 
-  return jobsCron.setInterval((ready) => {
-    const upcoming = CronExpressionParser.parse(cronExpr).next().toDate();
-    ready(upcoming);     // schedule the *next* tick at the parsed CRON time
-    task();              // and run the user's work
+  return jobsCron.setInterval(async (ready) => {
+    try {
+      await task();
+    } finally {
+      await ready(CronExpressionParser.parse(cronExpr).next().toDate());
+    }
   }, initialDelay, uniqueName);
 };
 

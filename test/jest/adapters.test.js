@@ -225,6 +225,24 @@ describe('RedisAdapter unit coverage', () => {
     expect(client.del).toHaveBeenCalledWith(['josk:reset-v5:task:a', 'josk:reset-v5:task:b']);
   });
 
+  it('resets legacy keys and pings through a Redis Cluster node without root scanIterator/ping', async () => {
+    const cluster = createRedisClient();
+    const shard = { id: 'shard' };
+    const node = createRedisClient({ scanKeys: ['josk:{cluster}:task:legacy'] });
+    delete cluster.scanIterator;
+    delete cluster.ping;
+    cluster.masters = [shard];
+    cluster.getRandomNode = () => shard;
+    cluster.nodeClient = jest.fn(async () => node);
+    const adapter = new RedisAdapter({ client: cluster, prefix: 'cluster', useHashTags: true, resetOnInit: true });
+    adapter.joskInstance = createHarness();
+
+    await adapter.ready();
+    await expect(adapter.ping()).resolves.toMatchObject({ code: 200 });
+    expect(cluster.del).toHaveBeenCalledWith(['josk:{cluster}:task:legacy']);
+    expect(cluster.nodeClient).toHaveBeenCalledWith(shard);
+  });
+
   it('reports ping states before assignment and on unexpected replies', async () => {
     const client = createRedisClient();
     const unassigned = new RedisAdapter({
@@ -880,18 +898,16 @@ describe('MongoAdapter unit coverage', () => {
     expect(stage.isInterval).toBe(true);
     expect(stage.isDeleted).toBe(false);
 
-    const [condition, keep, fallback] = stage.executeAt.$cond;
-    const next = fallback.$literal;
-    expect(keep).toBe('$executeAt');
+    const [activeClaim, keepClaimed, unclaimedSchedule] = stage.executeAt.$cond;
+    const [unchangedInterval, keepEarlier, resetSchedule] = unclaimedSchedule.$cond;
+    const next = resetSchedule.$literal;
+    expect(activeClaim.$and).toContainEqual({ $eq: [{ $type: '$claimLeaseId' }, 'string'] });
+    expect(keepClaimed).toBe('$executeAt');
+    expect(keepEarlier).toBe('$executeAt');
+    expect(unchangedInterval.$and).toContainEqual({ $eq: ['$delay', { $literal: INTERVAL_DELAY }] });
+    expect(stage.claimLeaseId.$cond).toEqual([activeClaim, '$claimLeaseId', '$$REMOVE']);
     expect(next).toBeInstanceOf(Date);
     expectResetSchedule(+next, before);
-    expect(condition.$and).toEqual([
-      { $eq: ['$isInterval', true] },
-      { $eq: ['$isDeleted', false] },
-      { $eq: ['$delay', { $literal: INTERVAL_DELAY }] },
-      { $eq: [{ $type: '$executeAt' }, 'date'] },
-      { $lt: ['$executeAt', { $literal: next }] }
-    ]);
   });
 
   it('add(timeout) keeps the plain $set upsert that always resets executeAt', async () => {
@@ -1262,7 +1278,9 @@ describe('PostgresAdapter unit coverage', () => {
     const [intervalQuery, timeoutQuery] = addQueries;
     const sql = intervalQuery.sql.replace(/\s+/g, ' ');
     expect(sql).toContain('ON CONFLICT (prefix, uid) DO UPDATE SET');
-    expect(sql).toContain('execute_at = CASE WHEN EXCLUDED.is_interval = true AND josk_tasks.is_interval = true AND josk_tasks.is_deleted = false AND josk_tasks.delay = EXCLUDED.delay AND josk_tasks.execute_at < EXCLUDED.execute_at THEN josk_tasks.execute_at ELSE EXCLUDED.execute_at END');
+    expect(sql).toContain("josk_tasks.claim_lease_id IS NOT NULL AND josk_tasks.claim_lease_id <> '' THEN josk_tasks.execute_at");
+    expect(sql).toContain('josk_tasks.delay = EXCLUDED.delay AND josk_tasks.execute_at < EXCLUDED.execute_at THEN josk_tasks.execute_at');
+    expect(sql).toContain('claim_lease_id = CASE');
     expect(intervalQuery.values.slice(0, 3)).toEqual([adapter.prefix, 'postgres-add-interval', INTERVAL_DELAY]);
     expectResetSchedule(intervalQuery.values[3], before);
     expect(intervalQuery.values[4]).toBe(true);
@@ -1503,6 +1521,7 @@ const adapterSuites = [{
           delay: Number(task.delay),
           executeAt: Number(task.executeAt),
           scheduledAt: score === null ? null : Number(score),
+          claimLeaseId: task.claimLeaseId ?? null,
           isInterval: task.isInterval === true,
           isDeleted: task.isDeleted === true
         };
@@ -1546,6 +1565,7 @@ const adapterSuites = [{
           delay: Number(task.delay),
           executeAt: +task.executeAt,
           scheduledAt: +task.executeAt,
+          claimLeaseId: task.claimLeaseId ?? null,
           isInterval: task.isInterval === true,
           isDeleted: task.isDeleted === true
         };
@@ -1581,7 +1601,7 @@ const adapterSuites = [{
       revivesDeletedTasks: true,
       async readTask(uid) {
         const res = await client.query(
-          'SELECT delay, execute_at, is_interval, is_deleted FROM josk_tasks WHERE prefix = $1 AND uid = $2',
+          'SELECT delay, execute_at, is_interval, is_deleted, claim_lease_id FROM josk_tasks WHERE prefix = $1 AND uid = $2',
           [adapter.prefix, uid]
         );
         const task = res.rows[0];
@@ -1592,6 +1612,7 @@ const adapterSuites = [{
           delay: Number(task.delay),
           executeAt: Number(task.execute_at),
           scheduledAt: Number(task.execute_at),
+          claimLeaseId: task.claim_lease_id,
           isInterval: task.is_interval === true,
           isDeleted: task.is_deleted === true
         };
@@ -1747,6 +1768,87 @@ for (const suite of adapterSuites) {
       const task = await context.readTask('interval-later');
       expectResetSchedule(task.executeAt, before);
       expect(task.scheduledAt).toBe(task.executeAt);
+    });
+
+    const claimDueInterval = async (adapter, uid, heldUntil) => {
+      await expect(adapter.add(uid, true, INTERVAL_DELAY)).resolves.toBe(true);
+      await expect(adapter.update({ uid }, new Date(Date.now() - 1000))).resolves.toBe(true);
+      await expect(adapter.iterate(new Date(heldUntil), createLock('running-owner'), 'one')).resolves.toBe(1);
+      return await context.readTask(uid);
+    };
+
+    it('keeps a claimed interval parked during re-registration so a peer cannot run it early', async () => {
+      const adapter = await setupAdapter();
+      const heldUntil = Date.now() + 10 * INTERVAL_DELAY;
+      const claimed = await claimDueInterval(adapter, 'claimed-interval', heldUntil);
+      expect(claimed.claimLeaseId).toEqual(expect.any(String));
+
+      await expect(adapter.add('claimed-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      await expect(context.readTask('claimed-interval')).resolves.toMatchObject({
+        executeAt: heldUntil,
+        scheduledAt: heldUntil,
+        claimLeaseId: claimed.claimLeaseId
+      });
+      await expect(adapter.iterate(new Date(Date.now() + INTERVAL_DELAY), createLock('peer'), 'one')).resolves.toBe(0);
+      expect(harness.__execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves an active claim when the interval delay changes', async () => {
+      const adapter = await setupAdapter();
+      const heldUntil = Date.now() + 10 * INTERVAL_DELAY;
+      const claimed = await claimDueInterval(adapter, 'claimed-new-delay', heldUntil);
+
+      await expect(adapter.add('claimed-new-delay', true, INTERVAL_DELAY * 2)).resolves.toBe(true);
+
+      await expect(context.readTask('claimed-new-delay')).resolves.toMatchObject({
+        delay: INTERVAL_DELAY * 2,
+        executeAt: heldUntil,
+        scheduledAt: heldUntil,
+        claimLeaseId: claimed.claimLeaseId
+      });
+    });
+
+    it('leaves an expired claim due after a delay change', async () => {
+      const adapter = await setupAdapter();
+      const expiredAt = Date.now() - 100;
+      await claimDueInterval(adapter, 'expired-claim', expiredAt);
+
+      await expect(adapter.add('expired-claim', true, INTERVAL_DELAY * 2)).resolves.toBe(true);
+      await expect(context.readTask('expired-claim')).resolves.toMatchObject({
+        delay: INTERVAL_DELAY * 2,
+        executeAt: expiredAt,
+        scheduledAt: expiredAt
+      });
+      await expect(adapter.iterate(new Date(Date.now() + 10 * INTERVAL_DELAY), createLock('recovery'), 'one')).resolves.toBe(1);
+      expect(harness.__execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears the claim on update so a completed interval can reset its schedule', async () => {
+      const adapter = await setupAdapter();
+      await claimDueInterval(adapter, 'completed-interval', Date.now() + 10 * INTERVAL_DELAY);
+      await expect(adapter.update({ uid: 'completed-interval' }, new Date(Date.now() + 10 * INTERVAL_DELAY))).resolves.toBe(true);
+      await expect(context.readTask('completed-interval')).resolves.toMatchObject({ claimLeaseId: null });
+      const before = Date.now();
+
+      await expect(adapter.add('completed-interval', true, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const task = await context.readTask('completed-interval');
+      expectResetSchedule(task.executeAt, before);
+      expect(task.claimLeaseId).toBeNull();
+    });
+
+    it('re-registers a claimed one-shot from now without retaining its lease', async () => {
+      const adapter = await setupAdapter();
+      await expect(adapter.add('claimed-timeout', false, -1000)).resolves.toBe(true);
+      await expect(adapter.iterate(new Date(Date.now() + 10 * INTERVAL_DELAY), createLock('one-shot'), 'one')).resolves.toBe(1);
+      const before = Date.now();
+
+      await expect(adapter.add('claimed-timeout', false, INTERVAL_DELAY)).resolves.toBe(true);
+
+      const task = await context.readTask('claimed-timeout');
+      expectResetSchedule(task.executeAt, before);
+      expect(task.claimLeaseId).toBeNull();
     });
 
     it('resets to now + delay when an interval re-registers with a different delay', async () => {

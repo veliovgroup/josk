@@ -148,7 +148,7 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
 - `opts.adapter` {*RedisAdapter*|*MongoAdapter*|*PostgresAdapter*} - [Required] Instance of adapter or [custom](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md)
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove (*Clear*) obsolete tasks (*any tasks which are not found in the instance memory (runtime), but exists in the database*). Obsolete tasks may appear in cases when it wasn't cleared from the database on process shutdown, and/or was removed/renamed in the app. Obsolete tasks may appear if multiple app instances running different codebase within the same database, and the task may not exist on one of the instances. Default: `false`
-- `opts.zombieTime` {*Number*} - [Optional] time in milliseconds, after this time - task will be interpreted as "*zombie*". This parameter allows to rescue task from "*zombie* mode" in case when: `ready()` wasn't called, exception during runtime was thrown, or caused by bad logic. While `resetOnInit` option helps to make sure tasks are `done` on startup, `zombieTime` option helps to solve same issue, but during runtime. Default value is `900000` (*15 minutes*). It's not recommended to set this value to below `60000` (*one minute*)
+- `opts.zombieTime` {*Number*} - [Optional] interval recovery hold in milliseconds when a handler never calls `ready()` or its process dies. Caught handler errors are reported to `onError` and auto-completed; they do not wait for zombie recovery. Default: `900000` (15 minutes). Keep it above the slowest legitimate handler runtime plus margin; below `60000` (one minute) is not recommended.
 - `opts.lockLeaseTime` {*Number*} - [Optional] Scheduler lease TTL in milliseconds. Default: `min(zombieTime, 30000)`, floored at `2 * maxRevolvingDelay + 1000`. See [v6.3 migration notes](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.2-v6.3.md)
 - `opts.execute` {*String*} - [Optional] due-task execution mode. Use `one` to claim and run one task per scheduler lease, or `batch` to drain all currently due tasks under same lease. Default: `batch`
 - `opts.concurrency` {*Number*} - [Optional] maximum number of task handlers that can run in parallel. Use a positive integer to cap parallelism (useful when handlers share rate-limited resources like the same DB the adapter uses); use `Infinity` to disable throttling. Default: `Infinity`
@@ -162,7 +162,7 @@ Constructor options for *JoSk*, *RedisAdapter*, *MongoAdapter*, *PostgresAdapter
   - `details.error` {*Mix*}
   - `details.uid` {*String*} - Internal `uid`, suitable for `.clearInterval()` and `.clearTimeout()`
   - `details.task` {*Mix*} - Present only for malformed-task errors; the offending task payload
-- `opts.onExecuted` {*Function*} - [Optional] Informational hook, called when task is finished. Default: `false`. Called with two arguments:
+- `opts.onExecuted` {*Function*} - [Optional] Informational hook, called when a handler signals completion, including after a caught error. It does not indicate success. Default: `false`. Called with two arguments:
   - `uid` {*String*} - `uid` passed into `.setImmediate()`, `.setTimeout()`, or `setInterval()` methods
   - `details` {*Object*}
   - `details.uid` {*String*} - Internal `uid`, suitable for `.clearInterval()` and `.clearTimeout()`
@@ -357,7 +357,7 @@ jobs.setInterval(task, 2 * 60000, 'task-2m'); // every two minutes
 
 *Set task into interval execution loop.* `ready()` *callback is passed as the first argument into a task function.*
 
-When an active interval with a valid stored `executeAt` is registered again with the same `delay`, JoSk schedules the earlier of that timestamp and `now + delay`. A due or past-due interval becomes eligible on the first scheduler revolution after boot. New intervals and intervals registered with a different `delay` start at `now + delay`. `setTimeout()` and `setImmediate()` schedule from registration time. To restart an interval's countdown, clear it before registering it again or change its `delay`. The [CRON helper](#cron) computes a new delay on each boot and schedules the next CRON occurrence.
+When an **unclaimed** interval is registered again with the same `delay`, JoSk keeps the earlier of its stored `executeAt` and `now + delay`. A due interval stays eligible on the first scheduler revolution after boot. A **claimed** interval keeps its zombie recovery deadline even if the delay changes. New and unclaimed changed-delay intervals start at `now + delay`; `setTimeout()` and `setImmediate()` schedule from registration time. To restart an unclaimed interval's countdown, clear it before registering it again or change its `delay`. The [CRON helper](#cron) computes a new delay on each boot.
 
 In the example below, the next task __will not be scheduled__ until the current is ready:
 
@@ -442,24 +442,27 @@ jobs.setInterval(function (ready) {
 - `ready()` — schedule the next interval run at `now + delay` (default).
 - `ready(date)` — `Date` instance; schedule the next interval run at that exact wall-clock moment. Only honored for `setInterval`; `setTimeout`/`setImmediate` are at-most-once and have already been removed before the handler ran. This is the building block for CRON expressions — pair with [`cron-parser`](https://www.npmjs.com/package/cron-parser).
 - `ready(timestamp)` — numeric ms-epoch; same as above.
-- `ready(callback)` — Node-style callback `(error, success) => void`. Useful for non-async handlers that prefer not to use the returned `Promise`.
+- `ready(callback)` — Node-style callback `(error, success) => void`. It fires before the interval storage update; await the returned Promise if you need to wait for persistence.
 
-Calling `ready()` twice throws (or invokes the callback with `error`) — *"Resolution method is overspecified"*. Either return a `Promise` from the handler **or** call `ready()` once, never both.
+Calling `ready()` twice rejects its returned Promise (or invokes the callback with `error`) — *"Resolution method is overspecified"*. Call `ready()` at most once per execution.
 
 For zero-arity handlers (`async function () { … }` or `() => doSomething()`), JoSk auto-calls `ready()` for you when the returned Promise settles. You only need to call `ready()` manually when the handler accepts it as an argument.
 
 ```js
 import { CronExpressionParser } from 'cron-parser';
 
-const intervalCron = (job, cronExpr, uid) => {
+const intervalCron = (jobs, job, cronExpr, uid) => {
   const next = () => CronExpressionParser.parse(cronExpr).next().toDate();
-  return jobs.setInterval(function (ready) {
-    job();
-    ready(next()); // schedule the next run at the cron's next fire time
+  return jobs.setInterval(async (ready) => {
+    try {
+      await job();
+    } finally {
+      await ready(next()); // schedule even if the task fails
+    }
   }, Math.max(0, +next() - Date.now()), uid);
 };
 
-intervalCron(() => sendReport(), '0 9 * * *', 'daily-report-9am');
+// Pass the configured JoSk instance as `jobs` (see Initialization above).
 ```
 
 ### `setTimeout(func, delay, uid)`
@@ -640,7 +643,7 @@ Different scheduling methods have different at-least-once / at-most-once guarant
 | `setTimeout(func, delay, uid)` | **At-most-once** across the cluster | Task is removed from storage *before* the handler runs. If the process dies between removal and completion, the run is lost. |
 | `setInterval(func, delay, uid)` | **At-least-once** per scheduled tick (until cleared) | Storage row stays during execution. If `ready()` is not called within `zombieTime`, the task is re-claimed and may run again. Make your handler idempotent. |
 
-`zombieTime` is the safety net for stuck handlers. Choose it long enough to cover your slowest legitimate handler, plus storage round-trip overhead. Default `900000` ms (15 minutes).
+`zombieTime` is the safety net for stuck handlers. Choose it long enough to cover your slowest legitimate handler, plus storage round-trip overhead. Default `900000` ms (15 minutes). Re-registering an already claimed interval preserves its recovery deadline: after an unclean kill it may wait the full `zombieTime`, rather than recovering after `delay`. This prevents a rolling restart from making a still-running handler eligible early. See [monitoring and recovery](docs/monitoring.md).
 
 `execute` controls how the scheduler drains the work queue under a single lease:
 
@@ -682,6 +685,8 @@ Use cases and usage examples
 Use JoSk to invoke synchronized tasks by CRON schedule, and the [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON expressions. The example below uses `cron-parser@^5` (v5 renamed the entrypoint to the `CronExpressionParser.parse()` static method).
 
 ```js
+import { JoSk, RedisAdapter } from 'josk';
+import { createClient } from 'redis';
 import { CronExpressionParser } from 'cron-parser';
 
 const jobsCron = new JoSk({
@@ -699,10 +704,12 @@ const setCron = async (uniqueName, cronTask, task) => {
   // Guard against clock skew: parsed "next" can land in the recent past.
   const initialDelay = Math.max(0, +next - Date.now());
 
-  return await jobsCron.setInterval(function (ready) {
-    const upcoming = CronExpressionParser.parse(cronTask).next().toDate();
-    ready(upcoming);
-    task();
+  return await jobsCron.setInterval(async (ready) => {
+    try {
+      await task();
+    } finally {
+      await ready(CronExpressionParser.parse(cronTask).next().toDate());
+    }
   }, initialDelay, uniqueName);
 };
 
@@ -822,7 +829,7 @@ For replica-set tuning, dedicated-DB recommendations, the maintained index inven
 
 ### How do I monitor stuck tasks?
 
-Set a long-running task to throw or skip `ready()` past `zombieTime`. The `onError` hook fires with `'One of your tasks is missing'` (only if `autoClear: false`). For active observability, query the storage directly: Redis `HLEN josk:prefix:tasks` (or `HLEN josk:{prefix}:tasks` with `useHashTags: true`), Mongo `db.__JobTasks__<prefix>.countDocuments({ executeAt: { $lt: new Date() } })`, Postgres `SELECT COUNT(*) FROM josk_tasks WHERE prefix='<prefix>' AND execute_at < (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT`.
+A registered interval that does not call `ready()` becomes eligible for another claim after `zombieTime`; that recovery does not itself fire `onError`. The `'One of your tasks is missing'` notice means this instance has no handler registered for a task it claimed. Past-due timestamps alone measure backlog, not stuck work. To inspect claims near their recovery deadline, see [monitoring](docs/monitoring.md).
 
 ### How do I handle storage restarts?
 

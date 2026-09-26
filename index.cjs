@@ -10,8 +10,9 @@ const crypto = require('crypto');
 // `Db.command()`, and `Collection` APIs, but are not officially supported.
 
 /**
- * @typedef {import('mongodb').Collection} Collection
- * @typedef {import('mongodb').Db} Db
+ * @typedef {object} MongoDbLike
+ * @property {(name: string) => object} collection
+ * @property {(command: { ping: number }) => Promise<unknown>} command
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
  * @typedef {import('../index.js').JoSkLock} JoSkLock
@@ -26,8 +27,9 @@ const crypto = require('crypto');
  */
 
 /**
+ * @template {MongoDbLike} [D=MongoDbLike]
  * @typedef {object} MongoAdapterOption
- * @property {Db} db
+ * @property {D} db
  * @property {string} [lockCollectionName]
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
@@ -50,7 +52,7 @@ const logError = (error, ...args) => {
 };
 
 /**
- * @param {Collection} collection
+ * @param {object} collection
  * @param {object} keys
  * @param {object} opts
  * @returns {Promise<void>}
@@ -90,40 +92,58 @@ const ensureIndex = async (collection, keys, opts) => {
 };
 
 /**
- * Update pipeline for re-registering an interval. Keeps the stored `executeAt`
- * when the task is an existing, non-deleted interval with the same `delay` and
- * the stored time is earlier than `executeAt`; otherwise schedules `executeAt`.
+ * Update pipeline for re-registering an interval. Preserve a claimed task's
+ * recovery deadline; otherwise keep an unchanged interval's earlier schedule.
  * Field references inside one `$set` stage read the pre-update document.
  * @param {string} uid
  * @param {number} delay
  * @param {Date} executeAt
  * @returns {object[]}
  */
-const intervalUpsertPipeline = (uid, delay, executeAt) => [{
-  $set: {
-    executeAt: {
-      $cond: [{
-        $and: [
-          { $eq: ['$isInterval', true] },
-          { $eq: ['$isDeleted', false] },
-          { $eq: ['$delay', { $literal: delay }] },
-          { $eq: [{ $type: '$executeAt' }, 'date'] },
-          { $lt: ['$executeAt', { $literal: executeAt }] }
-        ]
-      }, '$executeAt', { $literal: executeAt }]
-    },
-    uid: { $literal: uid },
-    delay: { $literal: delay },
-    isInterval: true,
-    isDeleted: false
-  }
-}];
+const intervalUpsertPipeline = (uid, delay, executeAt) => {
+  const existingInterval = [
+    { $eq: ['$isInterval', true] },
+    { $eq: ['$isDeleted', false] },
+    { $eq: [{ $type: '$executeAt' }, 'date'] }
+  ];
+  const activeClaim = {
+    $and: [
+      ...existingInterval,
+      { $eq: [{ $type: '$claimLeaseId' }, 'string'] },
+      { $ne: ['$claimLeaseId', ''] }
+    ]
+  };
 
-/** Class representing MongoDB adapter for JoSk */
+  return [{
+    $set: {
+      executeAt: {
+        $cond: [activeClaim, '$executeAt', {
+          $cond: [{
+            $and: [
+              ...existingInterval,
+              { $eq: ['$delay', { $literal: delay }] },
+              { $lt: ['$executeAt', { $literal: executeAt }] }
+            ]
+          }, '$executeAt', { $literal: executeAt }]
+        }]
+      },
+      claimLeaseId: { $cond: [activeClaim, '$claimLeaseId', '$$REMOVE'] },
+      uid: { $literal: uid },
+      delay: { $literal: delay },
+      isInterval: true,
+      isDeleted: false
+    }
+  }];
+};
+
+/**
+ * Class representing MongoDB adapter for JoSk
+ * @template {MongoDbLike} [D=MongoDbLike]
+ */
 class MongoAdapter {
   /**
    * Create a MongoAdapter instance
-   * @param {MongoAdapterOption} opts - configuration object
+   * @param {MongoAdapterOption<D>} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'mongo';
@@ -137,12 +157,12 @@ class MongoAdapter {
       });
     }
 
-    /** @type {Db} */
+    /** @type {D} */
     this.db = opts.db;
     this.uniqueName = `__JobTasks__${this.prefix}`;
-    /** @type {Collection} */
+    /** @type {ReturnType<D['collection']>} */
     this.collection = opts.db.collection(this.uniqueName);
-    /** @type {Collection} */
+    /** @type {ReturnType<D['collection']>} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
@@ -330,7 +350,8 @@ class MongoAdapter {
           executeAt,
           isInterval,
           isDeleted: false
-        }
+        },
+        $unset: { claimLeaseId: '' }
       }, {
         upsert: true
       });
@@ -364,9 +385,8 @@ class MongoAdapter {
         uid: task.uid,
         isDeleted: false
       }, {
-        $set: {
-          executeAt: nextExecuteAt
-        }
+        $set: { executeAt: nextExecuteAt },
+        $unset: { claimLeaseId: '' }
       });
       return (updateResult?.matchedCount || 0) >= 1;
     } catch (opError) {
@@ -541,7 +561,19 @@ class MongoAdapter {
 }
 
 /**
- * @typedef {import('redis').RedisClientType | import('redis').RedisClusterType} RedisClient
+ * @typedef {object} RedisBaseClient
+ * @property {(keys: string[]) => Promise<unknown>} del
+ * @property {(script: string, options: { keys: string[], arguments: string[] }) => Promise<unknown>} eval
+ * @property {(script: string) => Promise<string>} [scriptLoad]
+ * @property {(sha: string, options: { keys: string[], arguments: string[] }) => Promise<unknown>} [evalSha]
+ * @typedef {object} RedisStandaloneClient
+ * @property {(options: { MATCH: string, COUNT: number }) => AsyncIterable<string | string[]>} scanIterator
+ * @property {() => Promise<string>} ping
+ * @typedef {object} RedisClusterClient
+ * @property {readonly unknown[]} masters
+ * @property {() => unknown} getRandomNode
+ * @property {(...args: never[]) => unknown} nodeClient
+ * @typedef {RedisBaseClient & (RedisStandaloneClient | RedisClusterClient)} RedisClientLike
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
  * @typedef {import('../index.js').JoSkLock} JoSkLock
@@ -556,8 +588,9 @@ class MongoAdapter {
  */
 
 /**
+ * @template {RedisClientLike} [C=RedisClientLike]
  * @typedef {object} RedisAdapterOption
- * @property {RedisClient} client
+ * @property {C} client
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
  * @property {boolean} [useHashTags] - Use Redis Cluster hash-tag keys (`josk:{prefix}:*`). Default keeps existing `josk:prefix:*` keys.
@@ -585,9 +618,8 @@ const RELEASE_LOCK_SCRIPT = `
   return 0
 `;
 
-// Re-registering an existing interval with the same delay keeps its stored
-// executeAt when that is earlier than the new one, so process restarts do not
-// push the next run back by a full delay. Hash and schedule ZSET get the same value.
+// Keep a claimed interval's recovery deadline; otherwise keep an unchanged
+// interval's earlier schedule. Hash and schedule ZSET get the same value.
 const ADD_TASK_SCRIPT = `
   local payload = redis.call('HGET', KEYS[2], ARGV[1])
   local delay = tonumber(ARGV[2])
@@ -602,7 +634,13 @@ const ADD_TASK_SCRIPT = `
     return 0
   end
 
-  if payload and isInterval and task.isInterval == true and tonumber(task.delay) == delay then
+  local wasClaimed = payload and isInterval and task.isInterval == true
+    and type(task.claimLeaseId) == 'string' and task.claimLeaseId ~= ''
+    and tonumber(task.executeAt)
+
+  if wasClaimed then
+    executeAt = tonumber(task.executeAt)
+  elseif payload and isInterval and task.isInterval == true and tonumber(task.delay) == delay then
     local storedExecuteAt = tonumber(task.executeAt)
     if storedExecuteAt and storedExecuteAt < executeAt then
       executeAt = storedExecuteAt
@@ -613,6 +651,9 @@ const ADD_TASK_SCRIPT = `
   task.executeAt = executeAt
   task.isInterval = isInterval
   task.isDeleted = false
+  if not wasClaimed then
+    task.claimLeaseId = nil
+  end
 
   redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
   redis.call('ZADD', KEYS[1], executeAt, ARGV[1])
@@ -640,6 +681,7 @@ const UPDATE_TASK_SCRIPT = `
   end
 
   task.executeAt = tonumber(ARGV[2])
+  task.claimLeaseId = nil
   redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(task))
   redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[1])
   return 1
@@ -752,11 +794,14 @@ const isNoScriptError = (error) => {
   return message.indexOf('NOSCRIPT') !== -1 || error.code === 'NOSCRIPT';
 };
 
-/** Class representing Redis adapter for JoSk */
+/**
+ * Class representing Redis adapter for JoSk
+ * @template {RedisClientLike} [C=RedisClientLike]
+ */
 class RedisAdapter {
   /**
    * Create a RedisAdapter instance
-   * @param {RedisAdapterOption} opts - configuration object
+   * @param {RedisAdapterOption<C>} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'redis';
@@ -781,7 +826,7 @@ class RedisAdapter {
       });
     }
 
-    /** @type {RedisClient} */
+    /** @type {C} */
     this.client = opts.client;
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
@@ -822,15 +867,21 @@ class RedisAdapter {
   async __setup() {
     if (this.resetOnInit) {
       await this.client.del([this.scheduleKey, this.tasksKey, this.lockKey]);
-      const cursor = this.client.scanIterator({
-        MATCH: `${this.uniqueName}:task:*`,
-        COUNT: 9999
-      });
+      const scanClients = typeof this.client.scanIterator === 'function'
+        ? [this.client]
+        : await Promise.all(this.client.masters.map((node) => this.client.nodeClient(node)));
 
-      for await (const batch of cursor) {
-        const keys = Array.isArray(batch) ? batch : [batch];
-        if (keys.length) {
-          await this.client.del(keys);
+      for (const scanClient of scanClients) {
+        const cursor = scanClient.scanIterator({
+          MATCH: `${this.uniqueName}:task:*`,
+          COUNT: 9999
+        });
+
+        for await (const batch of cursor) {
+          const keys = Array.isArray(batch) ? batch : [batch];
+          if (keys.length) {
+            await this.client.del(keys);
+          }
         }
       }
     }
@@ -895,7 +946,10 @@ class RedisAdapter {
 
     try {
       await this.ready();
-      const ping = await this.client.ping();
+      const pingClient = typeof this.client.ping === 'function'
+        ? this.client
+        : await this.client.nodeClient(this.client.getRandomNode());
+      const ping = await pingClient.ping();
       if (ping === 'PONG') {
         return {
           status: 'OK',
@@ -1531,9 +1585,8 @@ class PostgresAdapter {
     await this.ready();
 
     try {
-      // Re-registering an existing interval with the same delay keeps its
-      // stored execute_at when that is earlier, so process restarts do not
-      // push the next run back by a full delay. SET expressions read the old row.
+      // Preserve claimed intervals until their recovery deadline; otherwise
+      // keep unchanged intervals' earlier schedule. SET reads the old row.
       const res = await this.client.query(
         `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -1543,10 +1596,25 @@ class PostgresAdapter {
              WHEN EXCLUDED.is_interval = true
               AND josk_tasks.is_interval = true
               AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.execute_at
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
               AND josk_tasks.delay = EXCLUDED.delay
               AND josk_tasks.execute_at < EXCLUDED.execute_at
              THEN josk_tasks.execute_at
              ELSE EXCLUDED.execute_at
+           END,
+           claim_lease_id = CASE
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.claim_lease_id
+             ELSE NULL
            END,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
@@ -1583,6 +1651,7 @@ class PostgresAdapter {
       const res = await this.client.query(
         `UPDATE josk_tasks
          SET execute_at = $1,
+             claim_lease_id = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE prefix = $2
            AND uid = $3

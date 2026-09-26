@@ -1,5 +1,9 @@
-export type Collection = import("mongodb").Collection;
-export type Db = import("mongodb").Db;
+export type MongoDbLike = {
+    collection: (name: string) => object;
+    command: (command: {
+        ping: number;
+    }) => Promise<unknown>;
+};
 export type JoSk = import("../index.js").JoSk;
 export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
 export type JoSkLock = import("../index.js").JoSkLock;
@@ -9,8 +13,8 @@ export type AdapterPingResult = {
     statusCode: number;
     error?: unknown;
 };
-export type MongoAdapterOption = {
-    db: Db;
+export type MongoAdapterOption<D extends MongoDbLike = MongoDbLike> = {
+    db: D;
     lockCollectionName?: string | undefined;
     prefix?: string | undefined;
     resetOnInit?: boolean | undefined;
@@ -23,24 +27,27 @@ export type MongoTask = {
     isInterval: boolean;
     isDeleted: boolean;
 };
-/** Class representing MongoDB adapter for JoSk */
-export class MongoAdapter {
+/**
+ * Class representing MongoDB adapter for JoSk
+ * @template {MongoDbLike} [D=MongoDbLike]
+ */
+export class MongoAdapter<D extends MongoDbLike = MongoDbLike> {
     /**
      * Create a MongoAdapter instance
-     * @param {MongoAdapterOption} opts - configuration object
+     * @param {MongoAdapterOption<D>} opts - configuration object
      */
-    constructor(opts?: MongoAdapterOption);
+    constructor(opts?: MongoAdapterOption<D>);
     name: string;
     prefix: string;
     lockCollectionName: string;
     resetOnInit: boolean;
-    /** @type {Db} */
-    db: Db;
+    /** @type {D} */
+    db: D;
     uniqueName: string;
-    /** @type {Collection} */
-    collection: Collection;
-    /** @type {Collection} */
-    lockCollection: Collection;
+    /** @type {ReturnType<D['collection']>} */
+    collection: ReturnType<D["collection"]>;
+    /** @type {ReturnType<D['collection']>} */
+    lockCollection: ReturnType<D["collection"]>;
     /**
      * @returns {Promise<void>}
      */

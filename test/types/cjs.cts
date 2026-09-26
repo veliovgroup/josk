@@ -1,5 +1,7 @@
 import josk = require('josk');
 import type { RedisClientType } from 'redis';
+import type { RedisClientType as Redis4ClientType } from 'redis4';
+import type { Db as Mongo5Db } from 'mongodb5';
 import type {
   JoSkAdapter,
   JoSkOption,
@@ -62,6 +64,10 @@ void new josk.RedisAdapter({
   prefix: 'cluster',
   useHashTags: true
 });
+const olderRedis = new josk.RedisAdapter({ client: {} as Redis4ClientType });
+void olderRedis.client.hGet;
+const olderMongo = new josk.MongoAdapter({ db: {} as Mongo5Db });
+void olderMongo.db.databaseName;
 
 const thenable: PromiseLike<boolean> = {
   then(onfulfilled) {

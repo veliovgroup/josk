@@ -6,8 +6,9 @@
 // `Db.command()`, and `Collection` APIs, but are not officially supported.
 
 /**
- * @typedef {import('mongodb').Collection} Collection
- * @typedef {import('mongodb').Db} Db
+ * @typedef {object} MongoDbLike
+ * @property {(name: string) => object} collection
+ * @property {(command: { ping: number }) => Promise<unknown>} command
  * @typedef {import('../index.js').JoSk} JoSk
  * @typedef {import('../index.js').JoSkExecuteMode} JoSkExecuteMode
  * @typedef {import('../index.js').JoSkLock} JoSkLock
@@ -22,8 +23,9 @@
  */
 
 /**
+ * @template {MongoDbLike} [D=MongoDbLike]
  * @typedef {object} MongoAdapterOption
- * @property {Db} db
+ * @property {D} db
  * @property {string} [lockCollectionName]
  * @property {string} [prefix]
  * @property {boolean} [resetOnInit]
@@ -46,7 +48,7 @@ const logError = (error, ...args) => {
 };
 
 /**
- * @param {Collection} collection
+ * @param {object} collection
  * @param {object} keys
  * @param {object} opts
  * @returns {Promise<void>}
@@ -86,40 +88,58 @@ const ensureIndex = async (collection, keys, opts) => {
 };
 
 /**
- * Update pipeline for re-registering an interval. Keeps the stored `executeAt`
- * when the task is an existing, non-deleted interval with the same `delay` and
- * the stored time is earlier than `executeAt`; otherwise schedules `executeAt`.
+ * Update pipeline for re-registering an interval. Preserve a claimed task's
+ * recovery deadline; otherwise keep an unchanged interval's earlier schedule.
  * Field references inside one `$set` stage read the pre-update document.
  * @param {string} uid
  * @param {number} delay
  * @param {Date} executeAt
  * @returns {object[]}
  */
-const intervalUpsertPipeline = (uid, delay, executeAt) => [{
-  $set: {
-    executeAt: {
-      $cond: [{
-        $and: [
-          { $eq: ['$isInterval', true] },
-          { $eq: ['$isDeleted', false] },
-          { $eq: ['$delay', { $literal: delay }] },
-          { $eq: [{ $type: '$executeAt' }, 'date'] },
-          { $lt: ['$executeAt', { $literal: executeAt }] }
-        ]
-      }, '$executeAt', { $literal: executeAt }]
-    },
-    uid: { $literal: uid },
-    delay: { $literal: delay },
-    isInterval: true,
-    isDeleted: false
-  }
-}];
+const intervalUpsertPipeline = (uid, delay, executeAt) => {
+  const existingInterval = [
+    { $eq: ['$isInterval', true] },
+    { $eq: ['$isDeleted', false] },
+    { $eq: [{ $type: '$executeAt' }, 'date'] }
+  ];
+  const activeClaim = {
+    $and: [
+      ...existingInterval,
+      { $eq: [{ $type: '$claimLeaseId' }, 'string'] },
+      { $ne: ['$claimLeaseId', ''] }
+    ]
+  };
 
-/** Class representing MongoDB adapter for JoSk */
+  return [{
+    $set: {
+      executeAt: {
+        $cond: [activeClaim, '$executeAt', {
+          $cond: [{
+            $and: [
+              ...existingInterval,
+              { $eq: ['$delay', { $literal: delay }] },
+              { $lt: ['$executeAt', { $literal: executeAt }] }
+            ]
+          }, '$executeAt', { $literal: executeAt }]
+        }]
+      },
+      claimLeaseId: { $cond: [activeClaim, '$claimLeaseId', '$$REMOVE'] },
+      uid: { $literal: uid },
+      delay: { $literal: delay },
+      isInterval: true,
+      isDeleted: false
+    }
+  }];
+};
+
+/**
+ * Class representing MongoDB adapter for JoSk
+ * @template {MongoDbLike} [D=MongoDbLike]
+ */
 class MongoAdapter {
   /**
    * Create a MongoAdapter instance
-   * @param {MongoAdapterOption} opts - configuration object
+   * @param {MongoAdapterOption<D>} opts - configuration object
    */
   constructor(opts = {}) {
     this.name = 'mongo';
@@ -133,12 +153,12 @@ class MongoAdapter {
       });
     }
 
-    /** @type {Db} */
+    /** @type {D} */
     this.db = opts.db;
     this.uniqueName = `__JobTasks__${this.prefix}`;
-    /** @type {Collection} */
+    /** @type {ReturnType<D['collection']>} */
     this.collection = opts.db.collection(this.uniqueName);
-    /** @type {Collection} */
+    /** @type {ReturnType<D['collection']>} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     /** @type {JoSk | undefined} */
     this.joskInstance = void 0;
@@ -326,7 +346,8 @@ class MongoAdapter {
           executeAt,
           isInterval,
           isDeleted: false
-        }
+        },
+        $unset: { claimLeaseId: '' }
       }, {
         upsert: true
       });
@@ -360,9 +381,8 @@ class MongoAdapter {
         uid: task.uid,
         isDeleted: false
       }, {
-        $set: {
-          executeAt: nextExecuteAt
-        }
+        $set: { executeAt: nextExecuteAt },
+        $unset: { claimLeaseId: '' }
       });
       return (updateResult?.matchedCount || 0) >= 1;
     } catch (opError) {

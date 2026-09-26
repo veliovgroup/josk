@@ -375,9 +375,8 @@ class PostgresAdapter {
     await this.ready();
 
     try {
-      // Re-registering an existing interval with the same delay keeps its
-      // stored execute_at when that is earlier, so process restarts do not
-      // push the next run back by a full delay. SET expressions read the old row.
+      // Preserve claimed intervals until their recovery deadline; otherwise
+      // keep unchanged intervals' earlier schedule. SET reads the old row.
       const res = await this.client.query(
         `INSERT INTO josk_tasks (prefix, uid, delay, execute_at, is_interval, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -387,10 +386,25 @@ class PostgresAdapter {
              WHEN EXCLUDED.is_interval = true
               AND josk_tasks.is_interval = true
               AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.execute_at
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
               AND josk_tasks.delay = EXCLUDED.delay
               AND josk_tasks.execute_at < EXCLUDED.execute_at
              THEN josk_tasks.execute_at
              ELSE EXCLUDED.execute_at
+           END,
+           claim_lease_id = CASE
+             WHEN EXCLUDED.is_interval = true
+              AND josk_tasks.is_interval = true
+              AND josk_tasks.is_deleted = false
+              AND josk_tasks.claim_lease_id IS NOT NULL
+              AND josk_tasks.claim_lease_id <> ''
+             THEN josk_tasks.claim_lease_id
+             ELSE NULL
            END,
            is_interval = EXCLUDED.is_interval,
            is_deleted = false,
@@ -427,6 +441,7 @@ class PostgresAdapter {
       const res = await this.client.query(
         `UPDATE josk_tasks
          SET execute_at = $1,
+             claim_lease_id = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE prefix = $2
            AND uid = $3

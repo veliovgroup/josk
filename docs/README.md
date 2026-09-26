@@ -8,6 +8,7 @@ Supplementary guides for the [JoSk](https://github.com/veliovgroup/josk) npm pac
 |---|---|
 | [adapter-api.md](adapter-api.md) | Custom storage adapter contract |
 | [meteor.md](meteor.md) | `ostrio:cron-jobs` wiring, CI, TypeScript |
+| [monitoring.md](monitoring.md) | Claimed intervals, zombie recovery, storage queries |
 | [mongodb.md](mongodb.md) | `MongoAdapter` indexes, tuning, CosmosDB / DocumentDB notes |
 | [testing.md](testing.md) | Test suites, env vars, targeted runs, Bun |
 

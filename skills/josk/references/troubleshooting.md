@@ -19,43 +19,13 @@ A task is a zombie when the instance that claimed it never called `ready()` and 
 Tuning:
 
 - `zombieTime` must exceed the slowest legitimate handler runtime plus a margin. Below 60s is not recommended.
-- If a handler routinely hits `zombieTime`, either the handler is too slow or `zombieTime` is too tight. Don't paper over by raising it past hours — split the work or move it off the scheduler.
+- Re-registering a claimed interval keeps its zombie deadline. An uncleanly killed handler can wait the full `zombieTime` (15 minutes by default) before recovery, rather than only `delay`; this avoids early overlap on rolling restarts. Lower `zombieTime` only if every legitimate handler finishes sooner.
+- Older records can carry a stale `claimLeaseId` after completion. The first new registration may preserve that date; the next `update()` clears it. Mixed-version peers can still shorten claims.
+- If a handler routinely hits `zombieTime`, either the handler is too slow or `zombieTime` is too tight. Split long work or move it off the scheduler.
 
 ## Monitoring stuck tasks
 
-JoSk surfaces stuck tasks two ways:
-
-1. **`onError` "One of your tasks is missing"** — fired when a task exists in storage but no in-memory handler is registered on this instance. Only fired when `autoClear: false`.
-2. **Direct storage queries** — what you reach for when you want active observability without `autoClear` noise.
-
-### Redis
-
-```
-HLEN josk:prefix:tasks
-ZRANGEBYSCORE josk:prefix:schedule -inf <now-ms>
-
-# If RedisAdapter({ useHashTags: true })
-HLEN josk:{prefix}:tasks
-ZRANGEBYSCORE josk:{prefix}:schedule -inf <now-ms>
-```
-
-### MongoDB
-
-```js
-db.__JobTasks__<prefix>.countDocuments({
-  executeAt: { $lt: new Date() },
-});
-```
-
-### PostgreSQL
-
-```sql
-SELECT COUNT(*) FROM josk_tasks
-WHERE prefix = '<prefix>'
-  AND execute_at < (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT;
-```
-
-Add a small healthcheck route that calls `jobs.ping()` and exposes the adapter status to your existing monitoring.
+`onError('One of your tasks is missing')` means this instance claimed a task without a registered in-memory handler; it does **not** detect a stuck registered handler. Past-due timestamps alone measure backlog. Inspect intervals with a non-empty `claimLeaseId` (Postgres `claim_lease_id`) and `executeAt` approaching recovery; this indicates a claim near expiry, not proof of a stalled handler. Redis: iterate the task hash with `HSCAN` and parse payloads. Mongo: filter the task collection on `claimLeaseId` and `executeAt`. Postgres: filter `josk_tasks` on `claim_lease_id` and `execute_at`. See [monitoring and recovery](https://github.com/veliovgroup/josk/blob/master/docs/monitoring.md) for queries and caveats. Use `jobs.ping()` for adapter connectivity.
 
 ## Jitter / accuracy
 
