@@ -139,7 +139,7 @@ const options = {
 const client = await MongoClient.connect('mongodb://…', options);
 ```
 
-`MongoAdapter` default CI tests official `mongodb@5/6/7` with `mongo:8`, plus `mongodb@7` with `mongo:6/7/8`. Cosmos DB for MongoDB and DocumentDB are excluded from default CI; the manual workflow tests configured endpoints only when secrets are present. Mongoose wrappers remain untested. Treat each cloud service/API version as unverified until its optional test passes.
+`MongoAdapter` default CI tests official `mongodb@5/6/7` with `mongo:8`, plus `mongodb@7` with `mongo:6/7/8`. Cosmos DB for MongoDB and DocumentDB are excluded from default CI; the manual workflow tests configured endpoints only when secrets are present. DocumentDB is VPC-only, so its job needs a runner inside the VPC (`DOCDB_RUNNER` repository variable). Mongoose wrappers remain untested. Treat each cloud service/API version as unverified until its optional test passes.
 
 ## `PostgresAdapter`
 

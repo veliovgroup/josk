@@ -58,7 +58,8 @@ jobs:
     name: AWS DocumentDB / mongodb@7
     if: needs.configured.outputs.docdb == 'true'
     needs: configured
-    runs-on: ubuntu-latest
+    # DocumentDB is VPC-only; set DOCDB_RUNNER to a self-hosted runner label inside that VPC
+    runs-on: ${{ vars.DOCDB_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
