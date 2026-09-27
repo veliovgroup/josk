@@ -13,7 +13,7 @@ env:
   # pg@7 breaks on Node 14+ (readyState === 'open' before connect); engines require Node >= 20.9
   LATEST_PG_DRIVER: '8'
   # Latest server images — literals in services.*.image and job name (env not allowed there)
-  # redis:8-alpine  mongo:8  postgres:18-alpine  valkey/valkey:8.1.9-alpine  eqalpha/keydb:latest
+  # redis:8-alpine  mongo:8  postgres:18-alpine  valkey/valkey:8.1.9-alpine  eqalpha/keydb:x86_64_v6.3.4
 
 jobs:
   # Types, adapter guards, Jest core + coverage (once, all services)
@@ -334,8 +334,8 @@ jobs:
         include:
           - engine: Valkey 8.1.9
             image: valkey/valkey:8.1.9-alpine
-          - engine: KeyDB latest
-            image: eqalpha/keydb:latest
+          - engine: KeyDB 6.3.4
+            image: eqalpha/keydb:x86_64_v6.3.4
 
     services:
       redis:

@@ -64,7 +64,7 @@ Same RESP client (`redis@^4 \|\| ^5`). JoSk is Lua-always (HASH + ZSET + `SET NX
 | Engine | Standalone | Cluster | Proven |
 |---|---|---|---|
 | Redis | Yes | `useHashTags: true` | CI targets Redis 6/7/8 standalone and a 3-master Redis Cluster (drivers 4/5) |
-| KeyDB | Yes, as single-writer Redis | `useHashTags: true` | CI targets `eqalpha/keydb:latest` standalone (Node 22, `redis@5`); no KeyDB Cluster job |
+| KeyDB | Yes, as single-writer Redis | `useHashTags: true` | CI targets `eqalpha/keydb:x86_64_v6.3.4` standalone (Node 22, `redis@5`); no KeyDB Cluster job |
 | Valkey | Yes (Redis-compatible) | `useHashTags: true` | CI targets `valkey/valkey:8.1.9-alpine` standalone (Node 22, `redis@5`); no Valkey Cluster job |
 
 **Topology guidance:** use one writable primary. Redis-compatible Cluster requires `useHashTags: true`; CI Cluster coverage uses Redis only. JoSk itself is fine on Redis ≥ 5.

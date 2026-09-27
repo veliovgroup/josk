@@ -175,7 +175,7 @@ JoSk has no dependencies. Install the driver for your adapter: `redis`, `mongodb
 
 #### Redis Adapter
 
-`RedisAdapter` keeps due timestamps in a sorted set and task payloads in a hash, and claims due tasks with Lua scripts. It uses the Redis-compatible commands shared by Redis, [KeyDB](https://docs.keydb.dev/), and Valkey; CI targets Redis 6/7/8, `eqalpha/keydb:latest`, and `valkey/valkey:8.1.9-alpine` in standalone mode using `redis@5`.
+`RedisAdapter` keeps due timestamps in a sorted set and task payloads in a hash, and claims due tasks with Lua scripts. It uses the Redis-compatible commands shared by Redis, [KeyDB](https://docs.keydb.dev/), and Valkey; CI targets Redis 6/7/8, `eqalpha/keydb:x86_64_v6.3.4`, and `valkey/valkey:8.1.9-alpine` in standalone mode using `redis@5`.
 
 - Use one writable primary. Do not route JoSk reads or writes to replicas; claims must be visible to all instances at once.
 - For Redis Cluster, pass `useHashTags: true`; CI tests a 3-master Redis Cluster. KeyDB/Valkey Cluster modes are not separately tested.
