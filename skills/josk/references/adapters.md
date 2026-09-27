@@ -252,6 +252,7 @@ interface JoSkAdapter {
 - **Owner-bound lease tokens.** Never release a foreign lease. The lock object contains `ownerId`, `leaseId`, `expireAt`, `expiresAtMs`, `leaseMs` — `releaseLock` must check the owner before deleting, and lease TTLs should come from `leaseMs` (relative), not from a second app-clock read against `expiresAtMs`.
 - **Atomic due-task claim.** Do not `find all due → update later`. Use a single atomic operation (Lua, `FOR UPDATE SKIP LOCKED`, atomic `findOneAndUpdate`) to claim and return the task in one round-trip.
 - **`iterate(nextExecuteAt, lock, executeMode)`** is the entry point JoSk calls each tick. Claim one task (for `executeMode === 'one'`) or as many as the lease lets you (`executeMode === 'batch'`) and call `this.joskInstance.__execute(task)` **fire-and-forget** for each — JoSk handles internal concurrency and error wrapping.
+- **Fence `update()` on the claim lease.** Store `lock.leaseId` as `claimLeaseId` in the same atomic claim write and return it on the task. `update()` must match that lease, write the schedule, and clear the lease in one write. If the claim skips storing it, the filter never matches and the interval stalls until `zombieTime`. Without fencing, a late handler on another process can overwrite a newer schedule. With `debug: true`, JoSk logs once when a claimed interval arrives without `claimLeaseId`.
 - **Storage-server time** for lease comparisons. Mixed client clocks across a cluster cause incorrect lock ownership. See `adapters/postgres.js` for the `CURRENT_TIMESTAMP` pattern.
 - **`add()` keeps an unchanged unclaimed interval's earlier schedule.** Built-in adapters also preserve a claimed interval's zombie deadline on re-registration, regardless of delay, using the existing `claimLeaseId`/`claim_lease_id` marker. `update()` clears that marker with the new schedule. Custom adapters need not use this field but should avoid shortening active claims. Update every stored copy of the schedule atomically (Redis hash and ZSET). One-shot tasks store `now + delay`.
 - **`ready()`** is optional but recommended for adapters that need to create schemas, indexes, or run migrations before the first storage op.
@@ -265,6 +266,7 @@ interface JoSkAdapter {
   executeAt: 1731000000000,      // number or Date
   isInterval: true,              // boolean
   isDeleted: false,              // boolean
+  claimLeaseId: 'lease-id',      // optional string, lock.leaseId stored by the claim
 }
 ```
 
@@ -272,7 +274,7 @@ interface JoSkAdapter {
 
 1. Acquire the scheduler lease (owner-bound token).
 2. Atomically claim the next due task — move its `executeAt` to the supplied `nextExecuteAt` so it doesn't get claimed again by another instance during the same window.
-3. Return the pre-claim task payload (`executeAt` = original due time, not the new park value). All three built-in adapters honor this — see `docs/adapter-api.md`.
+3. Return the pre-claim task payload (`executeAt` = original due time, not the new park value) with `claimLeaseId: lock.leaseId`. All three built-in adapters honor this — see `docs/adapter-api.md`.
 4. Call `this.joskInstance.__execute(task)` (no `await`).
 5. Release the lease only if the owner token still matches.
 

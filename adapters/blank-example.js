@@ -215,6 +215,9 @@ class BlankAdapter {
     const maxIterations = executeMode === 'one' ? 1 : Number.MAX_SAFE_INTEGER;
 
     while (executed < maxIterations) {
+      // The claim must store leaseId as claimLeaseId in the same atomic write;
+      // otherwise update() never matches its lease filter and the interval
+      // stalls until zombieTime.
       const task = await this.requiredOption.claimNextTask({
         scope: this.uniqueName,
         before: Date.now(),
