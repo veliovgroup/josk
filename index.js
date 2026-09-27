@@ -429,7 +429,8 @@ class JoSk {
    * Destroy the instance, wait for running handlers to call `ready()`, then
    * hand unfinished interval claims back to storage so another instance can
    * run them without waiting for `zombieTime`. Report unfinished runs at timeout;
-   * abandon one-shot tasks to preserve at-most-once execution. Call before exit.
+   * abandon one-shot tasks to preserve at-most-once execution. Repeated calls
+   * share the first attempt and its timeout. Call before exit.
    * @name shutdown
    * @param {JoSkShutdownOption} [opts]
    * @returns {Promise<boolean>} - `true` if every running handler finished within `timeout`
