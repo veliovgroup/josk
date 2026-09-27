@@ -200,6 +200,8 @@ class JoSk {
     this.__pausedTimerIds = new Set();
     /** @internal @type {Map<string, { task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
     this.__inFlight = new Map();
+    /** @internal @type {Map<string, { task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
+    this.__superseded = new Map();
     /** @internal @type {Promise<boolean> | null} */
     this.__shutdownPromise = null;
     /** @internal @type {Set<{ task: JoSkTask, released: boolean, superseded: boolean, settle: () => void, done: Promise<void> }>} */
@@ -969,6 +971,13 @@ class JoSk {
     const previous = this.__inFlight.get(task.uid);
     if (previous) {
       previous.superseded = true;
+      // Track one superseded run per uid; drop older ones so handlers that
+      // never call ready() don't pile up until shutdown().
+      const older = this.__superseded.get(task.uid);
+      if (older) {
+        this.__finishRun(older);
+      }
+      this.__superseded.set(task.uid, previous);
     }
 
     let settle = () => {};
@@ -988,6 +997,9 @@ class JoSk {
   __finishRun(run) {
     if (this.__inFlight.get(run.task.uid) === run) {
       this.__inFlight.delete(run.task.uid);
+    }
+    if (this.__superseded.get(run.task.uid) === run) {
+      this.__superseded.delete(run.task.uid);
     }
     this.__running.delete(run);
     run.settle();

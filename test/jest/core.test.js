@@ -1182,6 +1182,29 @@ describe('shutdown and claim release', () => {
     expect(adapter.updateCalls).toHaveLength(1);
   });
 
+  it('tracks only the latest superseded handler per task', async () => {
+    const onError = jest.fn();
+    const { job, adapter } = createJob({ onError });
+    const task = intervalTask('superseded-bound');
+    const finishes = [];
+    job.tasks[task.uid] = (ready) => { finishes.push(ready); };
+    for (let i = 0; i < 5; i++) {
+      await job.__execute({ ...task, claimLeaseId: `lease-${i}` });
+    }
+    expect(job.__running.size).toBe(2);
+
+    await expect(job.shutdown({ timeout: 0 })).resolves.toBe(false);
+    expect(onError).toHaveBeenCalledTimes(2);
+    const descriptions = onError.mock.calls.map((call) => call[1].description);
+    expect(descriptions.filter((text) => text.includes('superseded'))).toHaveLength(1);
+    expect(descriptions.filter((text) => text.includes('handed back'))).toHaveLength(1);
+    for (const finish of finishes) {
+      await finish();
+    }
+    expect(adapter.updateCalls).toHaveLength(1);
+    expect(adapter.updateCalls[0].task.claimLeaseId).toBe('lease-4');
+  });
+
   it('releases unfinished interval claims after the timeout and ignores their late ready()', async () => {
     const onError = jest.fn();
     const { job, adapter } = createJob({ onError });
