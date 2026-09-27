@@ -1,5 +1,3 @@
-# JoSk
-
 [![npm version][badge-npm-v]][npm-url]
 [![npm downloads][badge-npm-dm]][npm-url]
 [![CI][badge-ci]][ci-url]
@@ -16,6 +14,8 @@
 <a href="https://bridge-cdn.com/?ref=github-josk-repo-top"><img src="https://bridge-cdn.com/favicon.svg" height="20"></a>
 <a href="https://ostr.io/info/built-by-developers-for-developers?ref=github-josk-repo-top"><img src="https://ostr.io/apple-touch-icon-60x60.png" height="20"></a>
 <a href="https://meteor-files.com/?ref=github-josk-repo-top"><img src="https://meteor-files.com/apple-touch-icon-60x60.png" height="20"></a>
+
+# JoSk
 
 "JoSk" is a Node.js task manager for horizontally scaled apps: clusters, multi-server setups, and multi-threaded instances on one or many machines or data centers. It works the same in a single-instance app.
 
