@@ -197,6 +197,8 @@ describe('MongoAdapter task collection indexes (JoSk 5 and 6 on one prefix)', fu
       error = e;
     }
     assert.match(error?.message || '', /duplicate "uid" documents in ".*"; dedupe before starting JoSk 6/);
+    assert.equal(error.code, 11000);
+    assert.equal(error.cause?.code, 11000, 'original driver error is kept as cause');
   });
 
   it('never drops a non-unique TTL index on uid', async () => {
@@ -208,7 +210,7 @@ describe('MongoAdapter task collection indexes (JoSk 5 and 6 on one prefix)', fu
     } catch (e) {
       error = e;
     }
-    assert.match(error?.message || '', /ttl_uid.*not a plain unique index/s);
+    assert.match(error?.message || '', /ttl_uid.*not a plain unique index.*different \{prefix\}/s);
     assert.deepEqual((await describeIndexes(ctx.col)).map((i) => i.name), ['ttl_uid']);
   });
 });

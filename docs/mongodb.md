@@ -69,16 +69,18 @@ JoSk 5.0.0 drops and recreates a same-key index that has a different name or opt
 From 6.4.1 JoSk 6 creates the same names and options as JoSk 5 and never drops. With 5.x and 6.4.1+ the layout is stable in either startup order. A collection that already has the 6.1.0 to 6.4.0 names (`uniqueName_unique`, `expireAt_ttl`, and `uid_unique` on the task collection) stays as it is, and a JoSk 5 startup would still replace those indexes. Until every JoSk 5 service is gone, give JoSk 6 its own `lockCollectionName` (for example `__JobTasks__.lock.v6`). The task collection follows the same rule: JoSk 5 and JoSk 6 can share a prefix (`__JobTasks__<prefix>`) only from 6.4.1, because earlier 6.x versions dropped and re-created the unique `uid` index on a name mismatch. In that window concurrent `add()` upserts can insert duplicate `uid` documents, and the next JoSk 6 startup then fails with a duplicate-key error. If startup fails with `duplicate "uid" documents`, the task collection already holds duplicates. Dedupe manually before starting JoSk 6. This recipe is destructive; back up the collection first, and stop every JoSk service on that prefix. It keeps the document with the largest `_id` for each `uid`:
 
 ```js
-const col = db.collection('__JobTasks__<prefix>');
-const dups = await col.aggregate([
+// mongosh
+const col = db.getCollection('__JobTasks__<prefix>');
+col.aggregate([
   { $sort: { _id: -1 } },
-  { $group: { _id: '$uid', keep: { $first: '$_id' }, ids: { $push: '$_id' }, n: { $sum: 1 } } },
+  { $group: { _id: '$uid', keep: { $first: '$_id' }, n: { $sum: 1 } } },
   { $match: { n: { $gt: 1 } } }
-]).toArray();
-for (const d of dups) {
-  await col.deleteMany({ uid: d._id, _id: { $ne: d.keep } });
-}
+], { allowDiskUse: true }).forEach((d) => {
+  col.deleteMany({ uid: d._id, _id: { $ne: d.keep } });
+});
 ```
+
+Documents without a `uid` field form one group, and all but one of them are removed. The non-sparse unique index allows only one such document.
 
 Do not delete lock documents to work around a duplicate-key error. Repair of a production collection is a separate, manual operation.
 

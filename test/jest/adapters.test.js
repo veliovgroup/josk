@@ -795,6 +795,21 @@ describe('MongoAdapter unit coverage', () => {
     warn.mockRestore();
   });
 
+  it('retries an index build rejected because another starter holds a background operation', async () => {
+    const busy = Object.assign(new Error('a background operation is currently running'), { code: 12587 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValueOnce(busy).mockResolvedValue(void 0)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-busy')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.createIndex.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('adopts existing task indexes of any name without DDL and never drops', async () => {
     const taskCollection = createMongoCollection({
       indexes: jest.fn(async () => [

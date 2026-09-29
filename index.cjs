@@ -68,7 +68,7 @@ const sameKeys = (a = {}, b = {}) => {
  * @param {{ keys: object, name: string, unique?: boolean, ttl?: boolean, expireAfterSeconds?: number, plain?: boolean, dropNonUnique?: boolean }} spec
  * @returns {Promise<void>}
  */
-const ensureIndex = async (collection, spec) => {
+const ensureIndexOnce = async (collection, spec) => {
   const check = async () => {
     let indexes = [];
     try {
@@ -91,8 +91,8 @@ const ensureIndex = async (collection, spec) => {
       usable = typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression;
     }
 
-    if (usable && spec.plain && (found.partialFilterExpression || found.hidden)) {
-      console.warn(`[josk] [MongoAdapter] adopted index "${found.name}" on "${collection.collectionName}" is ${found.hidden ? 'hidden' : 'partial'}; the due-task scan may not use it`);
+    if (usable && (found.hidden || (spec.plain && found.partialFilterExpression))) {
+      console.warn(`[josk] [MongoAdapter] adopted index "${found.name}" on "${collection.collectionName}" is ${found.hidden ? 'hidden' : 'partial'}; queries may not use it`);
     }
 
     if (!usable) {
@@ -100,9 +100,11 @@ const ensureIndex = async (collection, spec) => {
         // A non-unique index protects nothing, replacing it opens no duplicate window.
         // Never drop when duplicates exist: the unique index could not be built afterwards.
         const key = Object.keys(spec.keys)[0];
-        const duplicates = await collection.aggregate([{ $group: { _id: `$${key}`, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }, { $limit: 1 }]).toArray();
+        const duplicates = await collection.aggregate([{ $group: { _id: `$${key}`, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }, { $limit: 1 }], { allowDiskUse: true }).toArray();
         if (duplicates.length > 0) {
-          throw new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; index "${found.name}" was kept. Dedupe the collection before starting JoSk 6 (see docs/mongodb.md).`);
+          const dupError = new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; index "${found.name}" was kept. Dedupe the collection before starting JoSk 6 (see docs/mongodb.md).`);
+          dupError.code = 11000;
+          throw dupError;
         }
 
         try {
@@ -115,7 +117,7 @@ const ensureIndex = async (collection, spec) => {
         return false;
       }
 
-      throw new Error(`[josk] [MongoAdapter] index "${found.name}" on "${collection.collectionName}" has the key ${JSON.stringify(spec.keys)} but is not ${spec.unique ? 'a plain unique index' : 'a TTL index'}. JoSk never drops indexes it can not replace safely. Drop or fix this index manually, or set a separate {lockCollectionName}.`);
+      throw new Error(`[josk] [MongoAdapter] index "${found.name}" on "${collection.collectionName}" has the key ${JSON.stringify(spec.keys)} but is not ${spec.unique ? 'a plain unique index' : 'a TTL index'}. JoSk never drops indexes it can not replace safely. Drop or fix this index manually, or ${spec.dropNonUnique ? 'use a different {prefix}' : 'set a separate {lockCollectionName}'}.`);
     }
 
     return true;
@@ -136,12 +138,37 @@ const ensureIndex = async (collection, spec) => {
     await collection.createIndex(spec.keys, options);
   } catch (error) {
     if (spec.unique && error?.code === 11000) {
-      throw new Error(`[josk] [MongoAdapter] duplicate "${Object.keys(spec.keys)[0]}" documents in "${collection.collectionName}"; dedupe before starting JoSk 6 (see docs/mongodb.md)`);
+      const dupError = new Error(`[josk] [MongoAdapter] duplicate "${Object.keys(spec.keys)[0]}" documents in "${collection.collectionName}"; dedupe before starting JoSk 6 (see docs/mongodb.md)`);
+      dupError.code = 11000;
+      dupError.cause = error;
+      throw dupError;
     }
 
     const conflict = error?.code === 85 || error?.code === 86 || error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict' || error?.code === 68 || error?.codeName === 'IndexAlreadyExists';
     if (!conflict || !(await check())) {
       throw error;
+    }
+  }
+};
+
+const isBusyError = (error) => error?.code === 12587 || error?.code === 117 || error?.codeName === 'BackgroundOperationInProgressForNamespace' || error?.codeName === 'ConflictingOperationInProgress';
+
+/**
+ * Concurrent starters can race index builds and drops. MongoDB 4.2 rejects the
+ * loser with "a background operation is currently running", so retry briefly.
+ * @param {object} collection
+ * @param {object} spec
+ * @returns {Promise<void>}
+ */
+const ensureIndex = async (collection, spec) => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ensureIndexOnce(collection, spec);
+    } catch (error) {
+      if (attempt >= 8 || !isBusyError(error)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
     }
   }
 };
