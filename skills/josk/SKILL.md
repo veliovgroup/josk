@@ -5,12 +5,12 @@ description: "Use when integrating, comparing, or debugging JoSk distributed sch
 
 # JoSk
 
-Distributed `setInterval` / `setTimeout` / `setImmediate` for Node ≥20.9 and Bun ≥1.1.
+Distributed `setInterval` / `setTimeout` / `setImmediate` for Node ≥14.21.3 and Bun ≥1.1.
 Server-only. Schedule in Redis, MongoDB, or PostgreSQL; lease + atomic claim limit duplicate ticks.
 
 ## Version gate — check first
 
-If `package.json` pins `josk` below `6.0.0`, or the runtime is Node < 20.9 (Node 14/16 hosts), stop here and read [references/legacy-v5.md](references/legacy-v5.md). Everything else in this skill describes 6.x and names exports, methods, and options that do not exist in 5.x (`PostgresAdapter`, `pause()`/`resume()`, `concurrency`, `execute`, `lockLeaseTime`, `useHashTags`, auto-`ready()` for sync handlers).
+If `package.json` pins `josk` below `6.0.0`, or the runtime is Node < 14.21.3, stop here and read [references/legacy-v5.md](references/legacy-v5.md). Everything else in this skill describes 6.x and names exports, methods, and options that do not exist in 5.x (`PostgresAdapter`, `pause()`/`resume()`, `concurrency`, `execute`, `lockLeaseTime`, `useHashTags`, auto-`ready()` for sync handlers).
 
 ## Quick start
 

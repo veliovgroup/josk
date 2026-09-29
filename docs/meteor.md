@@ -224,7 +224,7 @@ Environment variables consumed by the Meteor test suite:
 
 ## Requirements
 
-Meteor **2.14+** and **3.2+** supported (`api.versionsFrom(['2.14', '3.2'])`; mirrored in `package.json` → `meteor.versionsFrom`). npm installs require Node **≥ 20.9**. Meteor **2.x** bundles Node 14 (no `crypto.randomUUID` — JoSk falls back to `randomBytes` hex IDs). CI: **2.14–2.16** and **3.2 / 3.3.1 / 3.4**.
+Meteor **2.14+** and **3.2+** supported (`api.versionsFrom(['2.14', '3.2'])`; mirrored in `package.json` → `meteor.versionsFrom`). npm installs require Node **≥ 14.21.3**. Meteor **2.x** bundles Node 14 (no `crypto.randomUUID` — JoSk falls back to `randomBytes` hex IDs). CI: **2.14–2.16** and **3.2 / 3.3.1 / 3.4**.
 
 `meteorTestProfile()` branches on Meteor's bundled Node at `test-packages` time:
 

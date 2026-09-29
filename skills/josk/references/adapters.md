@@ -180,7 +180,7 @@ Migrations run DDL on startup; schedule deploys during a low-traffic window when
 
 ### PostgreSQL guidelines
 
-- Require `pg@>=8.0.3` on Node 14+ (JoSk 6.x engines: Node `>=20.9`). `pg@7` never calls `stream.connect()` when `net.Socket.readyState` is `'open'` before connect.
+- Require `pg@>=8.0.3` on Node 14+ (JoSk 6.4.1+ engines: Node `>=14.21.3`; `pg@8.20` itself declares Node 16+, and JoSk was not run against PostgreSQL on Node below 20). `pg@7` never calls `stream.connect()` when `net.Socket.readyState` is `'open'` before connect.
 - Use `pg.Pool`. Share the app's pool when handlers also hit Postgres, or use a small dedicated pool when scheduler isolation matters.
 - One writable primary endpoint. **No replica reads** — task claims must be visible immediately.
 - Lock acquisition compares lease expiry against `CURRENT_TIMESTAMP`, so client clock skew across nodes does not affect lock ownership. This is the strongest cross-region adapter.

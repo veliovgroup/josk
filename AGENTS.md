@@ -66,7 +66,7 @@ const sayName = (name) => {
 
 ## Standards
 - Terse. No obvious comments. Exact adapter API compliance.
-- ESM primary; JSDoc on public API; CJS generated. Node ≥ 20.9.0, Bun ≥ 1.1.0.
+- ESM primary; JSDoc on public API; CJS generated. Node ≥ 14.21.3 (tested floor; `test/runtime-matrix/run.sh` runs Mongo, Jest, and guards on Node 14/16/18/20/22/24), Bun ≥ 1.1.0.
 - Strict validation in ctors. Throw on missing adapter/client/db.
 - Update: README (examples/prereqs), all .d.ts, tests, CHANGELOG.md, package version on change.
 - **Don't add deps** without strong reason — the package's selling points are "tiny, no fluff".
@@ -124,11 +124,11 @@ Update this AGENTS.md on major refactors.
 - `index.d.cts` is a copy of `index.d.ts` for the `require` export `types` path; identical content is intentional
 - `adapters/*.d.ts` declare adapter classes; required for TypeScript resolution behind `index.d.ts` re-exports
 - Redis Cluster / KeyDB Cluster: `RedisAdapter({ useHashTags: true })`; standalone default key layout unchanged
-- Postgres driver: require `pg>=8.0.3` with Node ≥20.9; `pg@7` connect broken on modern Node; CI excludes `pg@7`
+- Postgres driver: require `pg>=8.0.3` (`pg@8.20` declares Node 16+; Node 14 with pg is unverified); `pg@7` connect broken on modern Node; CI excludes `pg@7`
 - `npm run test:bun`: pass explicit files under `test/jest/`, not directory (Bun resolver)
 - CI `test-bun` job: Bun `latest` only; `engines.bun` stays `>=1.1.0`
 - CI: adapter-scoped matrix cells run one mocha file per service; `test-core` runs types/guards/Jest/coverage once (Node 22)
-- Meteor: `api.versionsFrom(['2.14', '3.2'])` — 1.x dropped; npm Node ≥20.9; Meteor 2.x bundles Node 14 (`randomUUID` missing — `createRandomId` uses `randomBytes` hex fallback); `package.json` `meteor.versionsFrom` / `meteor.node` (npm `engines` unchanged); CI matrix 2.14–2.16 + 3.2/3.3.1/3.4; `meteorTestProfile()` Node 14–17 / 18+; `test/meteor-cron.js` cron-parser v4/v5 shim; meteor test `*.js` avoid `?.` (Node 14 isobuild); `METEOR_TEST_SUITE` → `meteor-ci-{mongo,redis,postgres}.js`; skip 3.3.0; Mongo CI omits `MONGO_URL`
+- Meteor: `api.versionsFrom(['2.14', '3.2'])` — 1.x dropped; npm Node ≥14.21.3; Meteor 2.x bundles Node 14 (`randomUUID` missing — `createRandomId` uses `randomBytes` hex fallback); `package.json` `meteor.versionsFrom` / `meteor.node` (npm `engines` unchanged); CI matrix 2.14–2.16 + 3.2/3.3.1/3.4; `meteorTestProfile()` Node 14–17 / 18+; `test/meteor-cron.js` cron-parser v4/v5 shim; meteor test `*.js` avoid `?.` (Node 14 isobuild); `METEOR_TEST_SUITE` → `meteor-ci-{mongo,redis,postgres}.js`; skip 3.3.0; Mongo CI omits `MONGO_URL`
 - Meteor package tests: mocha pinned in `package.js` `meteorTestProfile()` only (2.x: `meteortesting:mocha@2.1.0`; 3.x: `@3.3.0`); CLI `--driver-package=meteortesting:mocha` (no `@` — versioned CLI breaks test-packages on 3.x); do not commit `.versions`
 - Package source: `import from 'crypto'` not `node:crypto` — Meteor isobuild compatibility; npm/Bun latest unchanged
 - Pause/resume: shared `test/pause-resume-tests.js`; Meteor `test/meteor-pause-resume.js`; wired into npm-* and meteor-* files; multi-instance tests use peer `readyOnly`, `TASK_DELAY` ≥2048ms, split warmup `waitUntil` for runsA/runsB on slow CI

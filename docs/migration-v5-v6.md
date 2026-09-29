@@ -2,7 +2,7 @@
 
 `v6.0.0` reworked storage adapters around owner-bound lease tokens, added atomic due-task claiming, and raised the runtime floor.
 
-- **Breaking:** minimum runtime is now `node@>=20.9.0` (LTS) or `bun@>=1.1.0`. Stay on `josk@^5` if you cannot upgrade Node yet.
+- **Breaking (6.0.0 to 6.4.0):** `package.json` declared `node@>=20.9.0` or `bun@>=1.1.0`. From 6.4.1, `engines.node` is `>=14.21.3`, the lowest version the test suite ran on (see the README prerequisites for the tested matrix). The code needed no change; only the declaration was too strict. Node 12 fails to parse `?.`.
 - `RedisAdapter` accepts both `redis@^4` and `redis@^5` clients.
 - New adapter: `PostgresAdapter`.
 - `PostgresAdapter` uses composite `(prefix, uid)` primary key. The adapter auto-migrates the table on startup, but the migration runs DDL — use a low-traffic deployment window.

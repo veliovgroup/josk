@@ -1,6 +1,6 @@
 # JoSk 3.x–5.x (legacy, Node 14.20+ / 16)
 
-Read this file instead of `api.md` / `patterns.md` when `package.json` pins `josk` below `6.0.0` or the runtime is Node < 20.9. `5.0.0` is the last release that runs on Node 14/16 (`engines.node >=14.20.0`); `6.0.0` and later require Node ≥ 20.9 / Bun ≥ 1.1. `mail-time@3.x` depends on `josk@^5` — its scheduler side is described here.
+Read this file instead of `api.md` / `patterns.md` when `package.json` pins `josk` below `6.0.0` or the runtime is Node < 14.21.3. `5.0.0` is the last release that declares Node 14.20+; `6.0.0` to `6.4.0` declared Node ≥ 20.9, and `6.4.1` and later declare Node ≥ 14.21.3 / Bun ≥ 1.1. `mail-time@3.x` depends on `josk@^5` — its scheduler side is described here.
 
 ## Version ladder
 
@@ -8,7 +8,8 @@ Read this file instead of `api.md` / `patterns.md` when `package.json` pins `jos
 |---|---|---|---|
 | 3.x / 4.x | ≥ 14.20 | `new JoSk({ db, prefix })` | Mongo built in, no adapter classes |
 | **5.0.0** | ≥ 14.20 | `new JoSk({ adapter: new MongoAdapter({ db }) })` | `MongoAdapter`, `RedisAdapter` — **last Node 16 release** |
-| 6.0.0+ | ≥ 20.9 | same | everything the rest of this skill describes |
+| 6.0.0 to 6.4.0 | ≥ 20.9 (declared) | same | everything the rest of this skill describes |
+| 6.4.1+ | ≥ 14.21.3 | same | same; tested on Node 14.21.3 and 16.20.2 with MongoDB |
 
 ## What 5.x does NOT have
 
