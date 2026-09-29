@@ -279,7 +279,12 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --engine-strict=false \
             mocha@${{ matrix.mocha }} chai@${{ matrix.chai }} jest@${{ matrix.jest }} \
             cron-parser@5.5.0 mongodb@${{ matrix.mongodb-driver }} \
-            redis@${{ matrix.redis }} pg@8.20.0 josk5@npm:josk@5.0.0
+            redis@${{ matrix.redis }} pg@8.20.0
+          # npm 6 (Node 14) refuses the alias josk5@npm:josk@5.0.0 inside the josk repo (ENOSELF).
+          # Download the real 5.0.0 tarball and unpack it as node_modules/josk5 instead.
+          mkdir -p "$RUNNER_TEMP/josk5" node_modules/josk5
+          (cd "$RUNNER_TEMP/josk5" && npm pack josk@5.0.0 --silent)
+          tar -xzf "$RUNNER_TEMP/josk5"/josk-5.0.0.tgz -C node_modules/josk5 --strip-components=1
 
       - name: Mocha live tests (MongoDB)
         env:
