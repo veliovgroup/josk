@@ -52,46 +52,6 @@ const logError = (error, ...args) => {
   }
 };
 
-/**
- * @param {object} collection
- * @param {object} keys
- * @param {object} opts
- * @returns {Promise<void>}
- */
-const ensureIndex = async (collection, keys, opts) => {
-  try {
-    await collection.createIndex(keys, opts);
-  } catch (error) {
-    if (error?.code !== 85 && error?.codeName !== 'IndexOptionsConflict') {
-      throw error;
-    }
-
-    const indexes = await collection.indexes();
-    for (const index of indexes) {
-      const indexKeys = Object.keys(index.key || {});
-      const desiredKeys = Object.keys(keys);
-      if (indexKeys.length !== desiredKeys.length) {
-        continue;
-      }
-
-      let matches = true;
-      for (const key of desiredKeys) {
-        if (index.key[key] !== keys[key]) {
-          matches = false;
-          break;
-        }
-      }
-
-      if (matches) {
-        await collection.dropIndex(index.name);
-        break;
-      }
-    }
-
-    await collection.createIndex(keys, opts);
-  }
-};
-
 const sameKeys = (a = {}, b = {}) => {
   const ak = Object.keys(a);
   const bk = Object.keys(b);
@@ -99,16 +59,16 @@ const sameKeys = (a = {}, b = {}) => {
 };
 
 /**
- * Shared lock collection indexes. Never drops an index: JoSk 5.x and 6.x can
- * share this collection, and a drop opens a window without the unique index,
- * where concurrent upserts insert duplicate lock documents. An existing index
- * with the same key pattern is adopted whatever its name is.
- * Names and options match JoSk 5.x, so a 5.x startup finds them unchanged.
+ * Index setup that never drops a usable index. JoSk 5.x and 6.x can share a
+ * collection, and a drop opens a window without the unique index, where
+ * concurrent upserts insert duplicate documents. An existing index with the
+ * same key pattern is adopted whatever its name is. Fresh indexes use the
+ * names and options of JoSk 5.x, so a 5.x startup finds them unchanged.
  * @param {object} collection
- * @param {{ keys: object, name: string, unique?: boolean, ttl?: boolean, expireAfterSeconds?: number }} spec
+ * @param {{ keys: object, name: string, unique?: boolean, ttl?: boolean, expireAfterSeconds?: number, plain?: boolean, dropNonUnique?: boolean }} spec
  * @returns {Promise<void>}
  */
-const ensureLockIndex = async (collection, spec) => {
+const ensureIndex = async (collection, spec) => {
   const check = async () => {
     let indexes = [];
     try {
@@ -124,9 +84,21 @@ const ensureLockIndex = async (collection, spec) => {
       return false;
     }
 
-    const usable = spec.unique ? (found.unique === true && !found.partialFilterExpression) : (typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression);
+    let usable = true;
+    if (spec.unique) {
+      usable = found.unique === true && !found.partialFilterExpression;
+    } else if (!spec.plain) {
+      usable = typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression;
+    }
+
     if (!usable) {
-      throw new Error(`[josk] [MongoAdapter] index "${found.name}" on "${collection.collectionName}" has the key ${JSON.stringify(spec.keys)} but is not ${spec.unique ? 'a plain unique index' : 'a TTL index'}. JoSk never drops indexes on the shared lock collection. Drop or fix this index manually, or set a separate {lockCollectionName}.`);
+      if (spec.dropNonUnique && found.unique !== true) {
+        // A non-unique index protects nothing, replacing it opens no duplicate window
+        await collection.dropIndex(found.name);
+        return false;
+      }
+
+      throw new Error(`[josk] [MongoAdapter] index "${found.name}" on "${collection.collectionName}" has the key ${JSON.stringify(spec.keys)} but is not ${spec.unique ? 'a plain unique index' : 'a TTL index'}. JoSk never drops indexes it can not replace safely. Drop or fix this index manually, or set a separate {lockCollectionName}.`);
     }
 
     return true;
@@ -136,8 +108,15 @@ const ensureLockIndex = async (collection, spec) => {
     return;
   }
 
+  let options = { name: spec.name };
+  if (spec.unique) {
+    options = { name: spec.name, unique: true };
+  } else if (!spec.plain) {
+    options = { name: spec.name, expireAfterSeconds: spec.expireAfterSeconds };
+  }
+
   try {
-    await collection.createIndex(spec.keys, spec.unique ? { name: spec.name, unique: true } : { name: spec.name, expireAfterSeconds: spec.expireAfterSeconds });
+    await collection.createIndex(spec.keys, options);
   } catch (error) {
     const conflict = error?.code === 85 || error?.code === 86 || error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict' || error?.code === 68 || error?.codeName === 'IndexAlreadyExists';
     if (!conflict || !(await check())) {
@@ -234,23 +213,23 @@ class MongoAdapter {
 
   /** @internal */
   async __setup() {
-    await ensureIndex(this.collection, { uid: 1 }, { name: 'uid_unique', unique: true }).catch((error) => {
-      logError(error, '[setup] [createIndex] uid_unique');
+    await ensureIndex(this.collection, { keys: { uid: 1 }, name: 'uid_1', unique: true, dropNonUnique: true }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] uid_1');
       throw error;
     });
 
-    await ensureIndex(this.collection, { isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' }).catch((error) => {
-      logError(error, '[setup] [createIndex] due_lookup');
+    await ensureIndex(this.collection, { keys: { isDeleted: 1, executeAt: 1 }, name: 'due_lookup', plain: true }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] due_lookup');
       throw error;
     });
 
-    await ensureLockIndex(this.lockCollection, { keys: { uniqueName: 1 }, name: 'uniqueName_1', unique: true }).catch((error) => {
-      logError(error, '[setup] [ensureLockIndex] uniqueName_1');
+    await ensureIndex(this.lockCollection, { keys: { uniqueName: 1 }, name: 'uniqueName_1', unique: true }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] uniqueName_1');
       throw error;
     });
 
-    await ensureLockIndex(this.lockCollection, { keys: { expireAt: 1 }, name: 'expireAt_1', expireAfterSeconds: 1 }).catch((error) => {
-      logError(error, '[setup] [ensureLockIndex] expireAt_1');
+    await ensureIndex(this.lockCollection, { keys: { expireAt: 1 }, name: 'expireAt_1', expireAfterSeconds: 1 }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] expireAt_1');
       throw error;
     });
 

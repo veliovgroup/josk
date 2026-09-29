@@ -9,7 +9,8 @@ MONGO="${1:-127.0.0.1:27042}"; shift || true
 ONLY=" $* "
 WORK="$(mktemp -d /tmp/josk-matrix.XXXXXX)"
 NVM="$HOME/.nvm/versions/node"
-TOOL="$NVM/v24.16.0/bin"; export PATH="$TOOL:$PATH"
+LATEST="$(ls "$NVM" | sort -t. -k1.2,1n -k2,2n -k3,3n | tail -1)"
+TOOL="$NVM/$LATEST/bin"; export PATH="$TOOL:$PATH"
 # label|node|mongodb|mocha|chai|jest|cron-parser|redis|pg
 MATRIX=(
   "node14.21.3|v14.21.3|5.9.2|10.8.2|4.5.0|29.7.0|5.5.0|4.7.1|8.20.0"
@@ -33,7 +34,7 @@ for row in "${MATRIX[@]}"; do
   ( cd "$REPO" && tar --exclude=node_modules --exclude=.git --exclude=coverage -cf - . ) | tar -xf - -C "$dir"
   ( cd "$dir" && node -e "
     const p=require('./package.json');
-    p.devDependencies={mocha:'$mocha',chai:'$chai',jest:'$jest','cron-parser':'$cron',mongodb:'$mdb',redis:'$redis',pg:'$pg',typescript:'^6.0.3'};
+    p.devDependencies={mocha:'$mocha',chai:'$chai',jest:'$jest','cron-parser':'$cron',mongodb:'$mdb',redis:'$redis',pg:'$pg',josk5:'npm:josk@5.0.0'};
     delete p.scripts.prepublishOnly;
     require('fs').writeFileSync('package.json',JSON.stringify(p,null,2));" \
     && npm install --no-audit --no-fund --ignore-scripts --engine-strict=false --no-package-lock >install.log 2>&1 ) && inst=OK || inst=FAIL
@@ -47,7 +48,7 @@ for row in "${MATRIX[@]}"; do
   }
   db="josk_${label//./_}_$$_$RANDOM-test"; url="mongodb://$MONGO/$db"
   export MONGO_URL="$url"
-  run mongo "$N" node_modules/mocha/bin/mocha.js ./test/npm-mongo.js ./test/mongo-url.test.js ./test/mongo-lock-index.js
+  run mongo "$N" node_modules/mocha/bin/mocha.js ./test/npm-mongo.js ./test/mongo-url.test.js ./test/mongo-lock-index.js ./test/mongo-task-index.js
   run guards "$N" node_modules/mocha/bin/mocha.js ./test/adapter-guards.js
   run jest "$N" --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --coverage=false
   # Types are checked once, on Node 24, by `npm run test:types` (compile-time only; not part of this matrix).

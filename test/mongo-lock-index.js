@@ -49,12 +49,16 @@ describe('MongoAdapter shared lock collection indexes', function () {
   let client;
   let db;
   const created = [];
+  const prefixes = new Set(['lockidx']);
   const lockName = (label) => {
     const name = uniqueId(`josk-lockidx-${label}`);
     created.push(name);
     return name;
   };
-  const adapterFor = (lockCollectionName, prefix = 'lockidx') => new MongoAdapter({ db, lockCollectionName, prefix });
+  const adapterFor = (lockCollectionName, prefix = 'lockidx') => {
+    prefixes.add(prefix);
+    return new MongoAdapter({ db, lockCollectionName, prefix });
+  };
   const stubJosk = { __errorHandler: () => {} };
 
   before(async () => {
@@ -65,9 +69,10 @@ describe('MongoAdapter shared lock collection indexes', function () {
   after(async () => {
     for (const name of created) {
       await db.collection(name).drop().catch(() => {});
-      await db.collection(`__JobTasks__${name}`).drop().catch(() => {});
     }
-    await db.collection('__JobTasks__lockidx').drop().catch(() => {});
+    for (const prefix of prefixes) {
+      await db.collection(`__JobTasks__${prefix}`).drop().catch(() => {});
+    }
     await closeMongoClient(client);
   });
 
@@ -109,7 +114,7 @@ describe('MongoAdapter shared lock collection indexes', function () {
     assert.deepEqual(await describeIndexes(col), [TTL, UNIQUE]);
   });
 
-  it('adopts indexes created by 6.0-6.4 under their own names and TTL, without dropping', async () => {
+  it('adopts indexes created by 6.1.0-6.4.0 under their own names and TTL, without dropping', async () => {
     const name = lockName('legacy6');
     const col = db.collection(name);
     await col.createIndex({ uniqueName: 1 }, { name: 'uniqueName_unique', unique: true });
@@ -124,9 +129,6 @@ describe('MongoAdapter shared lock collection indexes', function () {
     const rejected = results.filter((r) => r.status === 'rejected');
     assert.lengthOf(rejected, 0, rejected.map((r) => r.reason?.message).join('; '));
     assert.deepEqual(await describeIndexes(db.collection(name)), [TTL, UNIQUE]);
-    for (let i = 0; i < 3; i++) {
-      await db.collection(`__JobTasks__overlap${i}`).drop().catch(() => {});
-    }
   });
 
   it('fails with an actionable error and drops nothing when a non-unique index owns the key', async () => {

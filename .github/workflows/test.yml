@@ -279,12 +279,12 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --engine-strict=false \
             mocha@${{ matrix.mocha }} chai@${{ matrix.chai }} jest@${{ matrix.jest }} \
             cron-parser@5.5.0 mongodb@${{ matrix.mongodb-driver }} \
-            redis@${{ matrix.redis }} pg@8.20.0
+            redis@${{ matrix.redis }} pg@8.20.0 josk5@npm:josk@5.0.0
 
       - name: Mocha live tests (MongoDB)
         env:
           MONGO_URL: mongodb://127.0.0.1:27017/josk-floor-test
-        run: node node_modules/mocha/bin/mocha.js ./test/npm-mongo.js ./test/mongo-url.test.js ./test/mongo-lock-index.js
+        run: node node_modules/mocha/bin/mocha.js ./test/npm-mongo.js ./test/mongo-url.test.js ./test/mongo-lock-index.js ./test/mongo-task-index.js
 
       - name: Adapter guards
         run: node node_modules/mocha/bin/mocha.js ./test/adapter-guards.js
@@ -438,7 +438,7 @@ jobs:
       fail-fast: false
       max-parallel: 12
       matrix:
-        mongo-server: ['6', '7', '8']
+        mongo-server: ['4.4', '5', '6', '7', '8']
 
     services:
       mongo:
@@ -446,7 +446,7 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' || mongo --quiet --eval 'db.runCommand({ping:1}).ok'"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10

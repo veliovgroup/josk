@@ -755,43 +755,61 @@ describe('RedisAdapter unit coverage', () => {
 });
 
 describe('MongoAdapter unit coverage', () => {
-  it('rebuilds conflicting indexes with matching keys', async () => {
-    const conflict = new Error('index conflict');
-    conflict.code = 85;
+  it('replaces only a non-unique uid index, which protects nothing', async () => {
     const taskCollection = createMongoCollection({
-      createIndex: jest.fn()
-        .mockRejectedValueOnce(conflict)
-        .mockResolvedValue(void 0),
-      indexes: jest.fn(async () => [{
-        name: 'wrong-length',
-        key: {
-          uid: 1,
-          extra: 1
-        }
-      }, {
-        name: 'wrong-direction',
-        key: {
-          uid: -1
-        }
-      }, {
-        name: 'uid_old',
-        key: {
-          uid: 1
-        }
-      }])
-    });
-    const db = createMongoDb({
-      taskCollection
+      indexes: jest.fn()
+        .mockResolvedValueOnce([{ name: 'wrong-length', key: { uid: 1, extra: 1 } }, { name: 'wrong-direction', key: { uid: -1 } }, { name: 'uid_old', key: { uid: 1 } }])
+        .mockResolvedValue([])
     });
     const adapter = new MongoAdapter({
-      db,
+      db: createMongoDb({ taskCollection }),
       prefix: uniquePrefix('mongo-index')
     });
 
     await adapter.ready();
 
+    expect(taskCollection.dropIndex).toHaveBeenCalledTimes(1);
     expect(taskCollection.dropIndex).toHaveBeenCalledWith('uid_old');
-    expect(taskCollection.createIndex).toHaveBeenCalledTimes(3);
+    expect(taskCollection.createIndex).toHaveBeenCalledWith({ uid: 1 }, { name: 'uid_1', unique: true });
+    expect(taskCollection.createIndex).toHaveBeenCalledWith({ isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' });
+  });
+
+  it('adopts existing task indexes of any name without DDL and never drops', async () => {
+    const taskCollection = createMongoCollection({
+      indexes: jest.fn(async () => [
+        { name: 'uid_unique', key: { uid: 1 }, unique: true },
+        { name: 'due_old', key: { isDeleted: 1, executeAt: 1 } }
+      ])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-task-adopt')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.createIndex).not.toHaveBeenCalled();
+    expect(taskCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('adopts a task index created concurrently and never drops a unique uid index', async () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict),
+      indexes: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'uid_1', key: { uid: 1 }, unique: true }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'due_lookup', key: { isDeleted: 1, executeAt: 1 } }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-task-race')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.dropIndex).not.toHaveBeenCalled();
   });
 
   it('adopts equivalent lock indexes without DDL and never drops', async () => {
