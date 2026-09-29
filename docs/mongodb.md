@@ -82,6 +82,8 @@ col.aggregate([
 
 Documents without a `uid` field form one group, and all but one of them are removed. The non-sparse unique index allows only one such document.
 
+A starter can adopt a unique index whose build is still in progress and continue before it finishes. If that build later fails on duplicates, only the process that started the build sees the error.
+
 Do not delete lock documents to work around a duplicate-key error. Repair of a production collection is a separate, manual operation.
 
 ## Mongoose, CosmosDB, DocumentDB

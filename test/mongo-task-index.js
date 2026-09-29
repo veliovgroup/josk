@@ -184,6 +184,7 @@ describe('MongoAdapter task collection indexes (JoSk 5 and 6 on one prefix)', fu
       error = e;
     }
     assert.match(error?.message || '', /duplicate "uid" documents.*manual_uid.*kept/s);
+    assert.equal(error.code, 11000);
     assert.deepEqual((await describeIndexes(ctx.col)).map((i) => i.name), ['manual_uid']);
   });
 

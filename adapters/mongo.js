@@ -64,7 +64,7 @@ const sameKeys = (a = {}, b = {}) => {
  * @param {{ keys: object, name: string, unique?: boolean, ttl?: boolean, expireAfterSeconds?: number, plain?: boolean, dropNonUnique?: boolean }} spec
  * @returns {Promise<void>}
  */
-const ensureIndexOnce = async (collection, spec) => {
+const ensureIndexOnce = async (collection, spec, state) => {
   const check = async () => {
     let indexes = [];
     try {
@@ -95,8 +95,10 @@ const ensureIndexOnce = async (collection, spec) => {
       if (spec.dropNonUnique && found.unique !== true && typeof found.expireAfterSeconds !== 'number') {
         // A non-unique index protects nothing, replacing it opens no duplicate window.
         // Never drop when duplicates exist: the unique index could not be built afterwards.
+        // The probe scans the whole collection, so it runs once per ensureIndex call, not once per retry.
         const key = Object.keys(spec.keys)[0];
-        const duplicates = await collection.aggregate([{ $group: { _id: `$${key}`, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }, { $limit: 1 }], { allowDiskUse: true }).toArray();
+        const duplicates = state.probed ? [] : await collection.aggregate([{ $group: { _id: `$${key}`, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }, { $limit: 1 }], { allowDiskUse: true }).toArray();
+        state.probed = true;
         if (duplicates.length > 0) {
           const dupError = new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; index "${found.name}" was kept. Dedupe the collection before starting JoSk 6 (see docs/mongodb.md).`);
           dupError.code = 11000;
@@ -157,12 +159,20 @@ const isBusyError = (error) => error?.code === 12587 || error?.code === 117 || e
  * @returns {Promise<void>}
  */
 const ensureIndex = async (collection, spec) => {
+  const state = { probed: false };
   for (let attempt = 0; ; attempt++) {
     try {
-      return await ensureIndexOnce(collection, spec);
+      return await ensureIndexOnce(collection, spec, state);
     } catch (error) {
-      if (attempt >= 8 || !isBusyError(error)) {
+      if (!isBusyError(error)) {
         throw error;
+      }
+
+      if (attempt >= 8) {
+        const busyError = new Error(`[josk] [MongoAdapter] index build on "${collection.collectionName}" stayed busy after ${attempt + 1} attempts`);
+        busyError.code = error.code;
+        busyError.cause = error;
+        throw busyError;
       }
       await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
     }
