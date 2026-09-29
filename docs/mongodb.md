@@ -55,8 +55,8 @@ db.getCollection('__JobTasks__.lock').deleteMany({});
 
 | Collection              | Index               | Purpose                                          |
 |-------------------------|---------------------|--------------------------------------------------|
-| `__JobTasks__<prefix>`  | `{ uid: 1 }` UNIQUE | Idempotent task add and direct removal by `uid`  |
-| `__JobTasks__<prefix>`  | `{ isDeleted: 1, executeAt: 1 }` | Drives the "due now" scan in `iterate()`  |
+| `__JobTasks__<prefix>`  | `{ uid: 1 }` UNIQUE, name `uid_1` | Idempotent task add and direct removal by `uid`  |
+| `__JobTasks__<prefix>`  | `{ isDeleted: 1, executeAt: 1 }`, name `due_lookup` | Drives the "due now" scan in `iterate()`  |
 | `__JobTasks__.lock`     | `{ uniqueName: 1 }` UNIQUE, name `uniqueName_1` | One lease document per `JoSk` instance prefix |
 | `__JobTasks__.lock`     | `{ expireAt: 1 }` TTL, name `expireAt_1`, `expireAfterSeconds: 1` | Auto-deletes leases past `expireAt`     |
 
@@ -66,7 +66,21 @@ On both collections `__setup` adopts an existing index with the same key pattern
 
 JoSk 5.0.0 drops and recreates a same-key index that has a different name or options. From 6.1.0 to 6.4.0, JoSk 6 used the names `uniqueName_unique` and `expireAt_ttl`, so each startup of one major version replaced the other's indexes. Between the drop and the re-create the collection has no unique index on `uniqueName`. Concurrent lock upserts then insert duplicate lease documents and two instances hold the same lock. If duplicates exist, the re-create fails and the collection stays without a unique index. Measured on MongoDB 4.2.2 with 5.x re-initialising every few milliseconds: the unique index was missing in 90% of samples, up to 8 lease documents existed for one name, and holders overlapped.
 
-From 6.4.1 JoSk 6 creates the same names and options as JoSk 5 and never drops. With 5.x and 6.4.1+ the layout is stable in either startup order. A collection that already has the 6.1.0 to 6.4.0 names (`uniqueName_unique`, `expireAt_ttl`, and `uid_unique` on the task collection) stays as it is, and a JoSk 5 startup would still replace those indexes. Until every JoSk 5 service is gone, give JoSk 6 its own `lockCollectionName` (for example `__JobTasks__.lock.v6`). The task collection follows the same rule: JoSk 5 and JoSk 6 can share a prefix (`__JobTasks__<prefix>`) only from 6.4.1, because earlier 6.x versions dropped and re-created the unique `uid` index on a name mismatch. In that window concurrent `add()` upserts can insert duplicate `uid` documents, and the next JoSk 6 startup then fails with a duplicate-key error. Do not delete lock documents to work around a duplicate-key error. Repair of a production collection is a separate, manual operation.
+From 6.4.1 JoSk 6 creates the same names and options as JoSk 5 and never drops. With 5.x and 6.4.1+ the layout is stable in either startup order. A collection that already has the 6.1.0 to 6.4.0 names (`uniqueName_unique`, `expireAt_ttl`, and `uid_unique` on the task collection) stays as it is, and a JoSk 5 startup would still replace those indexes. Until every JoSk 5 service is gone, give JoSk 6 its own `lockCollectionName` (for example `__JobTasks__.lock.v6`). The task collection follows the same rule: JoSk 5 and JoSk 6 can share a prefix (`__JobTasks__<prefix>`) only from 6.4.1, because earlier 6.x versions dropped and re-created the unique `uid` index on a name mismatch. In that window concurrent `add()` upserts can insert duplicate `uid` documents, and the next JoSk 6 startup then fails with a duplicate-key error. If startup fails with `duplicate "uid" documents`, the task collection already holds duplicates. Dedupe manually before starting JoSk 6. This recipe is destructive; back up the collection first, and stop every JoSk service on that prefix. It keeps the document with the largest `_id` for each `uid`:
+
+```js
+const col = db.collection('__JobTasks__<prefix>');
+const dups = await col.aggregate([
+  { $sort: { _id: -1 } },
+  { $group: { _id: '$uid', keep: { $first: '$_id' }, ids: { $push: '$_id' }, n: { $sum: 1 } } },
+  { $match: { n: { $gt: 1 } } }
+]).toArray();
+for (const d of dups) {
+  await col.deleteMany({ uid: d._id, _id: { $ne: d.keep } });
+}
+```
+
+Do not delete lock documents to work around a duplicate-key error. Repair of a production collection is a separate, manual operation.
 
 ## Mongoose, CosmosDB, DocumentDB
 

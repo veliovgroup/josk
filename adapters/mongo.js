@@ -87,10 +87,27 @@ const ensureIndex = async (collection, spec) => {
       usable = typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression;
     }
 
+    if (usable && spec.plain && (found.partialFilterExpression || found.hidden)) {
+      console.warn(`[josk] [MongoAdapter] adopted index "${found.name}" on "${collection.collectionName}" is ${found.hidden ? 'hidden' : 'partial'}; the due-task scan may not use it`);
+    }
+
     if (!usable) {
-      if (spec.dropNonUnique && found.unique !== true) {
-        // A non-unique index protects nothing, replacing it opens no duplicate window
-        await collection.dropIndex(found.name);
+      if (spec.dropNonUnique && found.unique !== true && typeof found.expireAfterSeconds !== 'number') {
+        // A non-unique index protects nothing, replacing it opens no duplicate window.
+        // Never drop when duplicates exist: the unique index could not be built afterwards.
+        const key = Object.keys(spec.keys)[0];
+        const duplicates = await collection.aggregate([{ $group: { _id: `$${key}`, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }, { $limit: 1 }]).toArray();
+        if (duplicates.length > 0) {
+          throw new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; index "${found.name}" was kept. Dedupe the collection before starting JoSk 6 (see docs/mongodb.md).`);
+        }
+
+        try {
+          await collection.dropIndex(found.name);
+        } catch (error) {
+          if (error?.code !== 27 && error?.codeName !== 'IndexNotFound') {
+            throw error;
+          }
+        }
         return false;
       }
 
@@ -114,6 +131,10 @@ const ensureIndex = async (collection, spec) => {
   try {
     await collection.createIndex(spec.keys, options);
   } catch (error) {
+    if (spec.unique && error?.code === 11000) {
+      throw new Error(`[josk] [MongoAdapter] duplicate "${Object.keys(spec.keys)[0]}" documents in "${collection.collectionName}"; dedupe before starting JoSk 6 (see docs/mongodb.md)`);
+    }
+
     const conflict = error?.code === 85 || error?.code === 86 || error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict' || error?.code === 68 || error?.codeName === 'IndexAlreadyExists';
     if (!conflict || !(await check())) {
       throw error;

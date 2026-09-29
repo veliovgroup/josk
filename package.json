@@ -107,7 +107,7 @@
     "chai": "^6.2.2",
     "cron-parser": "^5.5.0",
     "jest": "^30.4.2",
-    "josk5": "npm:josk@^5.0.0",
+    "josk5": "npm:josk@5.0.0",
     "mocha": "^11.7.5",
     "mongodb": "^7.2.0",
     "mongodb5": "npm:mongodb@^5.9.2",

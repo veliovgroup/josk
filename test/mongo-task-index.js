@@ -161,6 +161,54 @@ describe('MongoAdapter task collection indexes (JoSk 5 and 6 on one prefix)', fu
     assert.equal(withoutUnique, 0, `unique uid index missing in ${withoutUnique}/${samples} samples`);
     const duplicates = await ctx.col.aggregate([{ $group: { _id: '$uid', n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }]).toArray();
     assert.lengthOf(duplicates, 0, 'duplicate uid documents');
+    await v5Ready(db, ctx.prefix, ctx.lock);
     await v6(ctx).ready();
+  });
+
+  it('starts concurrently over a manual non-unique uid index: every start fulfils, one unique index remains', async () => {
+    const ctx = fresh('race');
+    await ctx.col.createIndex({ uid: 1 }, { name: 'manual_uid' });
+    const results = await Promise.allSettled(Array.from({ length: 4 }, () => v6(ctx).ready()));
+    assert.deepEqual(results.map((r) => r.status), ['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled'], results.map((r) => r.reason?.message).join('; '));
+    assert.deepEqual(await describeIndexes(ctx.col), [DUE, UID]);
+  });
+
+  it('keeps a non-unique uid index and throws when duplicate uid documents exist', async () => {
+    const ctx = fresh('dups');
+    await ctx.col.createIndex({ uid: 1 }, { name: 'manual_uid' });
+    await ctx.col.insertMany([{ uid: 'same' }, { uid: 'same' }]);
+    let error;
+    try {
+      await v6(ctx).ready();
+    } catch (e) {
+      error = e;
+    }
+    assert.match(error?.message || '', /duplicate "uid" documents.*manual_uid.*kept/s);
+    assert.deepEqual((await describeIndexes(ctx.col)).map((i) => i.name), ['manual_uid']);
+  });
+
+  it('maps a duplicate-key failure on the unique uid index to an actionable error', async () => {
+    const ctx = fresh('e11000');
+    await ctx.col.insertMany([{ uid: 'same' }, { uid: 'same' }]);
+    let error;
+    try {
+      await v6(ctx).ready();
+    } catch (e) {
+      error = e;
+    }
+    assert.match(error?.message || '', /duplicate "uid" documents in ".*"; dedupe before starting JoSk 6/);
+  });
+
+  it('never drops a non-unique TTL index on uid', async () => {
+    const ctx = fresh('ttl');
+    await ctx.col.createIndex({ uid: 1 }, { name: 'ttl_uid', expireAfterSeconds: 3600 });
+    let error;
+    try {
+      await v6(ctx).ready();
+    } catch (e) {
+      error = e;
+    }
+    assert.match(error?.message || '', /ttl_uid.*not a plain unique index/s);
+    assert.deepEqual((await describeIndexes(ctx.col)).map((i) => i.name), ['ttl_uid']);
   });
 });

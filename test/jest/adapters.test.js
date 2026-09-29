@@ -109,6 +109,7 @@ const setupRedisAdapter = async (clientOpts = {}, adapterOpts = {}) => {
 
 const createMongoCollection = (overrides = {}) => ({
   createIndex: jest.fn(async () => void 0),
+  aggregate: jest.fn(() => ({ toArray: async () => [] })),
   indexes: jest.fn(async () => []),
   dropIndex: jest.fn(async () => void 0),
   deleteMany: jest.fn(async () => ({ deletedCount: 0 })),
@@ -772,6 +773,26 @@ describe('MongoAdapter unit coverage', () => {
     expect(taskCollection.dropIndex).toHaveBeenCalledWith('uid_old');
     expect(taskCollection.createIndex).toHaveBeenCalledWith({ uid: 1 }, { name: 'uid_1', unique: true });
     expect(taskCollection.createIndex).toHaveBeenCalledWith({ isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' });
+  });
+
+  it('treats an already dropped non-unique uid index as gone and warns on a partial due index', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const taskCollection = createMongoCollection({
+      dropIndex: jest.fn().mockRejectedValue(Object.assign(new Error('gone'), { code: 27, codeName: 'IndexNotFound' })),
+      indexes: jest.fn()
+        .mockResolvedValueOnce([{ name: 'uid_old', key: { uid: 1 } }])
+        .mockResolvedValue([{ name: 'due_partial', key: { isDeleted: 1, executeAt: 1 }, partialFilterExpression: { isDeleted: false } }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-drop-race')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.dropIndex).toHaveBeenCalledWith('uid_old');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('due_partial'));
+    warn.mockRestore();
   });
 
   it('adopts existing task indexes of any name without DDL and never drops', async () => {
