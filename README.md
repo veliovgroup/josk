@@ -158,7 +158,7 @@ Hook throws and async rejections are logged and isolated from scheduler executio
 
 - `opts.db` {*Db*} - [*Required*] `Db` instance from `MongoClient#db()`
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
-- `opts.lockCollectionName` {*String*} - [Optional] Lock collection name. Default: `__JobTasks__.lock`, shared by all JoSk instances
+- `opts.lockCollectionName` {*String*} - [Optional] Lock collection name. Default: `__JobTasks__.lock`, shared by all JoSk instances. Use a separate name for JoSk 6 while JoSk 5 services still use the default, see [MongoDB guide](docs/mongodb.md#sharing-the-lock-collection-between-josk-5-and-6)
 - `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) Delete all tasks for this `prefix` on init. For single-instance apps that need a clean start after a crash. Default: `false`
 
 ### `new PostgresAdapter(opts)`

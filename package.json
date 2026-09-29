@@ -29,7 +29,7 @@
     "test:coverage": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs --coverage",
     "test:types": "tsc -p ./tsconfig.types.json && node ./test/types/packed.mjs",
     "test:redis": "mocha ./test/npm-redis.js",
-    "test:mongo": "mocha ./test/npm-mongo.js ./test/mongo-url.test.js",
+    "test:mongo": "mocha ./test/npm-mongo.js ./test/mongo-url.test.js ./test/mongo-lock-index.js",
     "test:postgres": "mocha ./test/npm-postgres.js"
   },
   "keywords": [

@@ -794,6 +794,111 @@ describe('MongoAdapter unit coverage', () => {
     expect(taskCollection.createIndex).toHaveBeenCalledTimes(3);
   });
 
+  it('adopts equivalent lock indexes without DDL and never drops', async () => {
+    const lockCollection = createMongoCollection({
+      indexes: jest.fn(async () => [{
+        name: 'uniqueName_unique',
+        key: { uniqueName: 1 },
+        unique: true
+      }, {
+        name: 'expireAt_ttl',
+        key: { expireAt: 1 },
+        expireAfterSeconds: 0
+      }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-adopt')
+    });
+
+    await adapter.ready();
+
+    expect(lockCollection.createIndex).not.toHaveBeenCalled();
+    expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('creates lock indexes with JoSk 5 compatible names and options', async () => {
+    const lockCollection = createMongoCollection({
+      indexes: jest.fn().mockRejectedValue(Object.assign(new Error('ns not found'), { code: 26 }))
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-create')
+    });
+
+    await adapter.ready();
+
+    expect(lockCollection.createIndex).toHaveBeenCalledWith({ uniqueName: 1 }, { name: 'uniqueName_1', unique: true });
+    expect(lockCollection.createIndex).toHaveBeenCalledWith({ expireAt: 1 }, { name: 'expireAt_1', expireAfterSeconds: 1 });
+  });
+
+  it('adopts a lock index created concurrently instead of dropping it', async () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const lockCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict),
+      indexes: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'uniqueName_1', key: { uniqueName: 1 }, unique: true }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'expireAt_1', key: { expireAt: 1 }, expireAfterSeconds: 1 }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-race')
+    });
+
+    await adapter.ready();
+
+    expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a lock index conflict that no existing index resolves', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const lockCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-unresolved')
+    });
+
+    await expect(adapter.ready()).rejects.toBe(conflict);
+    expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+    console.error.mockRestore();
+  });
+
+  it('throws an actionable error for an unusable lock index and leaves it in place', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    for (const [index, pattern] of [
+      [{ name: 'manual', key: { uniqueName: 1 } }, /manual.*not a plain unique index/],
+      [{ name: 'manual', key: { uniqueName: 1 }, unique: true, partialFilterExpression: { a: 1 } }, /not a plain unique index/]
+    ]) {
+      const lockCollection = createMongoCollection({
+        indexes: jest.fn(async () => [index])
+      });
+      const adapter = new MongoAdapter({
+        db: createMongoDb({ lockCollection }),
+        prefix: uniquePrefix('mongo-lock-bad')
+      });
+
+      await expect(adapter.ready()).rejects.toThrow(pattern);
+      expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+      expect(lockCollection.createIndex).not.toHaveBeenCalled();
+    }
+
+    const ttlCollection = createMongoCollection({
+      indexes: jest.fn(async () => [{ name: 'uniqueName_1', key: { uniqueName: 1 }, unique: true }, { name: 'plain', key: { expireAt: 1 } }])
+    });
+    const ttlAdapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection: ttlCollection }),
+      prefix: uniquePrefix('mongo-lock-nottl')
+    });
+    await expect(ttlAdapter.ready()).rejects.toThrow(/plain.*not a TTL index/);
+    expect(ttlCollection.dropIndex).not.toHaveBeenCalled();
+    console.error.mockRestore();
+  });
+
   it('logs setup index failures for each setup index', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 

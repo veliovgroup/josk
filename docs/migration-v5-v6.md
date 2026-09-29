@@ -7,6 +7,7 @@
 - New adapter: `PostgresAdapter`.
 - `PostgresAdapter` uses composite `(prefix, uid)` primary key. The adapter auto-migrates the table on startup, but the migration runs DDL — use a low-traffic deployment window.
 - `MongoAdapter` previously defaulted the prefix to `''`, producing the collection `__JobTasks__`. v6 defaults to `'default'`, producing `__JobTasks__default`. If you used the implicit empty prefix in v4/v5, pass `prefix: ''` explicitly to preserve the collection name, or migrate data: `db.__JobTasks__.renameCollection('__JobTasks__default')`.
+- JoSk 5 and 6 must not share a lock collection unless JoSk 6 is 6.4.1 or newer and the collection does not carry the 6.0 to 6.4.0 index names. Otherwise each startup replaces the other's unique index and locks can be held twice. Set `lockCollectionName` on the JoSk 6 side. See [MongoDB guide](mongodb.md#sharing-the-lock-collection-between-josk-5-and-6).
 - Lock release now checks lease ownership; a JoSk instance can no longer release a foreign lease. **If you have custom adapters, follow the [adapter API contract](adapter-api.md).**
 - If you use `cron-parser` — bump to `^5` and switch from `parser.parseExpression(...)` to `CronExpressionParser.parse(...)`.
 - v6 also added `concurrency` (default `Infinity`), Bun runtime support (≥1.1.0), and auto-`ready()` for sync handlers declared with `func.length === 0`.

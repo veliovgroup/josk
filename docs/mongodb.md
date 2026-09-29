@@ -57,10 +57,16 @@ db.getCollection('__JobTasks__.lock').deleteMany({});
 |-------------------------|---------------------|--------------------------------------------------|
 | `__JobTasks__<prefix>`  | `{ uid: 1 }` UNIQUE | Idempotent task add and direct removal by `uid`  |
 | `__JobTasks__<prefix>`  | `{ isDeleted: 1, executeAt: 1 }` | Drives the "due now" scan in `iterate()`  |
-| `__JobTasks__.lock`     | `{ uniqueName: 1 }` UNIQUE | One lease document per `JoSk` instance prefix |
-| `__JobTasks__.lock`     | `{ expireAt: 1 }` TTL (`expireAfterSeconds: 0`) | Auto-deletes leases past `expireAt`     |
+| `__JobTasks__.lock`     | `{ uniqueName: 1 }` UNIQUE, name `uniqueName_1` | One lease document per `JoSk` instance prefix |
+| `__JobTasks__.lock`     | `{ expireAt: 1 }` TTL, name `expireAt_1`, `expireAfterSeconds: 1` | Auto-deletes leases past `expireAt`     |
 
-Do not drop or modify these indexes manually — `__setup` recreates them on next startup.
+The task-collection indexes are recreated on next startup if dropped. On the lock collection, `__setup` adopts any existing index with the same key pattern, whatever its name or TTL value, and never drops one. It throws if the existing index on `uniqueName` is not plain unique, or the one on `expireAt` is not a TTL index. Fix or drop that index manually, or set another `lockCollectionName`.
+
+### Sharing the lock collection between JoSk 5 and 6
+
+JoSk 5.0.0 drops and recreates a same-key index that has a different name or options. Before 6.4.1, JoSk 6 used the names `uniqueName_unique` and `expireAt_ttl`, so each startup of one major version replaced the other's indexes. Between the drop and the re-create the collection has no unique index on `uniqueName`. Concurrent lock upserts then insert duplicate lease documents and two instances hold the same lock. If duplicates exist, the re-create fails and the collection stays without a unique index. Measured on MongoDB 4.2.2 with 5.x re-initialising every few milliseconds: the unique index was missing in 90% of samples, up to 8 lease documents existed for one name, and holders overlapped.
+
+From 6.4.1 JoSk 6 creates the same names and options as JoSk 5 and never drops. With 5.x and 6.4.1+ the layout is stable in either startup order. A collection that already has the 6.0 to 6.4.0 names (`uniqueName_unique`, `expireAt_ttl`) stays as it is, and a JoSk 5 startup would still replace those indexes. Until every JoSk 5 service is gone, give JoSk 6 its own `lockCollectionName` (for example `__JobTasks__.lock.v6`). Do not delete lock documents to work around a duplicate-key error. Repair of a production collection is a separate, manual operation.
 
 ## Mongoose, CosmosDB, DocumentDB
 

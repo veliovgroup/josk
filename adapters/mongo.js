@@ -88,6 +88,60 @@ const ensureIndex = async (collection, keys, opts) => {
   }
 };
 
+const sameKeys = (a = {}, b = {}) => {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  return ak.length === bk.length && ak.every((key, i) => bk[i] === key && a[key] === b[key]);
+};
+
+/**
+ * Shared lock collection indexes. Never drops an index: JoSk 5.x and 6.x can
+ * share this collection, and a drop opens a window without the unique index,
+ * where concurrent upserts insert duplicate lock documents. An existing index
+ * with the same key pattern is adopted whatever its name is.
+ * Names and options match JoSk 5.x, so a 5.x startup finds them unchanged.
+ * @param {object} collection
+ * @param {{ keys: object, name: string, unique?: boolean, ttl?: boolean, expireAfterSeconds?: number }} spec
+ * @returns {Promise<void>}
+ */
+const ensureLockIndex = async (collection, spec) => {
+  const check = async () => {
+    let indexes = [];
+    try {
+      indexes = await collection.indexes();
+    } catch (error) {
+      if (error?.code !== 26 && error?.codeName !== 'NamespaceNotFound') {
+        throw error;
+      }
+    }
+
+    const found = indexes.find((index) => sameKeys(index.key, spec.keys));
+    if (!found) {
+      return false;
+    }
+
+    const usable = spec.unique ? (found.unique === true && !found.partialFilterExpression) : (typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression);
+    if (!usable) {
+      throw new Error(`[josk] [MongoAdapter] index "${found.name}" on "${collection.collectionName}" has the key ${JSON.stringify(spec.keys)} but is not ${spec.unique ? 'a plain unique index' : 'a TTL index'}. JoSk never drops indexes on the shared lock collection. Drop or fix this index manually, or set a separate {lockCollectionName}.`);
+    }
+
+    return true;
+  };
+
+  if (await check()) {
+    return;
+  }
+
+  try {
+    await collection.createIndex(spec.keys, spec.unique ? { name: spec.name, unique: true } : { name: spec.name, expireAfterSeconds: spec.expireAfterSeconds });
+  } catch (error) {
+    const conflict = error?.code === 85 || error?.code === 86 || error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict' || error?.code === 68 || error?.codeName === 'IndexAlreadyExists';
+    if (!conflict || !(await check())) {
+      throw error;
+    }
+  }
+};
+
 /**
  * Update pipeline for re-registering an interval. Preserve a claimed task's
  * recovery deadline; otherwise keep an unchanged interval's earlier schedule.
@@ -186,13 +240,13 @@ class MongoAdapter {
       throw error;
     });
 
-    await ensureIndex(this.lockCollection, { uniqueName: 1 }, { name: 'uniqueName_unique', unique: true }).catch((error) => {
-      logError(error, '[setup] [createIndex] uniqueName_unique');
+    await ensureLockIndex(this.lockCollection, { keys: { uniqueName: 1 }, name: 'uniqueName_1', unique: true }).catch((error) => {
+      logError(error, '[setup] [ensureLockIndex] uniqueName_1');
       throw error;
     });
 
-    await ensureIndex(this.lockCollection, { expireAt: 1 }, { name: 'expireAt_ttl', expireAfterSeconds: 0 }).catch((error) => {
-      logError(error, '[setup] [createIndex] expireAt_ttl');
+    await ensureLockIndex(this.lockCollection, { keys: { expireAt: 1 }, name: 'expireAt_1', expireAfterSeconds: 1 }).catch((error) => {
+      logError(error, '[setup] [ensureLockIndex] expireAt_1');
       throw error;
     });
 

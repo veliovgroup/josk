@@ -118,7 +118,7 @@ const jobs = new JoSk({
 |---|---|---|---|
 | `db` | `Db` | — | **Required.** `Db` instance from `MongoClient#db()`. Must come from the official `mongodb` driver. |
 | `prefix` | `string` | `'default'` | Appended to the tasks collection name. v4 implicitly used `''` (producing `__JobTasks__`); v5+ defaults to `'default'` (producing `__JobTasks__default`). |
-| `lockCollectionName` | `string` | `'__JobTasks__.lock'` | Override only if it conflicts with an existing collection. The lock collection is shared across prefixes — isolation is by the `uniqueName` field on each lock row. |
+| `lockCollectionName` | `string` | `'__JobTasks__.lock'` | Override only if it conflicts with an existing collection. The lock collection is shared across prefixes — isolation is by the `uniqueName` field on each lock row. JoSk 5 and JoSk 6 (before 6.4.1, or on a collection with the 6.0-6.4.0 index names) replace each other's unique index on startup, so mixed fleets need a separate `lockCollectionName` per major version. From 6.4.1 the adapter adopts existing same-key indexes and never drops them. |
 | `resetOnInit` | `boolean` | `false` | Deletes all rows in the current-prefix tasks collection on init. |
 
 ### Collections created
