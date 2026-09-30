@@ -46,9 +46,10 @@ __Note: JoSk is the server-only package.__
   - [Pass arguments](#pass-arguments)
   - [Clean up old tasks](#clean-up-old-tasks)
   - [MongoDB tuning](#mongodb-connection-fine-tuning)
+  - [Redis tuning](https://github.com/veliovgroup/josk/blob/master/docs/redis.md)
   - [Meteor.js](https://github.com/veliovgroup/josk/blob/master/docs/meteor.md)
-- [Prefix mapping](#prefix-mapping)
-- [Operational FAQ](#operational-faq)
+- [Prefix mapping](https://github.com/veliovgroup/josk/blob/master/docs/operations.md#prefix-mapping)
+- [Operational FAQ](https://github.com/veliovgroup/josk/blob/master/docs/operations.md#operational-faq)
 - [Migration guides](https://github.com/veliovgroup/josk/blob/master/docs/README.md#migration-guides)
 - [Notes](#notes)
 - [Running tests](#running-tests)
@@ -60,13 +61,13 @@ __Note: JoSk is the server-only package.__
 - 🏢 Synchronize single task across multiple servers;
 - 🔏 Read locking to avoid simultaneous task executions across complex infrastructure;
 - 📦 Zero dependencies, written from scratch for top performance;
-- 👨‍🔬 ~99% tests coverage;
+- 👨‍🔬 ~97% tests coverage;
 - 💪 Bulletproof design, built-in retries, and "zombie" task recovery 🧟🔫.
 
 ## Prerequisites
 
-- `node@>=14.21.3` (tested on 14.21.3, 16.20.2, 18.19.1, 20.11.1, 22.21.1, and 24.16.0; the official `mongodb` driver constrains the floor: `mongodb@5` needs Node 14.20.1+, `mongodb@6` needs 16.20.1+, `mongodb@7` needs 20.19+, `redis@5` needs 18.19+, and `pg@8.20` needs 16+. `RedisAdapter` and `PostgresAdapter` are covered by mock-client tests only on Node below 20; live Redis and PostgreSQL runs stay on Node 20, 22, and 24)
-- `redis-server@>=5.0.0` or a single-writer KeyDB/Valkey server for `RedisAdapter`, with `redis@^4` or `redis@^5`. CI targets selected standalone images; see [Redis Adapter](#redis-adapter) for exact coverage.
+- `node@>=14.21.3`. Newer drivers need newer Node; see [tested runtimes](https://github.com/veliovgroup/josk/blob/master/docs/testing.md#tested-runtimes)
+- `redis-server@>=5.0.0` or a single-writer KeyDB/Valkey server for `RedisAdapter`, with `redis@^4` or `redis@^5`. CI targets selected standalone images; see the [Redis guide](https://github.com/veliovgroup/josk/blob/master/docs/redis.md#compatible-servers) for exact coverage.
 - `mongod@>=4.4` for `MongoAdapter`, with the official `mongodb` NPM package (only the official driver is tested)
 - `postgres@>=12` for `PostgresAdapter`, with `pg@>=8.0.3` (`pg@7` does not connect on Node 14+; `pg@8.20` declares Node 16+)
 - `bun@>=1.1.0` (optional), see [Bun runtime](#bun-runtime)
@@ -120,10 +121,10 @@ The skill is distributed via GitHub and is not part of the npm tarball.
 - `opts.debug` {*Boolean*} - [Optional] Enable debugging messages, useful during development
 - `opts.autoClear` {*Boolean*} - [Optional] Remove stored tasks that have no handler registered in this instance. Such tasks appear after a task is renamed or removed from code, or when instances with different codebases share one storage. Default: `false`
 - `opts.zombieTime` {*Number*} - [Optional] Interval recovery hold in milliseconds, used when a handler never calls `ready()` or its process dies. Caught handler errors go to `onError` and complete the run; they do not wait for zombie recovery. Keep it above the slowest legitimate handler runtime plus margin; below `60000` is not recommended. Default: `900000` (15 minutes)
-- `opts.lockLeaseTime` {*Number*} - [Optional] Scheduler lease TTL in milliseconds. Default: `min(zombieTime, 30000)`, floored at `2 * maxRevolvingDelay + 1000`. See [v6.3 migration notes](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.2-v6.3.md)
+- `opts.lockLeaseTime` {*Number*} - [Optional] Scheduler lease TTL in milliseconds. Default: `min(zombieTime, 30000)`. Any value is raised to at least `2 * maxRevolvingDelay + 1000`; a non-positive or non-finite value throws. See [v6.3 migration notes](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.2-v6.3.md)
 - `opts.execute` {*String*} - [Optional] `batch` drains all due tasks under one scheduler lease; `one` claims one task per lease. Default: `batch`
 - `opts.concurrency` {*Number*} - [Optional] Maximum handlers running in parallel in this instance. Use a positive integer when handlers share rate-limited resources; `Infinity` disables the cap. Default: `Infinity`
-- `opts.lockOwnerId` {*String*} - [Optional] Stable owner id used as the prefix of scheduler lease tokens, for observability and for re-claiming this instance's leases after a planned restart. Default: `crypto.randomUUID()` per instance
+- `opts.lockOwnerId` {*String*} - [Optional] Stable owner id used as the prefix of scheduler lease tokens, for observability. Default: `josk-` plus a random UUID per instance
 - `opts.minRevolvingDelay` {*Number*} - [Optional] Minimum delay between scheduler polls in milliseconds. Default: `128`
 - `opts.maxRevolvingDelay` {*Number*} - [Optional] Maximum delay between scheduler polls in milliseconds. Default: `768`
 - `opts.onError` {*Function*} - [Optional] Informational hook, called instead of throwing exceptions. Default: `false`. Called with two arguments:
@@ -131,7 +132,7 @@ The skill is distributed via GitHub and is not part of the npm tarball.
   - `details` {*Object*}
   - `details.description` {*String*}
   - `details.error` {*Mix*}
-  - `details.uid` {*String*} - Internal `uid`, suitable for `.clearInterval()` and `.clearTimeout()`
+  - `details.uid` {*String*|*null*} - Internal `uid`, suitable for `.clearInterval()` and `.clearTimeout()`; `null` when the error is not tied to a task
   - `details.task` {*Mix*} - Present only for malformed-task errors; the offending task payload
 - `opts.onExecuted` {*Function*} - [Optional] Informational hook, called when a handler signals completion, including after a caught error. It does not indicate success. Default: `false`. Called with two arguments:
   - `uid` {*String*} - `uid` passed into `.setImmediate()`, `.setTimeout()`, or `setInterval()` methods
@@ -158,7 +159,7 @@ Hook throws and async rejections are logged and isolated from scheduler executio
 
 - `opts.db` {*Db*} - [*Required*] `Db` instance from `MongoClient#db()`
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
-- `opts.lockCollectionName` {*String*} - [Optional] Lock collection name. Default: `__JobTasks__.lock`, shared by all JoSk instances. Use a separate name for JoSk 6 while JoSk 5 services still use the default, see [MongoDB guide](docs/mongodb.md#sharing-the-lock-collection-between-josk-5-and-6)
+- `opts.lockCollectionName` {*String*} - [Optional] Lock collection name. Default: `__JobTasks__.lock`, shared by all JoSk instances. Use a separate name for JoSk 6 while JoSk 5 services still use the default, see [MongoDB guide](https://github.com/veliovgroup/josk/blob/master/docs/mongodb.md#sharing-the-lock-collection-between-josk-5-and-6)
 - `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) Delete all tasks for this `prefix` on init. For single-instance apps that need a clean start after a crash. Default: `false`
 
 ### `new PostgresAdapter(opts)`
@@ -171,16 +172,15 @@ Hook throws and async rejections are logged and isolated from scheduler executio
 
 ### Initialization
 
-JoSk has no dependencies. Install the driver for your adapter: `redis`, `mongodb`, or `pg`. To use other storage, write a [custom adapter](docs/adapter-api.md).
+JoSk has no dependencies. Install the driver for your adapter: `redis`, `mongodb`, or `pg`. To use other storage, write a [custom adapter](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md).
 
 #### Redis Adapter
 
-`RedisAdapter` keeps due timestamps in a sorted set and task payloads in a hash, and claims due tasks with Lua scripts. It uses the Redis-compatible commands shared by Redis, [KeyDB](https://docs.keydb.dev/), and Valkey; CI targets Redis 6/7/8, `eqalpha/keydb:x86_64_v6.3.4`, and `valkey/valkey:8.1.9-alpine` in standalone mode using `redis@5`.
+`RedisAdapter` keeps due timestamps in a sorted set and task payloads in a hash, and claims due tasks with Lua scripts.
 
 - Use one writable primary. Do not route JoSk reads or writes to replicas; claims must be visible to all instances at once.
-- For Redis Cluster, pass `useHashTags: true`; CI tests a 3-master Redis Cluster. KeyDB/Valkey Cluster modes are not separately tested.
-- Avoid KeyDB active-replication (multi-master). Its conflict resolution can let two writers claim the same task.
-- For strict single-claim scheduling across data centers, use a strongly consistent store, or PostgreSQL with one write authority.
+- For Redis Cluster, pass `useHashTags: true`.
+- KeyDB, Valkey, multi-data-center setups, and CI coverage are in the [Redis guide](https://github.com/veliovgroup/josk/blob/master/docs/redis.md).
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -205,7 +205,7 @@ const jobs = new JoSk({
 
 #### MongoDB Adapter
 
-`MongoAdapter` creates two collections per `prefix`: one for tasks and one with the `.lock` suffix for scheduler locks.
+`MongoAdapter` creates one task collection per `prefix` (`__JobTasks__<prefix>`) and one lock collection (`__JobTasks__.lock`) shared by all prefixes.
 
 ```js
 import { JoSk, MongoAdapter } from 'josk';
@@ -230,13 +230,13 @@ const jobs = new JoSk({
 
 *Since* `v6.0.0`
 
-`PostgresAdapter` creates and migrates the `josk_tasks` and `josk_locks` tables on init, in the client's current database and schema. Table names are fixed; `prefix` isolates namespaces.
+`PostgresAdapter` creates and migrates the `josk_tasks`, `josk_locks`, and `josk_meta` tables on init, in the client's current database and schema. Table names are fixed; `prefix` isolates namespaces.
 
-- Use `pg.Pool`. Share the app's pool, or give the scheduler a small dedicated one.
+- Pass `pg.Pool` (recommended) or a connected `pg.Client`. Share the app's pool, or give the scheduler a small dedicated one. Schema setup runs in one transaction under `pg_advisory_xact_lock`, so it also works behind PgBouncer in transaction mode.
 - Use one writable primary. Do not route JoSk reads or writes to replicas.
 - Prefer a dedicated database or schema.
 - Keep `resetOnInit: false` in clustered production.
-- `execute: 'batch'` claims due tasks with `FOR UPDATE SKIP LOCKED`; `execute: 'one'` uses `LIMIT 1` per lease.
+- Both execute modes claim with `FOR UPDATE SKIP LOCKED`; `batch` takes 100 rows per query, `one` takes 1 row per lease.
 
 ```js
 import { JoSk, PostgresAdapter } from 'josk';
@@ -407,7 +407,7 @@ await jobs.clearTimeout(timer);
 
 - Returns: {*boolean*} `true` if instance successfully destroyed, `false` if instance already destroyed
 
-Stops this instance's scheduler. After `destroy()`, only `clearTimeout()` and `clearInterval()` work; other methods report an error to `onError` (or `stdout`).
+Stops this instance's scheduler. After `destroy()`, `set*` methods resolve `''` and report to `onError` (or to the debug log with `debug: true`); `pause()` and `resume()` return `false`. `ping()`, `clearTimeout()`, `clearInterval()`, and `shutdown()` still work.
 
 `destroy()` does not wait for running handlers. Tasks this instance claimed but had not started go back to storage. An interval killed mid-run is recovered by another instance after `zombieTime`; use [`shutdown()`](#shutdownopts) before process exit to avoid that wait.
 
@@ -418,7 +418,7 @@ Stops this instance's scheduler. After `destroy()`, only `clearTimeout()` and `c
 - `opts.timeout` {*Number*} - [Optional] Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
 - Returns: {*`Promise<boolean>`*} `true` if every running handler finished within `timeout`
 
-Calls `destroy()`, waits for running handlers, then hands unfinished interval claims back to storage so another instance runs them on its next poll instead of after `zombieTime`. A handler that calls `ready()` after its claim was handed back does not change the schedule; `onExecuted` still fires because the handler ran. Repeated calls share the first shutdown attempt and timeout; when it expires, JoSk reports every unfinished handler to `onError` (or `console.error`), hands current interval claims back, and abandons one-shot tasks to preserve at-most-once behavior. The latest superseded handler of each task also counts as unfinished, but its obsolete claim is left unchanged; older superseded handlers are not tracked. Keep at-most-once handlers idempotent, or set `timeout` longer than the longest one-shot handler; keep it below your platform's termination grace period. `timeout` covers only the wait for handlers; shutdown also waits for an in-flight poll and the hand-back writes, so leave a few seconds of headroom.
+Calls `destroy()`, waits for running handlers, then hands unfinished interval claims back to storage so another instance runs them on its next poll instead of after `zombieTime`. When `timeout` expires, JoSk reports every unfinished handler to `onError` (or `console.error`), hands current interval claims back, and abandons one-shot tasks to preserve at-most-once behavior. Keep at-most-once handlers idempotent, or set `timeout` longer than the longest one-shot handler; keep it below your platform's termination grace period. Repeated calls, late `ready()` calls, and timing headroom are covered in [shutdown details](https://github.com/veliovgroup/josk/blob/master/docs/monitoring.md#shutdown-details).
 
 ```js
 const shutdown = async () => {
@@ -439,18 +439,19 @@ Checks scheduler readiness and the storage connection.
 ```js
 const pingResult = await jobs.ping();
 // OK:     { status: 'OK', code: 200, statusCode: 200 }
-// Failed: { status: 'Error reason', code: 500, statusCode: 500, error: ErrorObject }
+// Failed: { status: 'Internal Server Error', code: 500, statusCode: 500, error: ErrorObject }
+// MongoAdapter can also return { status: 'Service Unavailable', code: 503, statusCode: 503, error: ErrorObject }
 ```
 
 ### `pause()`
 
 - Signature: `pause()` or `pause(timerId)`
-- Returns: {*boolean*} `true` if pause state changed, `false` if already paused for that scope
+- Returns: {*boolean*} `true` if pause state changed, `false` if already paused for that scope or the instance is destroyed
 
 For multi-instance setups with long-running handlers only. Other instances keep running tasks while this one is paused. Single-instance apps and short handlers gain nothing.
 
 - `pause()` — this instance stops taking the scheduler lease. Running handlers continue, and tasks stay in storage.
-- `pause(timerId)` — when this instance claims that task, it reschedules it without running the handler, so another instance can run it. Pass the timer id returned by `set*`, not the bare `uid`.
+- `pause(timerId)` — when this instance claims that task, it hands it back due in 2 seconds without running the handler, so another instance can run it. Pass the timer id returned by `set*`; a bare `uid` throws.
 
 ```js
 if (loadSheddingActive()) {
@@ -463,7 +464,7 @@ jobs.pause(heavy); // only skip this task on this instance
 ### `resume()`
 
 - Signature: `resume()` or `resume(timerId)`
-- Returns: {*boolean*} `true` if pause cleared, `false` if not paused
+- Returns: {*boolean*} `true` if pause cleared, `false` if not paused or the instance is destroyed
 
 `resume()` clears the global pause; `resume(timerId)` clears a per-task pause. The instance competes again on its next poll.
 
@@ -472,7 +473,7 @@ jobs.resume();        // global
 jobs.resume(heavy);   // per timer id from set*
 ```
 
-Queue-polling pattern: after winning a tick, claim rows from your own queue, call `pause()`, call `ready()`, process the rows, then `resume()` in `finally`. JoSk releases the tick quickly and this instance stops competing until local work ends. Full examples: [skills/josk/references/patterns.md](skills/josk/references/patterns.md).
+Queue-polling pattern: after winning a tick, claim rows from your own queue, call `pause()`, call `ready()`, process the rows, then `resume()` in `finally`. JoSk releases the tick quickly and this instance stops competing until local work ends. Full examples: [skills/josk/references/patterns.md](https://github.com/veliovgroup/josk/blob/master/skills/josk/references/patterns.md).
 
 ## Execution semantics
 
@@ -481,7 +482,7 @@ Queue-polling pattern: after winning a tick, claim rows from your own queue, cal
 | `setTimeout`, `setImmediate` | **At-most-once** across the cluster | Task is removed from storage *before* the handler runs. If the process dies mid-run, the run is lost. |
 | `setInterval` | **At-least-once** per tick (until cleared) | Task stays in storage while running. If `ready()` is not called within `zombieTime`, another instance may claim and run it again. Make handlers idempotent. |
 
-`zombieTime` (default 15 minutes) is the safety net for stuck handlers. Set it above your slowest legitimate handler plus storage latency. Restarting an app does not shorten a running interval's hold. So after an unclean kill, recovery waits the full `zombieTime`, not `delay`, but a rolling deploy cannot start a second copy of a handler that is still running. Call [`shutdown()`](#shutdownopts) on `SIGTERM` to hand running claims back instead of leaving them to `zombieTime`. JoSk skips a late `ready()` write when a newer same-uid run starts in the same process. Built-in adapters also fence writes across instances; custom adapters need equivalent fencing for that guarantee. See [adapter-api.md](docs/adapter-api.md) and [monitoring and recovery](docs/monitoring.md).
+`zombieTime` (default 15 minutes) is the safety net for stuck handlers. Set it above your slowest legitimate handler plus storage latency. Restarting an app does not shorten a running interval's hold. So after an unclean kill, recovery waits the full `zombieTime`, not `delay`, but a rolling deploy cannot start a second copy of a handler that is still running. Call [`shutdown()`](#shutdownopts) on `SIGTERM` to hand running claims back instead of leaving them to `zombieTime`. JoSk skips a late `ready()` write when a newer same-uid run starts in the same process. Built-in adapters also fence writes across instances; custom adapters need equivalent fencing for that guarantee. See [adapter-api.md](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md) and [monitoring and recovery](https://github.com/veliovgroup/josk/blob/master/docs/monitoring.md).
 
 - `execute: 'batch'` (default) claims all due tasks under one lease, for throughput. `execute: 'one'` claims one task per lease, for smaller bursts and fairer spread across instances.
 - `concurrency` caps parallel handlers in this instance. Default `Infinity`, like Node's timers. Set a limit when handlers share DB connections or API rate limits.
@@ -489,7 +490,7 @@ Queue-polling pattern: after winning a tick, claim rows from your own queue, cal
 
 ## TypeScript
 
-JoSk ships declarations for ESM (`index.d.ts`) and CommonJS (`index.d.cts`). They don't import `redis` or `mongodb`, so unused drivers are not needed. `RedisAdapter` and `MongoAdapter` keep your client's full type on `adapter.client` / `adapter.db`. The `JoSkAdapter` interface is exported for custom adapters.
+JoSk ships declarations for ESM (`index.d.ts`) and CommonJS (`index.d.cts`). They don't import `redis` or `mongodb`, so unused drivers are not needed. `RedisAdapter` and `MongoAdapter` keep your client's full type on `adapter.client` / `adapter.db`. The `JoSkAdapter` interface is exported for custom adapters, and `RedisAdapterOption`, `MongoAdapterOption`, `PostgresAdapterOption` for building adapter configuration.
 
 ```ts
 import { JoSk, RedisAdapter } from 'josk';
@@ -513,7 +514,7 @@ const jobs = new JoSk(options);
 
 ### CRON
 
-Use [`cron-parser@^5`](https://www.npmjs.com/package/cron-parser) to compute each next run and pass it to `ready(date)`:
+Use [`cron-parser@^5`](https://www.npmjs.com/package/cron-parser) to compute each next run and pass it to `ready(date)`. `cron-parser@5` needs Node 18+; on older Node use `cron-parser@4` and `parser.parseExpression(cronExpr)`:
 
 ```js
 import { CronExpressionParser } from 'cron-parser';
@@ -551,88 +552,22 @@ jobs.setInterval((ready) => task({ key: 'other' }, 'B', ready), 60 * 60000, 'tas
 
 ### Clean up old tasks
 
-For development and tests.
-
-#### Clean up Redis
-
-```shell
-redis-cli --no-auth-warning --scan --pattern "josk:default:*" | xargs redis-cli --raw --no-auth-warning DEL
-
-# If you're using multiple JoSk instances with prefix:
-redis-cli --no-auth-warning --scan --pattern "josk:prefix:*" | xargs redis-cli --raw --no-auth-warning DEL
-
-# If useHashTags is true:
-redis-cli --no-auth-warning --scan --pattern "josk:{prefix}:*" | xargs redis-cli --raw --no-auth-warning DEL
-```
-
-#### Clean up MongoDB
-
-```js
-// Run directly in MongoDB console (default prefix `default`):
-db.getCollection('__JobTasks__default').deleteMany({});
-// If you're using a custom prefix:
-db.getCollection('__JobTasks__PrefixHere').deleteMany({});
-// Lock collection (shared across prefixes by default):
-db.getCollection('__JobTasks__.lock').deleteMany({});
-```
-
-#### Clean up PostgreSQL
-
-```sql
-DELETE FROM josk_tasks WHERE prefix = 'default';
-DELETE FROM josk_locks WHERE lock_key = 'josk-default.lock';
-
--- If you're using custom prefix:
-DELETE FROM josk_tasks WHERE prefix = 'cluster-scheduler';
-DELETE FROM josk_locks WHERE lock_key = 'josk-cluster-scheduler.lock';
-```
+For development and tests. Commands for Redis, MongoDB, and PostgreSQL: [`docs/testing.md`](https://github.com/veliovgroup/josk/blob/master/docs/testing.md#clean-up-old-tasks).
 
 ### MongoDB connection fine tuning
 
-Replica-set tuning, dedicated-DB advice, the index list, and Mongo-compatible service notes: [`docs/mongodb.md`](docs/mongodb.md). Cosmos DB and DocumentDB aren't part of default CI; optional endpoint tests require configured secrets.
-
-## Prefix mapping
-
-`prefix` isolates scheduler state. Instances with the same prefix share one queue. Default: `default`.
-
-| Adapter | Storage layout for `prefix: 'app'` | Notes |
-|---|---|---|
-| Redis | Default keys: `josk:app:schedule`, `josk:app:tasks`, `josk:app:lock`. With `useHashTags: true`: `josk:{app}:schedule`, `josk:{app}:tasks`, `josk:{app}:lock`. | Hash tags keep all keys on the same Cluster slot. Prefix must match `/^[A-Za-z0-9_\-:.]+/` — special characters (notably `{` and `}`) are rejected to protect Cluster routing. |
-| MongoDB | Collection `__JobTasks__app`; lock collection `__JobTasks__.lock` (shared across prefixes, scoped by `uniqueName` field) | Override the lock collection with `lockCollectionName`. Keep collection names short — Mongo's name limit is 120 characters including database name. |
-| PostgreSQL | Rows in `josk_tasks` filtered by `prefix='app'`; lock row in `josk_locks` with `lock_key='josk-app.lock'` | Table names are fixed. Use prefix for tenant/environment isolation. |
-
-## Operational FAQ
-
-### How do I monitor stuck tasks?
-
-An interval that never calls `ready()` becomes claimable again after `zombieTime`. This recovery does not fire `onError`. The `'One of your tasks is missing'` error means this instance claimed a task it has no handler for. Past-due tasks show backlog, not stuck work. To find claims near their recovery deadline, see [monitoring](docs/monitoring.md).
-
-### How do I handle storage restarts?
-
-JoSk catches adapter errors and retries on the next poll. Locks held by crashed nodes expire on their own (Redis: `PEXPIRE`, Mongo: TTL index, Postgres: `locked_until` against server time).
-
-### `one` vs `batch` execute mode?
-
-Use `batch` for throughput; it claims due tasks in chunks. Use `one` for smaller bursts per instance, fairer spread across instances, or when handlers contend on the same downstream resource.
-
-### Jitter: Why is my interval running every `delay + maxRevolvingDelay` ms?
-
-JoSk polls every `minRevolvingDelay` to `maxRevolvingDelay` ms, so the effective interval is `delay` plus poll latency. Lower `maxRevolvingDelay` for tighter intervals at the cost of more storage reads.
-
-### What about clock skew between nodes?
-
-Redis uses relative `PX` TTLs. Postgres computes lease expiry from `CURRENT_TIMESTAMP`, so node clock skew does not change lock lifetime. Mongo stores app-generated dates; keep Mongo app nodes time-synchronized.
+Replica-set tuning, dedicated-DB advice, the index list, and Mongo-compatible service notes: [`docs/mongodb.md`](https://github.com/veliovgroup/josk/blob/master/docs/mongodb.md).
 
 ## Notes
 
 - Use JoSk when several copies of an app run the same repeating tasks and each due tick must run once cluster-wide, not once per instance. Examples: [email](https://www.npmjs.com/package/mail-time) and SMS queues, long polling, periodic sync.
-- Keep task intervals at 2 seconds or more. Shorter tasks may overlap with the storage round-trip plus poll delay.
+- Keep task intervals at 2 seconds or more when timing matters. Shorter tasks may overlap with the storage round-trip plus poll delay. `delay: 0` is valid and runs the task again after `ready()`.
 - Accuracy is `delay ± (maxRevolvingDelay + storage latency)`: about ±0.8s plus storage latency with defaults. Tighter bounds cost more storage reads.
 - Poll delays are random within `minRevolvingDelay`..`maxRevolvingDelay` so instances don't hit storage at the same moment. Defaults (`128`..`768`) suit a 3-server setup. A higher `minRevolvingDelay` reduces storage reads and writes.
 
 ## Running tests
 
-Setup, full and targeted suites, coverage, and the Bun runner: [`docs/testing.md`](docs/testing.md). Quickstart:
+Setup, full and targeted suites, coverage, and the Bun runner: [`docs/testing.md`](https://github.com/veliovgroup/josk/blob/master/docs/testing.md). Quickstart:
 
 ```shell
 REDIS_URL="…" MONGO_URL="…" PG_URL="…" npm test
@@ -660,7 +595,7 @@ REDIS_URL="…" MONGO_URL="…" PG_URL="…" npm test
 [ci-url]: https://github.com/veliovgroup/josk/actions/workflows/test.yml
 [badge-size]: https://img.shields.io/bundlephobia/minzip/josk.svg
 [size-url]: https://bundlephobia.com/package/josk
-[badge-cov]: https://img.shields.io/badge/coverage-~99%25-brightgreen
+[badge-cov]: https://img.shields.io/badge/coverage-~97%25-brightgreen
 [badge-license]: https://img.shields.io/badge/License-BSD%203--Clause-blue.svg
 [license-url]: https://opensource.org/licenses/BSD-3-Clause
 [badge-node]: https://img.shields.io/node/v/josk

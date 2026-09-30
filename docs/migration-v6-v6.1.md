@@ -5,7 +5,7 @@
 - Default Redis keys are unchanged: `josk:prefix:schedule`, `josk:prefix:tasks`, `josk:prefix:lock`.
 - Opt-in hash-tag keys are new: `josk:{prefix}:schedule`, `josk:{prefix}:tasks`, `josk:{prefix}:lock`.
 - Do not enable `useHashTags` against existing Redis data without either migrating keys or starting from empty adapter state.
-- `setInterval` / `setTimeout` now reject `NaN`, `Infinity`, and non-numeric delays at registration time. Code that previously passed `NaN` would silently corrupt `nextExecuteAt`; that path now throws synchronously.
+- `setInterval` / `setTimeout` now reject `NaN`, `Infinity`, and non-numeric delays at registration time. Code that previously passed `NaN` would silently corrupt `nextExecuteAt`; that path now returns a rejected Promise.
 - `onError` / `onExecuted` hook throws and Promise rejections are now caught and logged to `console.error` instead of propagating into the scheduler loop.
 
 ## You may already be affected (pre-v6.1 docs vs. reality)
@@ -29,7 +29,7 @@ Pick the path that matches your topology.
 1. Stop all JoSk instances.
 2. `RENAME josk:<prefix>:schedule josk:{<prefix>}:schedule`.
 3. `RENAME josk:<prefix>:tasks    josk:{<prefix>}:tasks`.
-4. `RENAME josk:<prefix>:lock     josk:{<prefix>}:lock` (or just `DEL` it — it expires on the next tick).
+4. `RENAME josk:<prefix>:lock     josk:{<prefix>}:lock` (or just `DEL` it; it expires within `lockLeaseTime`, or `zombieTime` before v6.3).
 5. Deploy with `useHashTags: true` and verify with `ping()` before resuming traffic.
 
 ### Redis Cluster / KeyDB Cluster
@@ -41,7 +41,7 @@ Pick the path that matches your topology.
    - `DUMP josk:<prefix>:<name>` on its owner node.
    - `RESTORE josk:{<prefix>}:<name> 0 <dump-bytes>` on the node that owns the new hash-tagged slot.
    - `DEL` the legacy key once the restore is verified.
-3. Skip the `lock` key if you prefer — it self-expires within `zombieTime` of the first new tick.
+3. Skip the `lock` key if you prefer. It self-expires within `lockLeaseTime` (`zombieTime` before v6.3).
 4. Deploy with `useHashTags: true` and verify with `ping()` before resuming traffic.
 
 ### Acceptable to start fresh

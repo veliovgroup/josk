@@ -57,3 +57,55 @@ PG_URL="postgres://postgres@localhost/db" npm run test:postgres # ~3 min
 ```shell
 DEBUG=true REDIS_URL="…" MONGO_URL="…" PG_URL="…" npm test
 ```
+
+## Tested runtimes
+
+JoSk requires `node@>=14.21.3` and is tested on Node 14.21.3, 16.20.2, 18.19.1, 20.11.1, 22.21.1, and 24.16.0. Each driver sets its own Node floor:
+
+| Driver | Minimum Node |
+|---|---|
+| `mongodb@5` | 14.20.1 |
+| `mongodb@6` | 16.20.1 |
+| `mongodb@7` | 20.19 |
+| `redis@5` | 18.19 |
+| `pg@8.20` | 16 |
+
+`RedisAdapter` and `PostgresAdapter` are covered by mock-client tests only on Node below 20; live Redis and PostgreSQL runs stay on Node 20, 22, and 24.
+
+## Clean up old tasks
+
+For development and tests.
+
+### Clean up Redis
+
+```shell
+redis-cli --no-auth-warning --scan --pattern "josk:default:*" | xargs redis-cli --raw --no-auth-warning DEL
+
+# If you're using multiple JoSk instances with prefix:
+redis-cli --no-auth-warning --scan --pattern "josk:prefix:*" | xargs redis-cli --raw --no-auth-warning DEL
+
+# If useHashTags is true:
+redis-cli --no-auth-warning --scan --pattern "josk:{prefix}:*" | xargs redis-cli --raw --no-auth-warning DEL
+```
+
+### Clean up MongoDB
+
+```js
+// Run directly in MongoDB console (default prefix `default`):
+db.getCollection('__JobTasks__default').deleteMany({});
+// If you're using a custom prefix:
+db.getCollection('__JobTasks__PrefixHere').deleteMany({});
+// Lock collection (shared across prefixes by default):
+db.getCollection('__JobTasks__.lock').deleteMany({});
+```
+
+### Clean up PostgreSQL
+
+```sql
+DELETE FROM josk_tasks WHERE prefix = 'default';
+DELETE FROM josk_locks WHERE lock_key = 'josk-default.lock';
+
+-- If you're using custom prefix:
+DELETE FROM josk_tasks WHERE prefix = 'cluster-scheduler';
+DELETE FROM josk_locks WHERE lock_key = 'josk-cluster-scheduler.lock';
+```

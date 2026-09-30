@@ -32,22 +32,11 @@ const jobs = new JoSk({
 
 ## Why a dedicated database?
 
-The scheduler issues frequent atomic `findOneAndUpdate` calls against the task and lock collections. Sharing the database with chatty application workloads can cause lock contention and inflate JoSk's tick latency. A dedicated DB on the same cluster is the cheapest isolation.
+The scheduler issues frequent claim and lease writes against the task and lock collections. Sharing the database with chatty application workloads can cause lock contention and inflate JoSk's tick latency. A dedicated DB on the same cluster is the cheapest isolation.
 
 ## Cleaning up old tasks
 
-Run from the MongoDB shell:
-
-```js
-// Default prefix `default`:
-db.getCollection('__JobTasks__default').deleteMany({});
-
-// Custom prefix:
-db.getCollection('__JobTasks__PrefixHere').deleteMany({});
-
-// Lock collection (shared across prefixes by default):
-db.getCollection('__JobTasks__.lock').deleteMany({});
-```
+The shell commands are in [testing.md](testing.md#clean-up-mongodb).
 
 ## Index inventory
 
@@ -66,7 +55,7 @@ On both collections `__setup` adopts an existing index with the same key pattern
 
 JoSk 5.0.0 drops and recreates a same-key index that has a different name or options. From 6.0.0 to 6.4.0, JoSk 6 used the names `uniqueName_unique` and `expireAt_ttl`, so each startup of one major version replaced the other's indexes. Between the drop and the re-create the collection has no unique index on `uniqueName`. Concurrent lock upserts then insert duplicate lease documents and two instances hold the same lock. If duplicates exist, the re-create fails and the collection stays without a unique index. Measured on MongoDB 4.2.2 with 5.x re-initialising every few milliseconds: the unique index was missing in 90% of samples, up to 8 lease documents existed for one name, and holders overlapped.
 
-From 6.4.1 JoSk 6 creates the same names and options as JoSk 5 and never drops. With 5.x and 6.4.1+ the layout is stable in either startup order. A collection that already has the 6.0.0 to 6.4.0 names (`uniqueName_unique`, `expireAt_ttl`, and `uid_unique` on the task collection) stays as it is, and a JoSk 5 startup would still replace those indexes. Do not run 6.0.0 to 6.4.0 next to 6.4.1+ on collections that 6.4.1 created, and do not roll back to them: older 6.x drops `uid_1` and `uniqueName_1` and re-creates them under its own names, which opens the same window. Until every JoSk 5 service is gone, give JoSk 6 its own `lockCollectionName` (for example `__JobTasks__.lock.v6`). The task collection follows the same rule: JoSk 5 and JoSk 6 can share a prefix (`__JobTasks__<prefix>`) only from 6.4.1, because earlier 6.x versions dropped and re-created the unique `uid` index on a name mismatch. In that window concurrent `add()` upserts can insert duplicate `uid` documents, and the next JoSk 6 startup then fails with a duplicate-key error. If startup fails with `duplicate "uid" documents`, the task collection already holds duplicates. Dedupe manually before starting JoSk 6. This recipe is destructive; back up the collection first, and stop every JoSk service on that prefix. It keeps the document with the largest `_id` for each `uid`:
+From 6.5.0 JoSk 6 creates the same names and options as JoSk 5 and never drops. With 5.x and 6.5.0+ the layout is stable in either startup order. A collection that already has the 6.0.0 to 6.4.0 names (`uniqueName_unique`, `expireAt_ttl`, and `uid_unique` on the task collection) stays as it is, and a JoSk 5 startup would still replace those indexes. Do not run 6.0.0 to 6.4.0 next to 6.4.1+ on collections that 6.4.1 created, and do not roll back to them: older 6.x drops `uid_1` and `uniqueName_1` and re-creates them under its own names, which opens the same window. Until every JoSk 5 service is gone, give JoSk 6 its own `lockCollectionName` (for example `__JobTasks__.lock.v6`). The task collection follows the same rule: JoSk 5 and JoSk 6 can share a prefix (`__JobTasks__<prefix>`) only from 6.4.1, because earlier 6.x versions dropped and re-created the unique `uid` index on a name mismatch. In that window concurrent `add()` upserts can insert duplicate `uid` documents, and the next JoSk 6 startup then fails with a duplicate-key error. If startup fails with `duplicate "uid" documents`, the task collection already holds duplicates. Dedupe manually before starting JoSk 6. This recipe is destructive; back up the collection first, and stop every JoSk service on that prefix. It keeps the document with the largest `_id` for each `uid`:
 
 ```js
 // mongosh
@@ -88,6 +77,6 @@ Do not delete lock documents to work around a duplicate-key error. Repair of a p
 
 ## Mongoose, CosmosDB, DocumentDB
 
-`MongoAdapter` default CI tests the official driver: `mongodb@5/6/7` with `mongo:8`, and `mongodb@7` with `mongo:6/7/8`. Cosmos DB for MongoDB and Amazon DocumentDB are not part of default CI. The manual [Mongo compatibility workflow](../.github/workflows/test-mongo-compatibility.yml) runs `npm run test:mongo` against `COSMOS_MONGO_URL` or `DOCDB_URL` only when that secret is configured; a passing run covers this test suite and endpoint, not every Mongo API feature or service version. Each secret must include the database path and the target service's required connection options; the DocumentDB job adds AWS's global CA bundle. DocumentDB accepts connections only from inside its VPC, so GitHub-hosted runners can't reach it. Set the `DOCDB_RUNNER` repository variable to the label of a self-hosted runner in that VPC; without it the job runs on `ubuntu-latest` and fails to connect.
+`MongoAdapter` default CI tests the official driver: `mongodb@5/6/7` with `mongo:8`, and `mongodb@7` with `mongo:4.4/5/6/7/8`. Cosmos DB for MongoDB and Amazon DocumentDB are not part of default CI. The manual [Mongo compatibility workflow](../.github/workflows/test-mongo-compatibility.yml) runs `npm run test:mongo` against `COSMOS_MONGO_URL` or `DOCDB_URL` only when that secret is configured; a passing run covers this test suite and endpoint, not every Mongo API feature or service version. Each secret must include the database path and the target service's required connection options; the DocumentDB job adds AWS's global CA bundle. DocumentDB accepts connections only from inside its VPC, so GitHub-hosted runners can't reach it. Set the `DOCDB_RUNNER` repository variable to the label of a self-hosted runner in that VPC; without it the job runs on `ubuntu-latest` and fails to connect.
 
 Microsoft's [current Linux emulator vNext](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator-linux) supports only the NoSQL API. Microsoft [release notes](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator-release-notes) also document local MongoDB endpoints through API 4.2, including a legacy Linux Docker endpoint; that limited emulator support does not establish parity with current cloud Cosmos Mongo API versions. AWS describes DocumentDB as a managed VPC service and publishes a versioned [MongoDB compatibility guide](https://docs.aws.amazon.com/documentdb/latest/devguide/compatibility.html); no AWS-provided local emulator was identified for CI. Cosmos/DocumentDB support remains endpoint- and version-specific. The adapter requires atomic `findOneAndUpdate` with sort/return-before, batched `bulkWrite` claims, update-pipeline interval upserts, and TTL indexes. Verify these operations against the target API; keep the service unverified until its optional workflow passes. Mongoose wrappers remain untested and unsupported.

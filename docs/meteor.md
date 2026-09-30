@@ -51,7 +51,7 @@ jobs.setInterval((ready) => {
     /* ...more code here...*/
     ready();
   });
-}, 60000, 'task-1m');
+}, 60000, 'task-1m-callback');
 ```
 
 ### Options
@@ -59,7 +59,9 @@ jobs.setInterval((ready) => {
 Same JoSk options from NPM package are available in Meteor:
 
 - `adapter` — required storage adapter instance: `MongoAdapter`, `RedisAdapter`, or `PostgresAdapter`
+- `debug` — enables debug logging; default is `false`
 - `execute` — `batch` (default) drains due tasks under one lease; `one` claims one task per lease
+- `concurrency` — maximum handlers running in parallel in this instance; default is `Infinity`
 - `zombieTime` — stuck-task retry time; default is `900000` ms
 - `lockLeaseTime` — scheduler lease TTL; default is `min(zombieTime, 30000)` with polling-based floor
 - `lockOwnerId` — optional stable owner id for scheduler lease tokens
@@ -127,7 +129,7 @@ const jobs = new JoSk({
 });
 ```
 
-Use one writable PostgreSQL primary. Adapter creates `josk_tasks` and `josk_locks` tables in current database/schema. Use same `prefix` for instances sharing one schedule; use different prefixes for isolated apps, tenants, or tests.
+Use one writable PostgreSQL primary. Adapter creates `josk_tasks`, `josk_locks`, and `josk_meta` tables in current database/schema. Use same `prefix` for instances sharing one schedule; use different prefixes for isolated apps, tenants, or tests.
 
 ### Guidelines
 
@@ -152,7 +154,7 @@ jobs.setInterval(task, 2 * 60000, 'task-2m'); // every two minutes
 
 ### CRON scheduler
 
-Use JoSk to invoke synchronized tasks by CRON schedule, and [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON expressions. To simplify CRON scheduling — grab and use `setCron` function below:
+Use JoSk to invoke synchronized tasks by CRON schedule, and [`cron-parser` package](https://www.npmjs.com/package/cron-parser) to parse CRON expressions. To simplify CRON scheduling — grab and use `setCron` function below. `cron-parser@5` needs Node 18+ (Meteor 3). On Meteor 2.x install `cron-parser@4` and call `parser.parseExpression(cronTask)` in place of `CronExpressionParser.parse(cronTask)`:
 
 ```js
 import { MongoInternals } from 'meteor/mongo';
@@ -224,14 +226,14 @@ Environment variables consumed by the Meteor test suite:
 
 ## Requirements
 
-Meteor **2.14+** and **3.2+** supported (`api.versionsFrom(['2.14', '3.2'])`; mirrored in `package.json` → `meteor.versionsFrom`). npm installs require Node **≥ 14.21.3**. Meteor **2.x** bundles Node 14 (no `crypto.randomUUID` — JoSk falls back to `randomBytes` hex IDs). CI: **2.14–2.16** and **3.2 / 3.3.1 / 3.4**.
+Meteor **2.14+** and **3.2+** supported (`api.versionsFrom(['2.14', '3.2'])`; mirrored in `package.json` → `meteor.versionsFrom`). npm installs require Node **≥ 14.21.3**. Meteor **2.x** bundles Node 14. CI: **2.14–2.16** and **3.2 / 3.3.1 / 3.4**.
 
 `meteorTestProfile()` branches on Meteor's bundled Node at `test-packages` time:
 
 | Node | Meteor | Test npm pins | Mocha driver |
 |------|--------|---------------|--------------|
-| 14–17 | 2.x | `chai@4`, `cron-parser@4`, `pg@8.11` | `meteortesting:mocha@2.1.0` |
-| 18+ | 3.x | current majors | `meteortesting:mocha@3.3.0` |
+| 14–17 | 2.x | `chai@4`, `cron-parser@4`, `redis@4`, `pg@8.11` | `meteortesting:mocha@2.1.0` |
+| 18+ | 3.x | `chai@5`, `cron-parser@5`, `redis@4`, `pg@8.16` | `meteortesting:mocha@3.3.0` |
 
 The default local suite includes `test/meteor-types.ts`. CI runs adapter-specific `meteor test-packages` suites for Meteor 2.14–2.16 and 3.2/3.3.1/3.4; one Meteor 3.4 / Redis 8 cell runs the default suite, including the TypeScript runtime tests and `shutdown()`. Meteor transpiles TypeScript without type-checking. Separately, `npm run test:types` runs `tsc` against the packaged Meteor declaration assets to check all built-in adapter contracts and the `shutdown()` signature through `meteor/ostrio:cron-jobs`. npm `devDependencies` stay unchanged for `npm test`.
 

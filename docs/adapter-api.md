@@ -41,7 +41,7 @@ Start from [`blank-example.js`](https://github.com/veliovgroup/josk/blob/master/
 - async `Adapter#add(uid, isInterval, delay) - {Promise<boolean|void>}`
   - `{string} uid`
   - `{boolean} isInterval`
-  - `{number} delay`
+  - `{number} delay` whole milliseconds; JoSk rounds before calling
   - upsert; an unchanged unclaimed interval keeps an earlier stored `executeAt` and an active claim keeps its recovery deadline (see Design Rules)
 - async `Adapter#update(task, nextExecuteAt) - {Promise<boolean>}`
   - `{object} task` claimed task; fence on `task.claimLeaseId` when present (see Design Rules)
