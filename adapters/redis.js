@@ -285,7 +285,7 @@ class RedisAdapter {
     /** @type {C} */
     this.client = opts.client;
     /** @type {JoSk | undefined} */
-    this.joskInstance = void 0;
+    this.joskInstance = undefined; // `void 0` would drop this property from the emitted .d.ts
     /** @internal */
     this.__scriptShas = {
       acquireLock: sha1Hex(ACQUIRE_LOCK_SCRIPT),
@@ -308,15 +308,29 @@ class RedisAdapter {
     };
     /** @internal */
     this.__loadedShas = new Set();
-    /** @internal */
-    this.__readyPromise = this.__setup();
+    /** @internal @type {Promise<void> | null} */
+    this.__readyPromise = null;
+    this.ready().catch(() => {});
   }
 
   /**
+   * Run setup once; a failed attempt is re-run by the next call.
    * @returns {Promise<void>}
    */
   async ready() {
-    await this.__readyPromise;
+    if (!this.__readyPromise) {
+      this.__readyPromise = this.__setup();
+    }
+
+    const attempt = this.__readyPromise;
+    try {
+      await attempt;
+    } catch (setupError) {
+      if (this.__readyPromise === attempt) {
+        this.__readyPromise = null;
+      }
+      throw setupError;
+    }
   }
 
   /** @internal */
@@ -328,6 +342,10 @@ class RedisAdapter {
         : [this.client];
 
       for (const scanClient of scanClients) {
+        // Legacy v5 per-task keys; a client pool has no SCAN iterator and never wrote them.
+        if (typeof scanClient.scanIterator !== 'function') {
+          continue;
+        }
         const cursor = scanClient.scanIterator({
           MATCH: `${this.uniqueName}:task:*`,
           COUNT: 9999
@@ -619,9 +637,12 @@ class RedisAdapter {
    */
   async __claimNextTasks(nextExecuteAt, lock, limit) {
     try {
+      // A park time at or before `now` stays due, and the batch script would
+      // claim the same task again until `limit`.
+      const now = Date.now();
       const claimed = await this.__runScript('claimBatch', {
         keys: [this.scheduleKey, this.tasksKey],
-        arguments: [`${Date.now()}`, `${+nextExecuteAt}`, lock.ownerId, lock.leaseId, `${limit}`, `${REDIS_SCAN_LIMIT}`]
+        arguments: [`${now}`, `${Math.max(+nextExecuteAt, now + 1)}`, lock.ownerId, lock.leaseId, `${limit}`, `${REDIS_SCAN_LIMIT}`]
       });
 
       if (!claimed) {

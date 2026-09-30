@@ -20,15 +20,29 @@ class BlankAdapter {
     }
 
     this.requiredOption = opts.requiredOption;
-    /** @internal */
-    this.__readyPromise = this.__setup();
+    /** @internal @type {Promise<void> | null} */
+    this.__readyPromise = null;
+    this.ready().catch(() => {});
   }
 
   /**
+   * Run setup once; a failed attempt is re-run by the next call.
    * @returns {Promise<void>}
    */
   async ready() {
-    await this.__readyPromise;
+    if (!this.__readyPromise) {
+      this.__readyPromise = this.__setup();
+    }
+
+    const attempt = this.__readyPromise;
+    try {
+      await attempt;
+    } catch (setupError) {
+      if (this.__readyPromise === attempt) {
+        this.__readyPromise = null;
+      }
+      throw setupError;
+    }
   }
 
   /** @internal */
@@ -85,7 +99,7 @@ class BlankAdapter {
    * @memberOf BlankAdapter
    * Acquire second-layer scheduler lock with owner token
    * @name acquireLock
-   * @param {{ ownerId: string, leaseId: string, expiresAtMs: number }} lock
+   * @param {{ ownerId: string, leaseId: string, expiresAtMs: number, leaseMs?: number }} lock
    * @returns {Promise<boolean>}
    */
   async acquireLock(lock) {
@@ -94,6 +108,8 @@ class BlankAdapter {
       key: this.lockKey,
       ownerId: lock.ownerId,
       leaseId: lock.leaseId,
+      // Prefer the relative duration for the storage TTL; see docs/adapter-api.md
+      leaseMs: Number.isFinite(lock.leaseMs) ? lock.leaseMs : Math.max(1, lock.expiresAtMs - Date.now()),
       expiresAtMs: lock.expiresAtMs,
     });
   }

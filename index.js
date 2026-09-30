@@ -6,6 +6,11 @@ import { PostgresAdapter } from './adapters/postgres.js';
 
 const prefixRegex = /set(Immediate|Timeout|Interval)$/;
 const validExecuteModes = new Set(['batch', 'one']);
+// Failed adapter initialization is retried no sooner than this.
+const ADAPTER_RETRY_DELAY = 5000;
+// A claim taken by a paused instance is handed back due this soon, so a peer
+// picks it up on its next polls instead of after the task's full `delay`.
+const PAUSED_CLAIM_DEFER = 2000;
 
 const createRandomId = typeof randomUUID === 'function' ? () => randomUUID() : () => randomBytes(16).toString('hex');
 const isPromiseLike = (value) => {
@@ -127,6 +132,25 @@ const isValidDelay = (delay) => typeof delay === 'number' && Number.isFinite(del
  */
 
 /**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ * @typedef {import('./adapters/redis.js').RedisClientLike} RedisClientLike
+ * @typedef {import('./adapters/mongo.js').MongoDbLike} MongoDbLike
+ * @typedef {import('./adapters/postgres.js').PostgresClient} PostgresClient
+ * @typedef {import('./adapters/postgres.js').PostgresAdapterOption} PostgresAdapterOption
+ */
+
+/**
+ * @template {RedisClientLike} [C=RedisClientLike]
+ * @typedef {import('./adapters/redis.js').RedisAdapterOption<C>} RedisAdapterOption
+ */
+
+/**
+ * @template {MongoDbLike} [D=MongoDbLike]
+ * @typedef {import('./adapters/mongo.js').MongoAdapterOption<D>} MongoAdapterOption
+ */
+
+/**
  * @typedef {object} JoSkShutdownOption
  * @property {number} [timeout] Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
  */
@@ -173,7 +197,8 @@ class JoSk {
     if (opts.lockLeaseTime !== void 0 && (typeof opts.lockLeaseTime !== 'number' || !Number.isFinite(opts.lockLeaseTime) || opts.lockLeaseTime <= 0)) {
       throw new Error(errors.lockLeaseTime);
     }
-    this.lockLeaseTime = Math.max(opts.lockLeaseTime || Math.min(this.zombieTime, 30000), (2 * this.maxRevolvingDelay) + 1000);
+    // Redis `PX` and Postgres BIGINT reject a fractional lease.
+    this.lockLeaseTime = Math.ceil(Math.max(opts.lockLeaseTime || Math.min(this.zombieTime, 30000), (2 * this.maxRevolvingDelay) + 1000));
 
     if (opts.concurrency !== void 0) {
       if (opts.concurrency !== Infinity && (!Number.isInteger(opts.concurrency) || opts.concurrency < 1)) {
@@ -188,8 +213,12 @@ class JoSk {
     this.nextRevolutionTimeout = null;
     /** @internal */
     this.__lockLeaseCounter = 0;
-    /** @internal */
+    /** @internal @type {Promise<void> | null} */
     this.__adapterReadyPromise = null;
+    /** @internal */
+    this.__adapterReadyError = null;
+    /** @internal */
+    this.__adapterRetryAt = 0;
     /** @internal */
     this.__activeExecutions = 0;
     /** @internal */
@@ -262,7 +291,16 @@ class JoSk {
    * @returns {Promise<JoSkPingResult>}
    */
   async ping() {
-    await this.__adapterReady();
+    try {
+      await this.__adapterReady();
+    } catch (readyError) {
+      return {
+        status: 'Internal Server Error',
+        code: 500,
+        statusCode: 500,
+        error: readyError
+      };
+    }
     return await this.adapter.ping();
   }
 
@@ -650,18 +688,34 @@ class JoSk {
     return false;
   }
 
-  /** @internal */
+  /**
+   * Await adapter initialization. A failed attempt is retried on the next call
+   * after `ADAPTER_RETRY_DELAY`; until then the last error is rethrown.
+   * @internal
+   * @returns {Promise<void>}
+   */
   async __adapterReady() {
     if (typeof this.adapter.ready !== 'function') {
       return;
     }
 
     if (!this.__adapterReadyPromise) {
-      this.__adapterReadyPromise = Promise.resolve().then(() => this.adapter.ready());
+      if (Date.now() < this.__adapterRetryAt) {
+        throw this.__adapterReadyError;
+      }
+
+      const attempt = Promise.resolve().then(() => this.adapter.ready());
+      this.__adapterReadyPromise = attempt;
+      attempt.catch((readyError) => {
+        if (this.__adapterReadyPromise === attempt) {
+          this.__adapterReadyPromise = null;
+          this.__adapterReadyError = readyError;
+          this.__adapterRetryAt = Date.now() + ADAPTER_RETRY_DELAY;
+        }
+      });
     }
 
     await this.__adapterReadyPromise;
-    return;
   }
 
   /** @internal */
@@ -709,7 +763,8 @@ class JoSk {
     }
 
     await this.__adapterReady();
-    await this.adapter.add(uid, isInterval, delay);
+    // Storage keeps whole milliseconds; Postgres BIGINT rejects a fraction.
+    await this.adapter.add(uid, isInterval, Math.round(delay));
   }
 
   /**
@@ -784,8 +839,7 @@ class JoSk {
    * @returns {Promise<void>}
    */
   async __deferClaimedTask(task) {
-    const deferMs = Math.max(2000, typeof task.delay === 'number' && task.delay >= 2000 ? task.delay : 2000);
-    const nextExecuteAt = new Date(Date.now() + deferMs);
+    const nextExecuteAt = new Date(Date.now() + PAUSED_CLAIM_DEFER);
     try {
       await this.__adapterReady();
       await this.adapter.update(task, nextExecuteAt);
@@ -969,7 +1023,7 @@ class JoSk {
       this._debug(`[__execute] [${task.uid}] Something went wrong with one of your tasks is missing.
         Try to use different instances.
         It's safe to ignore this message.
-        If this task is obsolete - simply remove it with \`JoSk#clearTimeout(\'${task.uid}\')\`,
+        If this task is obsolete - simply remove it with \`JoSk#clearTimeout('${task.uid}')\`,
         or enable autoClear with \`new JoSk({autoClear: true})\``);
     }
   }

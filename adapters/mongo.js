@@ -42,6 +42,9 @@
  * @property {string} [claimLeaseId]
  */
 
+// Stop claiming this much before the scheduler lease expires.
+const LEASE_STOP_MARGIN = 500;
+
 const logError = (error, ...args) => {
   if (error) {
     console.error('[josk] [MongoAdapter] [logError]:', error, ...args);
@@ -264,16 +267,30 @@ class MongoAdapter {
     /** @type {ReturnType<D['collection']>} */
     this.lockCollection = opts.db.collection(this.lockCollectionName);
     /** @type {JoSk | undefined} */
-    this.joskInstance = void 0;
-    /** @internal */
-    this.__readyPromise = this.__setup();
+    this.joskInstance = undefined; // `void 0` would drop this property from the emitted .d.ts
+    /** @internal @type {Promise<void> | null} */
+    this.__readyPromise = null;
+    this.ready().catch(() => {});
   }
 
   /**
+   * Run setup once; a failed attempt is re-run by the next call.
    * @returns {Promise<void>}
    */
   async ready() {
-    await this.__readyPromise;
+    if (!this.__readyPromise) {
+      this.__readyPromise = this.__setup();
+    }
+
+    const attempt = this.__readyPromise;
+    try {
+      await attempt;
+    } catch (setupError) {
+      if (this.__readyPromise === attempt) {
+        this.__readyPromise = null;
+      }
+      throw setupError;
+    }
   }
 
   /** @internal */
@@ -517,8 +534,11 @@ class MongoAdapter {
       return executed + 1;
     }
 
+    // Bounded by the lease expiry so a huge due-batch can't outlive the lock;
+    // leftover due tasks are picked up on the next revolution.
     const batchLimit = 100;
-    while (true) {
+    const stopAtMs = lock.expiresAtMs - LEASE_STOP_MARGIN;
+    while (Date.now() < stopAtMs) {
       const tasks = await this.__claimNextTasks(nextExecuteAt, lock, batchLimit);
       if (tasks.length === 0) {
         break;

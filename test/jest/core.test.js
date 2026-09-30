@@ -282,6 +282,54 @@ describe('JoSk core', () => {
     });
   });
 
+  it('resolves a 500 ping result when adapter initialization failed', async () => {
+    const setupError = new Error('setup failed');
+    const readyPromise = Promise.reject(setupError);
+    readyPromise.catch(() => {});
+    const { job } = createJob({}, new FakeAdapter({ readyPromise }));
+
+    await expect(job.ping()).resolves.toEqual({
+      status: 'Internal Server Error',
+      code: 500,
+      statusCode: 500,
+      error: setupError
+    });
+  });
+
+  it('retries adapter readiness after a failure, at most once per retry window', async () => {
+    const setupError = new Error('storage down');
+    const adapter = new FakeAdapter();
+    let attempts = 0;
+    adapter.ready = async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw setupError;
+      }
+    };
+    // Poll far apart so only the calls below touch adapter.ready().
+    const { job } = createJob({ minRevolvingDelay: 60000, maxRevolvingDelay: 60000 }, adapter);
+
+    await expect(job.setInterval(() => {}, 1, 'retry-interval')).rejects.toBe(setupError);
+    // Inside the retry window the cached failure is returned without a new attempt.
+    await expect(job.setInterval(() => {}, 1, 'retry-interval')).rejects.toBe(setupError);
+    expect(attempts).toBe(1);
+
+    jest.advanceTimersByTime(5000);
+    await expect(job.setInterval(() => {}, 1, 'retry-interval')).resolves.toBe('retry-intervalsetInterval');
+    expect(attempts).toBe(2);
+    await expect(job.ping()).resolves.toMatchObject({ code: 200 });
+  });
+
+  it('rounds fractional delays and lease durations to whole milliseconds', async () => {
+    const { job, adapter } = createJob({ lockLeaseTime: 10000.5 });
+
+    await job.setTimeout(() => {}, 1000 / 3, 'fractional-timeout');
+    await job.setInterval(() => {}, 2000.6, 'fractional-interval');
+
+    expect(adapter.addCalls.map((call) => call.delay)).toEqual([333, 2001]);
+    expect(job.lockLeaseTime).toBe(10001);
+  });
+
   it('supports adapters without ready hook', async () => {
     const adapter = {
       acquireLock: async () => true,
@@ -1013,7 +1061,9 @@ describe('pause/resume', () => {
     expect(ran).toBe(false);
     expect(adapter.updateCalls).toHaveLength(1);
     expect(adapter.updateCalls[0].task.uid).toBe(timerId);
-    expect(+adapter.updateCalls[0].nextExecuteAt).toBeGreaterThan(Date.now() - 100);
+    // Handed back due in 2s regardless of the task's own delay, so a peer can take it soon.
+    expect(+adapter.updateCalls[0].nextExecuteAt - Date.now()).toBeLessThanOrEqual(2000);
+    expect(+adapter.updateCalls[0].nextExecuteAt - Date.now()).toBeGreaterThan(1500);
   });
 
   it('resume(timerId) allows handler after claim', async () => {

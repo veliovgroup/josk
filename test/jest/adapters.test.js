@@ -192,7 +192,64 @@ describe('Adapter constructor guards', () => {
   });
 });
 
+describe('Adapter initialization retry', () => {
+  it('RedisAdapter re-runs setup on the next ready() after a failure', async () => {
+    const resetError = new Error('redis down');
+    const client = createRedisClient();
+    client.del.mockImplementationOnce(async () => {
+      throw resetError;
+    });
+    const adapter = new RedisAdapter({ client, prefix: 'retry', resetOnInit: true });
+
+    await expect(adapter.ready()).rejects.toBe(resetError);
+    await expect(adapter.ready()).resolves.toBeUndefined();
+    expect(client.del).toHaveBeenCalledTimes(2);
+  });
+
+  it('MongoAdapter re-runs setup on the next ready() after a failure', async () => {
+    const indexError = new Error('mongo down');
+    const taskCollection = createMongoCollection();
+    taskCollection.indexes.mockImplementationOnce(async () => {
+      throw indexError;
+    });
+    const db = createMongoDb({ taskCollection });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const adapter = new MongoAdapter({ db, prefix: uniquePrefix('mongo-retry') });
+
+    await expect(adapter.ready()).rejects.toBe(indexError);
+    await expect(adapter.ready()).resolves.toBeUndefined();
+    expect(taskCollection.createIndex).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('PostgresAdapter re-runs setup on the next ready() after a failure', async () => {
+    const connectError = new Error('postgres down');
+    let calls = 0;
+    const client = createPostgresClient(() => {
+      if (++calls === 1) {
+        throw connectError;
+      }
+    });
+    const adapter = new PostgresAdapter({ client, prefix: uniquePrefix('postgres-retry') });
+
+    await expect(adapter.ready()).rejects.toBe(connectError);
+    await expect(adapter.ready()).resolves.toBeUndefined();
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS josk_tasks'));
+  });
+});
+
 describe('RedisAdapter unit coverage', () => {
+  it('parks a batch claim after the claim time even when nextExecuteAt is already due', async () => {
+    const { adapter, client } = await setupRedisAdapter({ evalResult: null });
+
+    await adapter.iterate(new Date(Date.now() - 60000), createLock('redis-park'), 'batch');
+
+    // A park time at or before `now` stays due, so the batch script would claim the same task again.
+    expect(client.eval).toHaveBeenCalledTimes(1);
+    const [now, parkAt] = client.eval.mock.calls[0][1].arguments.map(Number);
+    expect(parkAt).toBeGreaterThan(now);
+  });
+
   it('deletes scanned task keys on reset (redis v4 client: yields individual keys)', async () => {
     const client = createRedisClient({
       scanKeys: ['josk:reset:task:a', 'josk:reset:task:b']
@@ -1483,7 +1540,7 @@ describe('PostgresAdapter unit coverage', () => {
     expect(client.query).toHaveBeenCalledWith('DELETE FROM josk_locks WHERE lock_key = $1', [adapter.lockKey]);
   });
 
-  it('rethrows unexpected primary key setup errors and releases advisory lock', async () => {
+  it('rethrows unexpected primary key setup errors and rolls the setup transaction back', async () => {
     const setupError = new Error('primary key failed');
     setupError.code = 'XX000';
     const client = createPostgresClient((sql) => {
@@ -1501,11 +1558,73 @@ describe('PostgresAdapter unit coverage', () => {
     });
 
     await expect(adapter.ready()).rejects.toBe(setupError);
-    expect(client.query).toHaveBeenCalledWith(
-      'SELECT pg_advisory_unlock($1, $2)',
-      [0x4A6F536B, adapter.__advisoryLockKey]
-    );
-    expect(typeof adapter.__advisoryLockKey).toBe('number');
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('skips the primary key change when the composite key already exists', async () => {
+    const { client } = await setupPostgresAdapter((sql) => {
+      if (sql.includes('information_schema.table_constraints')) {
+        return { rows: [{ column_name: 'prefix' }, { column_name: 'uid' }] };
+      }
+    });
+
+    expect(client.query).not.toHaveBeenCalledWith(expect.stringContaining('ADD CONSTRAINT josk_tasks_pkey'));
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('serializes schema setup across prefixes with one advisory lock key', async () => {
+    const lockArgs = [];
+    const handler = (sql, values) => {
+      if (sql.includes('pg_advisory_xact_lock')) {
+        lockArgs.push(values);
+      }
+    };
+
+    await setupPostgresAdapter(handler, { prefix: 'emails' });
+    await setupPostgresAdapter(handler, { prefix: 'reports' });
+
+    expect(lockArgs).toEqual([[0x4A6F536B, 0], [0x4A6F536B, 0]]);
+  });
+
+  it('pins one pooled client for setup and releases it when the lock query fails', async () => {
+    const lockError = new Error('lock timeout');
+    const release = jest.fn();
+    const dedicated = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('pg_advisory_xact_lock')) {
+          throw lockError;
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release
+    };
+    const pool = {
+      totalCount: 0,
+      query: jest.fn(async () => ({ rows: [], rowCount: 0 })),
+      connect: jest.fn(async () => dedicated)
+    };
+    const adapter = new PostgresAdapter({ client: pool, prefix: uniquePrefix('postgres-lock-fail') });
+
+    await expect(adapter.ready()).rejects.toBe(lockError);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(dedicated.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows a pool connect failure instead of running setup on rotating connections', async () => {
+    const connectError = new Error('timeout exceeded when trying to connect');
+    const pool = {
+      totalCount: 0,
+      query: jest.fn(async () => ({ rows: [], rowCount: 0 })),
+      connect: jest.fn(async () => {
+        throw connectError;
+      })
+    };
+    const adapter = new PostgresAdapter({ client: pool, prefix: uniquePrefix('postgres-connect-fail') });
+
+    await expect(adapter.ready()).rejects.toBe(connectError);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('reports ping states before assignment and on unexpected replies', async () => {
