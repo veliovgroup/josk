@@ -760,6 +760,7 @@ describe('MongoAdapter unit coverage', () => {
     const taskCollection = createMongoCollection({
       indexes: jest.fn()
         .mockResolvedValueOnce([{ name: 'wrong-length', key: { uid: 1, extra: 1 } }, { name: 'wrong-direction', key: { uid: -1 } }, { name: 'uid_old', key: { uid: 1 } }])
+        .mockResolvedValueOnce([{ name: 'uid_old', key: { uid: 1 } }])
         .mockResolvedValue([])
     });
     const adapter = new MongoAdapter({
@@ -782,6 +783,7 @@ describe('MongoAdapter unit coverage', () => {
       dropIndex: jest.fn().mockRejectedValue(Object.assign(new Error('gone'), { code: 27, codeName: 'IndexNotFound' })),
       indexes: jest.fn()
         .mockResolvedValueOnce([{ name: 'uid_old', key: { uid: 1 } }])
+        .mockResolvedValueOnce([{ name: 'uid_old', key: { uid: 1 } }])
         .mockResolvedValue([{ name: 'due_partial', key: { isDeleted: 1, executeAt: 1 }, partialFilterExpression: { isDeleted: false } }])
     });
     const adapter = new MongoAdapter({
@@ -794,6 +796,23 @@ describe('MongoAdapter unit coverage', () => {
     expect(taskCollection.dropIndex).toHaveBeenCalledWith('uid_old');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('due_partial'));
     warn.mockRestore();
+  });
+
+  it('skips the drop when a concurrent starter already made the uid index unique', async () => {
+    const taskCollection = createMongoCollection({
+      indexes: jest.fn()
+        .mockResolvedValueOnce([{ name: 'uid_1', key: { uid: 1 } }])
+        .mockResolvedValueOnce([{ name: 'uid_1', key: { uid: 1 }, unique: true }])
+        .mockResolvedValue([])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-recheck')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.dropIndex).not.toHaveBeenCalled();
   });
 
   it('retries an index build rejected because another starter holds a background operation', async () => {

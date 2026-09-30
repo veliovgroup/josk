@@ -82,7 +82,8 @@ const ensureIndexOnce = async (collection, spec, state) => {
 
     let usable = true;
     if (spec.unique) {
-      usable = found.unique === true && !found.partialFilterExpression;
+      // A non-simple collation makes distinct uids collide and plain lookups skip the index.
+      usable = found.unique === true && !found.partialFilterExpression && (!found.collation || found.collation.locale === 'simple');
     } else if (!spec.plain) {
       usable = typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression;
     }
@@ -103,6 +104,12 @@ const ensureIndexOnce = async (collection, spec, state) => {
           const dupError = new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; index "${found.name}" was kept. Dedupe the collection before starting JoSk 6 (see docs/mongodb.md).`);
           dupError.code = 11000;
           throw dupError;
+        }
+
+        // A concurrent starter may have replaced it with a unique index since the first read.
+        const current = (await collection.indexes()).find((index) => index.name === found.name);
+        if (!current || current.unique === true || !sameKeys(current.key, spec.keys)) {
+          return false;
         }
 
         try {
@@ -136,7 +143,11 @@ const ensureIndexOnce = async (collection, spec, state) => {
     await collection.createIndex(spec.keys, options);
   } catch (error) {
     if (spec.unique && error?.code === 11000) {
-      const dupError = new Error(`[josk] [MongoAdapter] duplicate "${Object.keys(spec.keys)[0]}" documents in "${collection.collectionName}"; dedupe before starting JoSk 6 (see docs/mongodb.md)`);
+      const key = Object.keys(spec.keys)[0];
+      const hint = spec.dropNonUnique
+        ? 'dedupe before starting JoSk 6 (see docs/mongodb.md)'
+        : 'set a separate {lockCollectionName} for JoSk 6 (see docs/mongodb.md)';
+      const dupError = new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; ${hint}`);
       dupError.code = 11000;
       dupError.cause = error;
       throw dupError;
@@ -149,7 +160,7 @@ const ensureIndexOnce = async (collection, spec, state) => {
   }
 };
 
-const isBusyError = (error) => error?.code === 12587 || error?.code === 117 || error?.codeName === 'BackgroundOperationInProgressForNamespace' || error?.codeName === 'ConflictingOperationInProgress';
+const isBusyError = (error) => error?.code === 12587 || error?.code === 117 || error?.code === 276 || error?.codeName === 'IndexBuildAborted' || error?.codeName === 'BackgroundOperationInProgressForNamespace' || error?.codeName === 'ConflictingOperationInProgress';
 
 /**
  * Concurrent starters can race index builds and drops. MongoDB 4.2 rejects the
@@ -518,7 +529,7 @@ class MongoAdapter {
         this.joskInstance.__execute(task);
       }
 
-      if (tasks.length < batchLimit) {
+      if (tasks.length < batchLimit || this.joskInstance.isDestroyed) {
         break;
       }
     }

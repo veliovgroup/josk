@@ -202,6 +202,59 @@ describe('MongoAdapter task collection indexes (JoSk 5 and 6 on one prefix)', fu
     assert.equal(error.cause?.code, 11000, 'original driver error is kept as cause');
   });
 
+  it('does not adopt a unique uid index with a non-simple collation', async () => {
+    const ctx = fresh('collation');
+    await ctx.col.createIndex({ uid: 1 }, { name: 'ci_uid', unique: true, collation: { locale: 'en', strength: 2 } });
+    let error;
+    try {
+      await v6(ctx).ready();
+    } catch (e) {
+      error = e;
+    }
+    assert.match(error?.message || '', /ci_uid.*not a plain unique index/s);
+    assert.deepEqual((await describeIndexes(ctx.col)).map((i) => i.name), ['ci_uid']);
+  });
+
+  it('does not drop a unique uid index another starter built after the first read', async () => {
+    const ctx = fresh('recheck');
+    await ctx.col.createIndex({ uid: 1 }, { name: 'uid_1' });
+    const dropped = [];
+    const col = new Proxy(ctx.col, {
+      get(target, prop) {
+        if (prop === 'aggregate') {
+          return (...args) => ({
+            toArray: async () => {
+              // Another starter replaces the non-unique index while this one probes.
+              await target.dropIndex('uid_1');
+              await target.createIndex({ uid: 1 }, { name: 'uid_1', unique: true });
+              return await target.aggregate(...args).toArray();
+            }
+          });
+        }
+        if (prop === 'dropIndex') {
+          return async (name) => {
+            dropped.push(name);
+            return await target.dropIndex(name);
+          };
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    const proxyDb = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'collection') {
+          return (name) => (name === ctx.col.collectionName ? col : target.collection(name));
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    await new MongoAdapter({ db: proxyDb, prefix: ctx.prefix, lockCollectionName: ctx.lock }).ready();
+    assert.deepEqual(dropped, []);
+    assert.deepEqual(await describeIndexes(ctx.col), [DUE, UID]);
+  });
+
   it('never drops a non-unique TTL index on uid', async () => {
     const ctx = fresh('ttl');
     await ctx.col.createIndex({ uid: 1 }, { name: 'ttl_uid', expireAfterSeconds: 3600 });
