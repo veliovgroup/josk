@@ -41,6 +41,25 @@ jobs.destroy();
   });
   process.stdout.write(output || 'Packed ESM and CJS declarations compile without unused drivers.\n');
 
+  // `node16` forbids require(esm), so the CJS declarations must not import ESM ones (TS1479).
+  writeFileSync(join(project, 'tsconfig.node16.json'), JSON.stringify({
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'Node16',
+      moduleResolution: 'Node16',
+      strict: true,
+      noEmit: true,
+      skipLibCheck: false,
+      types: []
+    },
+    files: ['consumer.mts', 'consumer.cts']
+  }));
+  execFileSync(process.execPath, [resolve('node_modules/typescript/bin/tsc'), '-p', 'tsconfig.node16.json'], {
+    cwd: project,
+    stdio: 'inherit'
+  });
+  console.log('Packed CJS declarations are self-contained under node16 resolution.');
+
   // Bun projects typically use bundler resolution with `module: Preserve`.
   writeFileSync(join(project, 'bun.ts'), `import { JoSk, PostgresAdapter } from 'josk';
 import type { JoSkShutdownOption } from 'josk';

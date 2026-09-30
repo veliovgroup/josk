@@ -117,3 +117,22 @@ jobs.resume('interval-tasksetInterval');
 
 // @ts-expect-error adapter required
 new JoSk({});
+
+// Adapter option and client types are exported from the root entry.
+import type { RedisAdapterOption, MongoAdapterOption, PostgresAdapterOption, RedisClientLike, MongoDbLike, PostgresClient } from 'josk';
+declare const redisClient: RedisClientType;
+declare const mongo7Db: Mongo7Db;
+const redisOptions: RedisAdapterOption<typeof redisClient> = { client: redisClient, prefix: 'typed', useHashTags: false };
+const mongoOptions: MongoAdapterOption<typeof mongo7Db> = { db: mongo7Db, lockCollectionName: 'locks' };
+const postgresOptions: PostgresAdapterOption = { client: { query: async () => ({ rows: [], rowCount: 0 }) } };
+const typedRedis = new RedisAdapter(redisOptions);
+const typedMongo = new MongoAdapter(mongoOptions);
+const typedPostgres = new PostgresAdapter(postgresOptions);
+const joskOwner: JoSk | undefined = typedRedis.joskInstance;
+const clientLike: RedisClientLike = redisClient;
+const dbLike: MongoDbLike = mongo7Db;
+const pgClient: PostgresClient = postgresOptions.client;
+void typedMongo; void typedPostgres; void joskOwner; void clientLike; void dbLike; void pgClient;
+// @ts-expect-error prefix must be a string
+const badRedisOptions: RedisAdapterOption = { client: redisClient, prefix: 1 };
+void badRedisOptions;
