@@ -109,6 +109,7 @@ const setupRedisAdapter = async (clientOpts = {}, adapterOpts = {}) => {
 
 const createMongoCollection = (overrides = {}) => ({
   createIndex: jest.fn(async () => void 0),
+  aggregate: jest.fn(() => ({ toArray: async () => [] })),
   indexes: jest.fn(async () => []),
   dropIndex: jest.fn(async () => void 0),
   deleteMany: jest.fn(async () => ({ deletedCount: 0 })),
@@ -755,43 +756,315 @@ describe('RedisAdapter unit coverage', () => {
 });
 
 describe('MongoAdapter unit coverage', () => {
-  it('rebuilds conflicting indexes with matching keys', async () => {
-    const conflict = new Error('index conflict');
-    conflict.code = 85;
+  it('replaces only a non-unique uid index, which protects nothing', async () => {
     const taskCollection = createMongoCollection({
-      createIndex: jest.fn()
-        .mockRejectedValueOnce(conflict)
-        .mockResolvedValue(void 0),
-      indexes: jest.fn(async () => [{
-        name: 'wrong-length',
-        key: {
-          uid: 1,
-          extra: 1
-        }
-      }, {
-        name: 'wrong-direction',
-        key: {
-          uid: -1
-        }
-      }, {
-        name: 'uid_old',
-        key: {
-          uid: 1
-        }
-      }])
-    });
-    const db = createMongoDb({
-      taskCollection
+      indexes: jest.fn()
+        .mockResolvedValueOnce([{ name: 'wrong-length', key: { uid: 1, extra: 1 } }, { name: 'wrong-direction', key: { uid: -1 } }, { name: 'uid_old', key: { uid: 1 } }])
+        .mockResolvedValue([])
     });
     const adapter = new MongoAdapter({
-      db,
+      db: createMongoDb({ taskCollection }),
       prefix: uniquePrefix('mongo-index')
     });
 
     await adapter.ready();
 
+    expect(taskCollection.aggregate).toHaveBeenCalledWith(expect.any(Array), { allowDiskUse: true });
+    expect(taskCollection.dropIndex).toHaveBeenCalledTimes(1);
     expect(taskCollection.dropIndex).toHaveBeenCalledWith('uid_old');
+    expect(taskCollection.createIndex).toHaveBeenCalledWith({ uid: 1 }, { name: 'uid_1', unique: true });
+    expect(taskCollection.createIndex).toHaveBeenCalledWith({ isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' });
+  });
+
+  it('treats an already dropped non-unique uid index as gone and warns on a partial due index', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const taskCollection = createMongoCollection({
+      dropIndex: jest.fn().mockRejectedValue(Object.assign(new Error('gone'), { code: 27, codeName: 'IndexNotFound' })),
+      indexes: jest.fn()
+        .mockResolvedValueOnce([{ name: 'uid_old', key: { uid: 1 } }])
+        .mockResolvedValue([{ name: 'due_partial', key: { isDeleted: 1, executeAt: 1 }, partialFilterExpression: { isDeleted: false } }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-drop-race')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.dropIndex).toHaveBeenCalledWith('uid_old');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('due_partial'));
+    warn.mockRestore();
+  });
+
+  it('retries an index build rejected because another starter holds a background operation', async () => {
+    const busy = Object.assign(new Error('a background operation is currently running'), { code: 12587 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValueOnce(busy).mockResolvedValue(void 0)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-busy')
+    });
+
+    await adapter.ready();
+
     expect(taskCollection.createIndex).toHaveBeenCalledTimes(3);
+    expect(taskCollection.createIndex.mock.calls[0]).toEqual(taskCollection.createIndex.mock.calls[1]);
+  });
+
+  it.each([
+    ['code 117', { code: 117 }],
+    ['codeName only', { codeName: 'BackgroundOperationInProgressForNamespace' }],
+    ['ConflictingOperationInProgress codeName', { codeName: 'ConflictingOperationInProgress' }]
+  ])('retries a busy index build matched by %s', async (_label, props) => {
+    const busy = Object.assign(new Error('busy'), props);
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValueOnce(busy).mockResolvedValue(void 0)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-busy-match')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.createIndex).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after 9 attempts and wraps the busy error with code and cause', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const timerSpy = jest.spyOn(globalThis, 'setTimeout').mockImplementation((fn) => { fn(); return 0; });
+    const busy = Object.assign(new Error('a background operation is currently running'), { code: 12587 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(busy)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-busy-forever')
+    });
+
+    let error;
+    try {
+      await adapter.ready();
+    } catch (e) {
+      error = e;
+    } finally {
+      timerSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(taskCollection.createIndex).toHaveBeenCalledTimes(9);
+    expect(error.message).toMatch(/index build on ".*" stayed busy after 9 attempts/);
+    expect(error.code).toBe(12587);
+    expect(error.cause).toBe(busy);
+  });
+
+  it('does not retry an index conflict error', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-no-retry')
+    });
+
+    await expect(adapter.ready()).rejects.toBe(conflict);
+    expect(taskCollection.createIndex).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it('runs the duplicate probe once across retries and passes allowDiskUse', async () => {
+    const busy = Object.assign(new Error('busy'), { code: 12587 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValueOnce(busy).mockResolvedValue(void 0),
+      indexes: jest.fn(async () => [{ name: 'uid_old', key: { uid: 1 } }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-probe-once')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.aggregate).toHaveBeenCalledTimes(1);
+    expect(taskCollection.aggregate).toHaveBeenCalledWith(expect.any(Array), { allowDiskUse: true });
+  });
+
+  it('warns on hidden adopted indexes of every spec and runs no DDL', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const taskCollection = createMongoCollection({
+      indexes: jest.fn(async () => [
+        { name: 'uid_1', key: { uid: 1 }, unique: true, hidden: true },
+        { name: 'due_lookup', key: { isDeleted: 1, executeAt: 1 }, hidden: true }
+      ])
+    });
+    const lockCollection = createMongoCollection({
+      indexes: jest.fn(async () => [
+        { name: 'uniqueName_1', key: { uniqueName: 1 }, unique: true, hidden: true },
+        { name: 'expireAt_1', key: { expireAt: 1 }, expireAfterSeconds: 1, hidden: true }
+      ])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection, lockCollection }),
+      prefix: uniquePrefix('mongo-hidden')
+    });
+
+    await adapter.ready();
+
+    expect(warn).toHaveBeenCalledTimes(4);
+    for (const name of ['uid_1', 'due_lookup', 'uniqueName_1', 'expireAt_1']) {
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`"${name}".*hidden`)));
+    }
+    for (const collection of [taskCollection, lockCollection]) {
+      expect(collection.createIndex).not.toHaveBeenCalled();
+      expect(collection.dropIndex).not.toHaveBeenCalled();
+    }
+    warn.mockRestore();
+  });
+
+  it('adopts existing task indexes of any name without DDL and never drops', async () => {
+    const taskCollection = createMongoCollection({
+      indexes: jest.fn(async () => [
+        { name: 'uid_unique', key: { uid: 1 }, unique: true },
+        { name: 'due_old', key: { isDeleted: 1, executeAt: 1 } }
+      ])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-task-adopt')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.createIndex).not.toHaveBeenCalled();
+    expect(taskCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('adopts a task index created concurrently and never drops a unique uid index', async () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const taskCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict),
+      indexes: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'uid_1', key: { uid: 1 }, unique: true }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'due_lookup', key: { isDeleted: 1, executeAt: 1 } }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ taskCollection }),
+      prefix: uniquePrefix('mongo-task-race')
+    });
+
+    await adapter.ready();
+
+    expect(taskCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('adopts equivalent lock indexes without DDL and never drops', async () => {
+    const lockCollection = createMongoCollection({
+      indexes: jest.fn(async () => [{
+        name: 'uniqueName_unique',
+        key: { uniqueName: 1 },
+        unique: true
+      }, {
+        name: 'expireAt_ttl',
+        key: { expireAt: 1 },
+        expireAfterSeconds: 0
+      }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-adopt')
+    });
+
+    await adapter.ready();
+
+    expect(lockCollection.createIndex).not.toHaveBeenCalled();
+    expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('creates lock indexes with JoSk 5 compatible names and options', async () => {
+    const lockCollection = createMongoCollection({
+      indexes: jest.fn().mockRejectedValue(Object.assign(new Error('ns not found'), { code: 26 }))
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-create')
+    });
+
+    await adapter.ready();
+
+    expect(lockCollection.createIndex).toHaveBeenCalledWith({ uniqueName: 1 }, { name: 'uniqueName_1', unique: true });
+    expect(lockCollection.createIndex).toHaveBeenCalledWith({ expireAt: 1 }, { name: 'expireAt_1', expireAfterSeconds: 1 });
+  });
+
+  it('adopts a lock index created concurrently instead of dropping it', async () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const lockCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict),
+      indexes: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'uniqueName_1', key: { uniqueName: 1 }, unique: true }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: 'expireAt_1', key: { expireAt: 1 }, expireAfterSeconds: 1 }])
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-race')
+    });
+
+    await adapter.ready();
+
+    expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a lock index conflict that no existing index resolves', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const conflict = Object.assign(new Error('conflict'), { code: 85 });
+    const lockCollection = createMongoCollection({
+      createIndex: jest.fn().mockRejectedValue(conflict)
+    });
+    const adapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection }),
+      prefix: uniquePrefix('mongo-lock-unresolved')
+    });
+
+    await expect(adapter.ready()).rejects.toBe(conflict);
+    expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+    console.error.mockRestore();
+  });
+
+  it('throws an actionable error for an unusable lock index and leaves it in place', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    for (const [index, pattern] of [
+      [{ name: 'manual', key: { uniqueName: 1 } }, /manual.*not a plain unique index/],
+      [{ name: 'manual', key: { uniqueName: 1 }, unique: true, partialFilterExpression: { a: 1 } }, /not a plain unique index/]
+    ]) {
+      const lockCollection = createMongoCollection({
+        indexes: jest.fn(async () => [index])
+      });
+      const adapter = new MongoAdapter({
+        db: createMongoDb({ lockCollection }),
+        prefix: uniquePrefix('mongo-lock-bad')
+      });
+
+      await expect(adapter.ready()).rejects.toThrow(pattern);
+      expect(lockCollection.dropIndex).not.toHaveBeenCalled();
+      expect(lockCollection.createIndex).not.toHaveBeenCalled();
+    }
+
+    const ttlCollection = createMongoCollection({
+      indexes: jest.fn(async () => [{ name: 'uniqueName_1', key: { uniqueName: 1 }, unique: true }, { name: 'plain', key: { expireAt: 1 } }])
+    });
+    const ttlAdapter = new MongoAdapter({
+      db: createMongoDb({ lockCollection: ttlCollection }),
+      prefix: uniquePrefix('mongo-lock-nottl')
+    });
+    await expect(ttlAdapter.ready()).rejects.toThrow(/plain.*not a TTL index/);
+    expect(ttlCollection.dropIndex).not.toHaveBeenCalled();
+    console.error.mockRestore();
   });
 
   it('logs setup index failures for each setup index', async () => {

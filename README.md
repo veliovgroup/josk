@@ -65,15 +65,15 @@ __Note: JoSk is the server-only package.__
 
 ## Prerequisites
 
-- `node@>=20.9.0`
+- `node@>=14.21.3` (tested on 14.21.3, 16.20.2, 18.19.1, 20.11.1, 22.21.1, and 24.16.0; the official `mongodb` driver constrains the floor: `mongodb@5` needs Node 14.20.1+, `mongodb@6` needs 16.20.1+, `mongodb@7` needs 20.19+, `redis@5` needs 18.19+, and `pg@8.20` needs 16+. `RedisAdapter` and `PostgresAdapter` are covered by mock-client tests only on Node below 20; live Redis and PostgreSQL runs stay on Node 20, 22, and 24)
 - `redis-server@>=5.0.0` or a single-writer KeyDB/Valkey server for `RedisAdapter`, with `redis@^4` or `redis@^5`. CI targets selected standalone images; see [Redis Adapter](#redis-adapter) for exact coverage.
 - `mongod@>=4.4` for `MongoAdapter`, with the official `mongodb` NPM package (only the official driver is tested)
-- `postgres@>=12` for `PostgresAdapter`, with `pg@>=8.0.3` (`pg@7` does not connect on Node 14+)
+- `postgres@>=12` for `PostgresAdapter`, with `pg@>=8.0.3` (`pg@7` does not connect on Node 14+; `pg@8.20` declares Node 16+)
 - `bun@>=1.1.0` (optional), see [Bun runtime](#bun-runtime)
 
 ### Older releases compatibility
 
-- `node@<20.9.0` — use `josk@^5`
+- `node@<14.21.3` — use `josk@^5` (Node 12 fails to parse `?.` in 6.x)
 - `mongod@<4.0.0` — use `josk@=1.1.0`
 - `node@<14.20.0` — use `josk@=3.0.2`
 - `node@<8.9.0` — use `josk@=1.1.0`
@@ -158,7 +158,7 @@ Hook throws and async rejections are logged and isolated from scheduler executio
 
 - `opts.db` {*Db*} - [*Required*] `Db` instance from `MongoClient#db()`
 - `opts.prefix` {*String*} - [Optional] use to create multiple named instances
-- `opts.lockCollectionName` {*String*} - [Optional] Lock collection name. Default: `__JobTasks__.lock`, shared by all JoSk instances
+- `opts.lockCollectionName` {*String*} - [Optional] Lock collection name. Default: `__JobTasks__.lock`, shared by all JoSk instances. Use a separate name for JoSk 6 while JoSk 5 services still use the default, see [MongoDB guide](docs/mongodb.md#sharing-the-lock-collection-between-josk-5-and-6)
 - `opts.resetOnInit` {*Boolean*} - [Optional] (*__use with caution__*) Delete all tasks for this `prefix` on init. For single-instance apps that need a clean start after a crash. Default: `false`
 
 ### `new PostgresAdapter(opts)`

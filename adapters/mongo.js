@@ -48,43 +48,134 @@ const logError = (error, ...args) => {
   }
 };
 
+const sameKeys = (a = {}, b = {}) => {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  return ak.length === bk.length && ak.every((key, i) => bk[i] === key && a[key] === b[key]);
+};
+
 /**
+ * Index setup that never drops a usable index. JoSk 5.x and 6.x can share a
+ * collection, and a drop opens a window without the unique index, where
+ * concurrent upserts insert duplicate documents. An existing index with the
+ * same key pattern is adopted whatever its name is. Fresh indexes use the
+ * names and options of JoSk 5.x, so a 5.x startup finds them unchanged.
  * @param {object} collection
- * @param {object} keys
- * @param {object} opts
+ * @param {{ keys: object, name: string, unique?: boolean, ttl?: boolean, expireAfterSeconds?: number, plain?: boolean, dropNonUnique?: boolean }} spec
  * @returns {Promise<void>}
  */
-const ensureIndex = async (collection, keys, opts) => {
+const ensureIndexOnce = async (collection, spec, state) => {
+  const check = async () => {
+    let indexes = [];
+    try {
+      indexes = await collection.indexes();
+    } catch (error) {
+      if (error?.code !== 26 && error?.codeName !== 'NamespaceNotFound') {
+        throw error;
+      }
+    }
+
+    const found = indexes.find((index) => sameKeys(index.key, spec.keys));
+    if (!found) {
+      return false;
+    }
+
+    let usable = true;
+    if (spec.unique) {
+      usable = found.unique === true && !found.partialFilterExpression;
+    } else if (!spec.plain) {
+      usable = typeof found.expireAfterSeconds === 'number' && !found.partialFilterExpression;
+    }
+
+    if (usable && (found.hidden || (spec.plain && found.partialFilterExpression))) {
+      console.warn(`[josk] [MongoAdapter] adopted index "${found.name}" on "${collection.collectionName}" is ${found.hidden ? 'hidden' : 'partial'}; queries may not use it`);
+    }
+
+    if (!usable) {
+      if (spec.dropNonUnique && found.unique !== true && typeof found.expireAfterSeconds !== 'number') {
+        // A non-unique index protects nothing, replacing it opens no duplicate window.
+        // Never drop when duplicates exist: the unique index could not be built afterwards.
+        // The probe scans the whole collection, so it runs once per ensureIndex call, not once per retry.
+        const key = Object.keys(spec.keys)[0];
+        const duplicates = state.probed ? [] : await collection.aggregate([{ $group: { _id: `$${key}`, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }, { $limit: 1 }], { allowDiskUse: true }).toArray();
+        state.probed = true;
+        if (duplicates.length > 0) {
+          const dupError = new Error(`[josk] [MongoAdapter] duplicate "${key}" documents in "${collection.collectionName}"; index "${found.name}" was kept. Dedupe the collection before starting JoSk 6 (see docs/mongodb.md).`);
+          dupError.code = 11000;
+          throw dupError;
+        }
+
+        try {
+          await collection.dropIndex(found.name);
+        } catch (error) {
+          if (error?.code !== 27 && error?.codeName !== 'IndexNotFound') {
+            throw error;
+          }
+        }
+        return false;
+      }
+
+      throw new Error(`[josk] [MongoAdapter] index "${found.name}" on "${collection.collectionName}" has the key ${JSON.stringify(spec.keys)} but is not ${spec.unique ? 'a plain unique index' : 'a TTL index'}. JoSk never drops indexes it can not replace safely. Drop or fix this index manually, or ${spec.dropNonUnique ? 'use a different {prefix}' : 'set a separate {lockCollectionName}'}.`);
+    }
+
+    return true;
+  };
+
+  if (await check()) {
+    return;
+  }
+
+  let options = { name: spec.name };
+  if (spec.unique) {
+    options = { name: spec.name, unique: true };
+  } else if (!spec.plain) {
+    options = { name: spec.name, expireAfterSeconds: spec.expireAfterSeconds };
+  }
+
   try {
-    await collection.createIndex(keys, opts);
+    await collection.createIndex(spec.keys, options);
   } catch (error) {
-    if (error?.code !== 85 && error?.codeName !== 'IndexOptionsConflict') {
+    if (spec.unique && error?.code === 11000) {
+      const dupError = new Error(`[josk] [MongoAdapter] duplicate "${Object.keys(spec.keys)[0]}" documents in "${collection.collectionName}"; dedupe before starting JoSk 6 (see docs/mongodb.md)`);
+      dupError.code = 11000;
+      dupError.cause = error;
+      throw dupError;
+    }
+
+    const conflict = error?.code === 85 || error?.code === 86 || error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict' || error?.code === 68 || error?.codeName === 'IndexAlreadyExists';
+    if (!conflict || !(await check())) {
       throw error;
     }
+  }
+};
 
-    const indexes = await collection.indexes();
-    for (const index of indexes) {
-      const indexKeys = Object.keys(index.key || {});
-      const desiredKeys = Object.keys(keys);
-      if (indexKeys.length !== desiredKeys.length) {
-        continue;
+const isBusyError = (error) => error?.code === 12587 || error?.code === 117 || error?.codeName === 'BackgroundOperationInProgressForNamespace' || error?.codeName === 'ConflictingOperationInProgress';
+
+/**
+ * Concurrent starters can race index builds and drops. MongoDB 4.2 rejects the
+ * loser with "a background operation is currently running", so retry briefly.
+ * @param {object} collection
+ * @param {object} spec
+ * @returns {Promise<void>}
+ */
+const ensureIndex = async (collection, spec) => {
+  const state = { probed: false };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ensureIndexOnce(collection, spec, state);
+    } catch (error) {
+      if (!isBusyError(error)) {
+        throw error;
       }
 
-      let matches = true;
-      for (const key of desiredKeys) {
-        if (index.key[key] !== keys[key]) {
-          matches = false;
-          break;
-        }
+      if (attempt >= 8) {
+        const busyError = new Error(`[josk] [MongoAdapter] index build on "${collection.collectionName}" stayed busy after ${attempt + 1} attempts`);
+        busyError.code = error.code;
+        busyError.cause = error;
+        throw busyError;
       }
-
-      if (matches) {
-        await collection.dropIndex(index.name);
-        break;
-      }
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
     }
-
-    await collection.createIndex(keys, opts);
   }
 };
 
@@ -176,23 +267,23 @@ class MongoAdapter {
 
   /** @internal */
   async __setup() {
-    await ensureIndex(this.collection, { uid: 1 }, { name: 'uid_unique', unique: true }).catch((error) => {
-      logError(error, '[setup] [createIndex] uid_unique');
+    await ensureIndex(this.collection, { keys: { uid: 1 }, name: 'uid_1', unique: true, dropNonUnique: true }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] uid_1');
       throw error;
     });
 
-    await ensureIndex(this.collection, { isDeleted: 1, executeAt: 1 }, { name: 'due_lookup' }).catch((error) => {
-      logError(error, '[setup] [createIndex] due_lookup');
+    await ensureIndex(this.collection, { keys: { isDeleted: 1, executeAt: 1 }, name: 'due_lookup', plain: true }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] due_lookup');
       throw error;
     });
 
-    await ensureIndex(this.lockCollection, { uniqueName: 1 }, { name: 'uniqueName_unique', unique: true }).catch((error) => {
-      logError(error, '[setup] [createIndex] uniqueName_unique');
+    await ensureIndex(this.lockCollection, { keys: { uniqueName: 1 }, name: 'uniqueName_1', unique: true }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] uniqueName_1');
       throw error;
     });
 
-    await ensureIndex(this.lockCollection, { expireAt: 1 }, { name: 'expireAt_ttl', expireAfterSeconds: 0 }).catch((error) => {
-      logError(error, '[setup] [createIndex] expireAt_ttl');
+    await ensureIndex(this.lockCollection, { keys: { expireAt: 1 }, name: 'expireAt_1', expireAfterSeconds: 1 }).catch((error) => {
+      logError(error, '[setup] [ensureIndex] expireAt_1');
       throw error;
     });
 

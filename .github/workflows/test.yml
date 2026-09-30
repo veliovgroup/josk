@@ -10,7 +10,7 @@ env:
   # Driver majors for smoke jobs (update when bumping devDependencies)
   LATEST_MONGODB_DRIVER: '7'
   LATEST_REDIS_DRIVER: '5'
-  # pg@7 breaks on Node 14+ (readyState === 'open' before connect); engines require Node >= 20.9
+  # pg@7 breaks on Node 14+ (readyState === 'open' before connect); pg@8.20 declares Node >= 16
   LATEST_PG_DRIVER: '8'
   # Latest server images — literals in services.*.image and job name (env not allowed there)
   # redis:8-alpine  mongo:8  postgres:18-alpine  valkey/valkey:8.1.9-alpine  eqalpha/keydb:x86_64_v6.3.4
@@ -234,6 +234,71 @@ jobs:
           MONGO_URL: mongodb://127.0.0.1:27017/josk-mocha-test
         run: npm run test:mongo
 
+  # Node floor: MongoDB adapter + Jest + guards on the lowest supported Node lines.
+  # Dev tools are pinned per Node line (mocha 11 / jest 30 need Node 18+); see test/runtime-matrix/run.sh.
+  test-node-floor:
+    name: Node ${{ matrix.node }} / mongo@${{ matrix.mongodb-driver }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        include:
+          - { node: '14.21.3', mongodb-driver: '5.9.2', mocha: '10.8.2', chai: '4.5.0', jest: '29.7.0', redis: '4.7.1' }
+          - { node: '16.20.2', mongodb-driver: '6.21.0', mocha: '10.8.2', chai: '4.5.0', jest: '29.7.0', redis: '4.7.1' }
+          - { node: '18.19.1', mongodb-driver: '6.21.0', mocha: '11.7.5', chai: '6.2.2', jest: '30.4.2', redis: '4.7.1' }
+
+    services:
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install Node-compatible dev tools
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = require('./package.json');
+            p.devDependencies = {};
+            delete p.scripts.prepublishOnly;
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2));
+          "
+          npm install --no-save --no-package-lock --ignore-scripts --engine-strict=false \
+            mocha@${{ matrix.mocha }} chai@${{ matrix.chai }} jest@${{ matrix.jest }} \
+            cron-parser@5.5.0 mongodb@${{ matrix.mongodb-driver }} \
+            redis@${{ matrix.redis }} pg@8.20.0
+          # npm 6 (Node 14) refuses the alias josk5@npm:josk@5.0.0 inside the josk repo (ENOSELF).
+          # Download the real 5.0.0 tarball and unpack it as node_modules/josk5 instead.
+          mkdir -p "$RUNNER_TEMP/josk5" node_modules/josk5
+          (cd "$RUNNER_TEMP/josk5" && npm pack josk@5.0.0 --silent)
+          tar -xzf "$RUNNER_TEMP/josk5"/josk-5.0.0.tgz -C node_modules/josk5 --strip-components=1
+
+      - name: Mocha live tests (MongoDB)
+        env:
+          MONGO_URL: mongodb://127.0.0.1:27017/josk-floor-test
+        run: node node_modules/mocha/bin/mocha.js ./test/npm-mongo.js ./test/mongo-url.test.js ./test/mongo-lock-index.js ./test/mongo-task-index.js
+
+      - name: Adapter guards
+        run: node node_modules/mocha/bin/mocha.js ./test/adapter-guards.js
+
+      - name: Jest unit + live Mongo adapter tests
+        env:
+          MONGO_URL: mongodb://127.0.0.1:27017/josk-floor-jest-test
+        run: node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --coverage=false
+
   # Node 20/22/24 × pg@8
   test-postgres:
     name: Node ${{ matrix.node }} / pg@8
@@ -378,7 +443,7 @@ jobs:
       fail-fast: false
       max-parallel: 12
       matrix:
-        mongo-server: ['6', '7', '8']
+        mongo-server: ['4.4', '5', '6', '7', '8']
 
     services:
       mongo:
@@ -386,7 +451,7 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' || mongo --quiet --eval 'db.runCommand({ping:1}).ok'"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10

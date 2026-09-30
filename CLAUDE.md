@@ -6,7 +6,7 @@ Primary agent guidance for this repo lives in [AGENTS.md](AGENTS.md) — read it
 
 The repo ships an [Agent Skill](https://inference.sh/blog/skills/agent-skills-overview) for **users of `josk`** (not for working on this repo itself). It uses the open, cross-tool `SKILL.md` standard and installs into 50+ AI coding agents via `npx skills add veliovgroup/josk`, including Claude Code, Codex, Cursor, Copilot, Windsurf, Cline, Continue, Roo Code, OpenCode, Goose, Aider, Gemini CLI, Kimi CLI, Tabnine, and more. When working on `josk` source, treat the skill as a downstream consumer of the public API.
 
-- Source: [`skills/josk/`](skills/josk/) — `SKILL.md` plus `references/{api,adapters,patterns,meteor,troubleshooting,legacy-v5}.md` (`legacy-v5.md` is the frozen 5.0.0 surface for Node 14–16 users, reached only through the version gate at the top of `SKILL.md` — never update it for new features).
+- Source: [`skills/josk/`](skills/josk/) — `SKILL.md` plus `references/{api,adapters,patterns,meteor,troubleshooting,legacy-v5}.md` (`legacy-v5.md` is the frozen 5.0.0 surface for users below Node 14.21.3, reached only through the version gate at the top of `SKILL.md` — never update it for new features).
 - Cross-tool installer: [`npx skills`](https://github.com/vercel-labs/skills). Standard repo layout (`skills/<name>/SKILL.md`); no manifest required.
 - Excluded from the npm tarball via `.npmignore`.
 

@@ -118,7 +118,7 @@ const jobs = new JoSk({
 |---|---|---|---|
 | `db` | `Db` | — | **Required.** `Db` instance from `MongoClient#db()`. Must come from the official `mongodb` driver. |
 | `prefix` | `string` | `'default'` | Appended to the tasks collection name. v4 implicitly used `''` (producing `__JobTasks__`); v5+ defaults to `'default'` (producing `__JobTasks__default`). |
-| `lockCollectionName` | `string` | `'__JobTasks__.lock'` | Override only if it conflicts with an existing collection. The lock collection is shared across prefixes — isolation is by the `uniqueName` field on each lock row. |
+| `lockCollectionName` | `string` | `'__JobTasks__.lock'` | Override only if it conflicts with an existing collection. The lock collection is shared across prefixes — isolation is by the `uniqueName` field on each lock row. JoSk 5 and JoSk 6 (before 6.4.1, or on a collection with the 6.1.0-6.4.0 index names) replace each other's unique index on startup, so mixed fleets need a separate `lockCollectionName` per major version. From 6.4.1 the adapter adopts existing same-key indexes and never drops them; the same holds for the task collection when 5 and 6 share a `prefix`. |
 | `resetOnInit` | `boolean` | `false` | Deletes all rows in the current-prefix tasks collection on init. |
 
 ### Collections created
@@ -180,7 +180,7 @@ Migrations run DDL on startup; schedule deploys during a low-traffic window when
 
 ### PostgreSQL guidelines
 
-- Require `pg@>=8.0.3` on Node 14+ (JoSk 6.x engines: Node `>=20.9`). `pg@7` never calls `stream.connect()` when `net.Socket.readyState` is `'open'` before connect.
+- Require `pg@>=8.0.3` on Node 14+ (JoSk 6.4.1+ engines: Node `>=14.21.3`; `pg@8.20` itself declares Node 16+, and JoSk was not run against PostgreSQL on Node below 20). `pg@7` never calls `stream.connect()` when `net.Socket.readyState` is `'open'` before connect.
 - Use `pg.Pool`. Share the app's pool when handlers also hit Postgres, or use a small dedicated pool when scheduler isolation matters.
 - One writable primary endpoint. **No replica reads** — task claims must be visible immediately.
 - Lock acquisition compares lease expiry against `CURRENT_TIMESTAMP`, so client clock skew across nodes does not affect lock ownership. This is the strongest cross-region adapter.
