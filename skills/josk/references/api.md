@@ -116,7 +116,7 @@ Stops the internal revolving timer. Returns `true` the first time, `false` on su
 
 ### `shutdown({ timeout? })` → `Promise<boolean>`
 
-Since 6.4.0. Calls `destroy()`, waits up to `timeout` ms (default `10000`) for running handlers to call `ready()`, then hands unfinished interval claims back to storage (`executeAt = now`) so another instance runs them on its next poll, not after `zombieTime`. Resolves `true` if every handler finished in time. A late `ready()` from a handed-back or superseded same-process run does not touch the schedule, but still fires `onExecuted`. Cross-instance protection requires adapter-side claim-lease fencing. Repeated calls share the first shutdown attempt and timeout. At timeout, unfinished handlers are reported to `onError` (or `console.error`): current interval claims are handed back, superseded claims are left unchanged, and one-shots are abandoned to preserve at-most-once behavior. The latest superseded handler of each task still counts as unfinished until it calls `ready()`; older ones are not tracked. Keep one-shot handlers idempotent, or set `timeout` above the longest one-shot runtime. Rejects on a negative or non-finite `timeout`. Keep `timeout` below the platform grace period (Kubernetes default 30s).
+Since 6.4.0. Calls `destroy()`, waits up to `timeout` ms (default `10000`) for running handlers to call `ready()`, then hands unfinished interval claims back to storage (`executeAt = now`) so another instance runs them on its next poll, not after `zombieTime`. Resolves `true` if every handler finished in time. A late `ready()` from a handed-back or superseded same-process run does not touch the schedule, but still fires `onExecuted`. Cross-instance protection requires adapter-side claim-lease fencing. Repeated calls share the first shutdown attempt and timeout. At timeout, unfinished handlers are reported to `onError` (or `console.error`): current interval claims are handed back, superseded claims are left unchanged, and one-shots are abandoned to preserve at-most-once behavior. The latest superseded handler of each task still counts as unfinished until it calls `ready()`; older ones are not tracked. Keep one-shot handlers idempotent, or set `timeout` above the longest one-shot runtime. Rejects on a negative or non-finite `timeout`. `timeout` covers only the wait for handlers; shutdown also waits for an in-flight poll and the hand-back writes, so leave headroom below the platform grace period (Kubernetes default 30s).
 
 ### `ping()` → `Promise<JoSkPingResult>`
 
@@ -247,7 +247,7 @@ interface JoSkAdapter {
 | `setInterval` / `setTimeout` / `setImmediate` | `string` timer id | Empty string `''` if called on a destroyed instance. |
 | `clearInterval` / `clearTimeout` | `boolean` | `false` if the task was not present. |
 | `destroy` | `boolean` | `false` on subsequent calls (idempotent). |
-| `shutdown` | `boolean` | `false` if some handlers were still running at `timeout` and their interval claims were handed back. |
+| `shutdown` | `boolean` | `false` if any tracked handler was still running at `timeout`. |
 | `ping` | `JoSkPingResult` | `code: 200` on success. |
 
 ## Input validation errors (thrown)
