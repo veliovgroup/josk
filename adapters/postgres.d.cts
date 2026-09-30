@@ -1,54 +1,50 @@
-export type MongoDbLike = {
-    collection: (name: string) => object;
-    command: (command: {
-        ping: number;
-    }) => Promise<unknown>;
+export type PostgresQueryResult = {
+    rowCount?: number | null | undefined;
+    rows?: unknown[] | undefined;
 };
-export type JoSk = import("../index.js").JoSk;
-export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
-export type JoSkLock = import("../index.js").JoSkLock;
+/**
+ * Minimal client surface used by PostgresAdapter. The official `pg`
+ * package's `Pool` and `Client` both satisfy this shape. Pool is the
+ * recommended choice for long-running applications.
+ */
+export type PostgresClient = {
+    query: (queryText: string, values?: unknown[]) => Promise<PostgresQueryResult>;
+};
+export type JoSk = import("../index.cjs").JoSk;
+export type JoSkExecuteMode = import("../index.cjs").JoSkExecuteMode;
+export type JoSkLock = import("../index.cjs").JoSkLock;
 export type AdapterPingResult = {
     status: string;
     code: number;
     statusCode: number;
     error?: unknown;
 };
-export type MongoAdapterOption<D extends MongoDbLike = MongoDbLike> = {
-    db: D;
-    lockCollectionName?: string | undefined;
+export type PostgresAdapterOption = {
+    client: PostgresClient;
     prefix?: string | undefined;
     resetOnInit?: boolean | undefined;
 };
-export type MongoTask = {
-    _id?: unknown;
+export type PostgresTask = {
     uid: string;
-    delay: number;
-    executeAt?: Date | undefined;
-    isInterval: boolean;
-    isDeleted: boolean;
-    claimLeaseId?: string | undefined;
+    delay: string | number;
+    execute_at: string | number;
+    is_interval: boolean;
+    is_deleted: boolean;
 };
-/**
- * Class representing MongoDB adapter for JoSk
- * @template {MongoDbLike} [D=MongoDbLike]
- */
-export class MongoAdapter<D extends MongoDbLike = MongoDbLike> {
+/** Class representing PostgreSQL adapter for JoSk */
+export class PostgresAdapter {
     /**
-     * Create a MongoAdapter instance
-     * @param {MongoAdapterOption<D>} opts - configuration object
+     * Create a PostgresAdapter instance
+     * @param {PostgresAdapterOption} opts - configuration object
      */
-    constructor(opts?: MongoAdapterOption<D>);
+    constructor(opts?: PostgresAdapterOption);
     name: string;
     prefix: string;
-    lockCollectionName: string;
-    resetOnInit: boolean;
-    /** @type {D} */
-    db: D;
     uniqueName: string;
-    /** @type {ReturnType<D['collection']>} */
-    collection: ReturnType<D["collection"]>;
-    /** @type {ReturnType<D['collection']>} */
-    lockCollection: ReturnType<D["collection"]>;
+    lockKey: string;
+    resetOnInit: boolean;
+    /** @type {PostgresClient} */
+    client: PostgresClient;
     /** @type {JoSk | undefined} */
     joskInstance: JoSk | undefined;
     /**
@@ -58,13 +54,15 @@ export class MongoAdapter<D extends MongoDbLike = MongoDbLike> {
     ready(): Promise<void>;
     /**
      * @async
-     * @memberOf MongoAdapter
+     * @memberOf PostgresAdapter
      * @name ping
-     * @description Check connection to MongoDB
+     * @description Check connection to PostgreSQL
      * @returns {Promise<AdapterPingResult>}
      */
     ping(): Promise<AdapterPingResult>;
     /**
+     * Acquire scheduler lease using PostgreSQL server time so the lock is
+     * resistant to client-side clock skew between distributed nodes.
      * @param {JoSkLock} lock
      * @returns {Promise<boolean>}
      */

@@ -71,6 +71,28 @@ export type JoSkOption = {
     lockOwnerId?: string | undefined;
     concurrency?: number | undefined;
 };
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type RedisClientLike = import("./adapters/redis.js").RedisClientLike;
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type MongoDbLike = import("./adapters/mongo.js").MongoDbLike;
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type PostgresClient = import("./adapters/postgres.js").PostgresClient;
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type PostgresAdapterOption = import("./adapters/postgres.js").PostgresAdapterOption;
+export type RedisAdapterOption<C extends RedisClientLike = import("./adapters/redis.js").RedisClientLike> = import("./adapters/redis.js").RedisAdapterOption<C>;
+export type MongoAdapterOption<D extends MongoDbLike = import("./adapters/mongo.js").MongoDbLike> = import("./adapters/mongo.js").MongoAdapterOption<D>;
 export type JoSkShutdownOption = {
     /**
      * Milliseconds to wait for running handlers to call `ready()`. Default: `10000`

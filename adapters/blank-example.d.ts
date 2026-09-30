@@ -18,6 +18,7 @@ export class BlankAdapter {
     lockKey: string;
     requiredOption: object;
     /**
+     * Run setup once; a failed attempt is re-run by the next call.
      * @returns {Promise<void>}
      */
     ready(): Promise<void>;
@@ -34,13 +35,14 @@ export class BlankAdapter {
      * @memberOf BlankAdapter
      * Acquire second-layer scheduler lock with owner token
      * @name acquireLock
-     * @param {{ ownerId: string, leaseId: string, expiresAtMs: number }} lock
+     * @param {{ ownerId: string, leaseId: string, expiresAtMs: number, leaseMs?: number }} lock
      * @returns {Promise<boolean>}
      */
     acquireLock(lock: {
         ownerId: string;
         leaseId: string;
         expiresAtMs: number;
+        leaseMs?: number;
     }): Promise<boolean>;
     /**
      * @async

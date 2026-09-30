@@ -5,6 +5,21 @@
   "main": "index.js",
   "type": "module",
   "types": "./index.d.ts",
+  "files": [
+    "index.js",
+    "index.cjs",
+    "index.d.ts",
+    "index.d.cts",
+    "adapters/mongo.js",
+    "adapters/mongo.d.ts",
+    "adapters/mongo.d.cts",
+    "adapters/postgres.js",
+    "adapters/postgres.d.ts",
+    "adapters/postgres.d.cts",
+    "adapters/redis.js",
+    "adapters/redis.d.ts",
+    "adapters/redis.d.cts"
+  ],
   "exports": {
     ".": {
       "import": {
@@ -18,9 +33,10 @@
     }
   },
   "scripts": {
-    "build:types": "rm -rf ./.types-tmp && tsc -p tsconfig.json --outDir ./.types-tmp && node scripts/strip-internal.mjs ./.types-tmp/index.d.ts ./.types-tmp/index.d.cts ./.types-tmp/adapters/redis.d.ts ./.types-tmp/adapters/mongo.d.ts ./.types-tmp/adapters/postgres.d.ts ./.types-tmp/adapters/blank-example.d.ts && cp ./.types-tmp/index.d.ts ./index.d.ts && cp ./.types-tmp/index.d.cts ./index.d.cts && cp ./.types-tmp/adapters/*.d.ts ./adapters/ && rm -rf ./.types-tmp",
+    "build:types": "rm -rf ./.types-tmp && tsc -p tsconfig.json --outDir ./.types-tmp && node scripts/strip-internal.mjs ./.types-tmp/index.d.ts ./.types-tmp/adapters/redis.d.ts ./.types-tmp/adapters/mongo.d.ts ./.types-tmp/adapters/postgres.d.ts ./.types-tmp/adapters/blank-example.d.ts && node scripts/cjs-types.mjs ./.types-tmp/index.d.ts ./.types-tmp/adapters/redis.d.ts ./.types-tmp/adapters/mongo.d.ts ./.types-tmp/adapters/postgres.d.ts && cp ./.types-tmp/index.d.ts ./.types-tmp/index.d.cts ./ && cp ./.types-tmp/adapters/*.d.ts ./.types-tmp/adapters/*.d.cts ./adapters/ && rm -rf ./.types-tmp",
     "prepublishOnly": "rollup index.js --file index.cjs --format cjs --external crypto,node:crypto --generatedCode.constBindings && npm run build:types",
-    "test": "mocha ./test/npm.js && npm run test:jest && npm run test:types",
+    "lint": "eslint .",
+    "test": "npm run lint && mocha ./test/npm.js && npm run test:jest && npm run test:types",
     "test:adapter-guards": "mocha ./test/adapter-guards.js",
     "test:jest": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.mjs",
     "test:jest:core": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand test/jest/core.test.js",
@@ -34,45 +50,26 @@
   },
   "keywords": [
     "agenda",
-    "agent",
+    "bun",
     "cluster",
     "CRON",
+    "cron-jobs",
+    "distributed",
     "highload",
-    "high load",
     "horizontal scaling",
     "job",
     "jobs",
-    "manager",
+    "meteor",
     "mongo",
     "mongodb",
+    "pg",
+    "postgres",
+    "postgresql",
     "redis",
-    "redisdb",
     "schedule",
     "scheduler",
-    "servers",
-    "task",
-    "task manager",
-    "task scheduler",
-    "tasks"
-  ],
-  "tags": [
-    "agenda",
-    "agent",
-    "cluster",
-    "CRON",
-    "highload",
-    "high load",
-    "horizontal scaling",
-    "job",
-    "jobs",
-    "manager",
-    "mongo",
-    "mongodb",
-    "redis",
-    "redisdb",
-    "schedule",
-    "scheduler",
-    "servers",
+    "setInterval",
+    "setTimeout",
     "task",
     "task manager",
     "task scheduler",
@@ -80,7 +77,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/veliovgroup/josk.git"
+    "url": "git+https://github.com/veliovgroup/josk.git"
   },
   "bugs": {
     "url": "https://github.com/veliovgroup/josk/issues"
@@ -104,8 +101,10 @@
     }
   },
   "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
     "chai": "^6.2.2",
     "cron-parser": "^5.5.0",
+    "eslint": "^9.39.5",
     "jest": "^30.4.2",
     "josk5": "npm:josk@5.0.0",
     "mocha": "^11.7.5",

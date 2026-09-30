@@ -52,7 +52,7 @@ Package.onUse((api) => {
     'adapters/mongo.d.ts',
     'adapters/redis.d.ts',
     'adapters/postgres.d.ts'
-  ], ['client', 'server']);
+  ], 'server');
   api.mainModule('index.js', 'server');
 });
 
@@ -63,15 +63,12 @@ Package.onTest((api) => {
 
   api.use(['ecmascript', 'mongo', profile.mocha, 'zodern:types', 'typescript'], 'server');
 
-  const suite = process.env.METEOR_TEST_SUITE;
-  const defaultTests = ['test/meteor.js', 'test/meteor-types.ts'];
-  const testFiles = suite === 'mongo'
-    ? ['test/meteor-ci-mongo.js']
-    : suite === 'redis'
-      ? ['test/meteor-ci-redis.js']
-      : suite === 'postgres'
-        ? ['test/meteor-ci-postgres.js']
-        : defaultTests;
+  const suites = {
+    mongo: ['test/meteor-ci-mongo.js'],
+    redis: ['test/meteor-ci-redis.js'],
+    postgres: ['test/meteor-ci-postgres.js']
+  };
+  const testFiles = suites[process.env.METEOR_TEST_SUITE] || ['test/meteor.js', 'test/meteor-types.ts'];
 
   api.addFiles(testFiles, 'server');
 });

@@ -24,9 +24,9 @@ export type RedisClusterClient = {
     sendCommand?: ((firstKey: string, isReadonly: boolean, args: string[]) => Promise<unknown>) | undefined;
 };
 export type RedisClientLike = RedisBaseClient & (RedisStandaloneClient | RedisClusterClient);
-export type JoSk = import("../index.js").JoSk;
-export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
-export type JoSkLock = import("../index.js").JoSkLock;
+export type JoSk = import("../index.cjs").JoSk;
+export type JoSkExecuteMode = import("../index.cjs").JoSkExecuteMode;
+export type JoSkLock = import("../index.cjs").JoSkLock;
 export type AdapterPingResult = {
     status: string;
     code: number;

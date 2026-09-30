@@ -1,2 +1,226 @@
-export { JoSk, MongoAdapter, RedisAdapter, PostgresAdapter } from './index.js';
-export type { JoSkAdapter, JoSkOption, JoSkTask, JoSkLock, JoSkExecuteMode, JoSkPingResult, JoSkErrorDetails, JoSkExecutedDetails, JoSkOnError, JoSkOnExecuted, JoSkReady, JoSkReadyCallback, JoSkTaskHandler, JoSkStoredTask, JoSkShutdownOption } from './index.js';
+export type JoSkPingResult = {
+    status: string;
+    code: number;
+    statusCode: number;
+    error?: unknown;
+};
+export type JoSkErrorDetails = {
+    description: string;
+    error: unknown;
+    uid: string | null;
+    task?: unknown;
+};
+export type JoSkExecutedDetails = {
+    uid: string;
+    date: Date;
+    delay: number;
+    timestamp: number;
+};
+export type JoSkTask = {
+    uid: string;
+    delay: number;
+    isInterval: boolean;
+    isDeleted: boolean;
+    executeAt?: number | Date | undefined;
+    /**
+     * Lease written by the claim; adapters fence `update()` on it when present
+     */
+    claimLeaseId?: string | undefined;
+};
+export type JoSkExecuteMode = "batch" | "one";
+export type JoSkLock = {
+    ownerId: string;
+    leaseId: string;
+    expireAt: Date;
+    expiresAtMs: number;
+    /**
+     * Relative lease duration (ms) captured at mint time; adapters MUST prefer this over re-deriving a duration from `expiresAtMs - Date.now()`, which re-reads the app clock and is distorted by clock steps between mint and acquire
+     */
+    leaseMs?: number | undefined;
+};
+export type JoSkOnError = (title: string, details: JoSkErrorDetails) => void | PromiseLike<void>;
+export type JoSkOnExecuted = (uid: string, details: JoSkExecutedDetails) => void | PromiseLike<void>;
+export type JoSkReadyCallback = (error: Error | undefined, success: boolean) => void;
+export type JoSkReady = (nextExecuteAt?: number | Date | JoSkReadyCallback | undefined) => Promise<boolean>;
+export type JoSkTaskHandler = (ready: JoSkReady) => void | PromiseLike<unknown>;
+export type JoSkStoredTask = JoSkTaskHandler & {
+    isMissing?: boolean;
+};
+export type JoSkAdapter = {
+    joskInstance?: JoSk | undefined;
+    acquireLock: (lock: JoSkLock) => Promise<boolean>;
+    releaseLock: (lock: JoSkLock) => Promise<void>;
+    remove: (uid: string) => Promise<boolean>;
+    add: (uid: string, isInterval: boolean, delay: number) => Promise<boolean | void>;
+    update: (task: JoSkTask, nextExecuteAt: Date) => Promise<boolean>;
+    iterate: (nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode) => Promise<number | void>;
+    ping: () => Promise<JoSkPingResult>;
+    ready?: (() => Promise<void>) | undefined;
+};
+export type JoSkOption = {
+    adapter: JoSkAdapter;
+    debug?: boolean | undefined;
+    onError?: JoSkOnError | undefined;
+    autoClear?: boolean | undefined;
+    zombieTime?: number | undefined;
+    lockLeaseTime?: number | undefined;
+    onExecuted?: JoSkOnExecuted | undefined;
+    minRevolvingDelay?: number | undefined;
+    maxRevolvingDelay?: number | undefined;
+    execute?: JoSkExecuteMode | undefined;
+    lockOwnerId?: string | undefined;
+    concurrency?: number | undefined;
+};
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type RedisClientLike = import("./adapters/redis.cjs").RedisClientLike;
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type MongoDbLike = import("./adapters/mongo.cjs").MongoDbLike;
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type PostgresClient = import("./adapters/postgres.cjs").PostgresClient;
+/**
+ * Adapter option and client types, re-exported for consumers that build
+ * configuration objects before constructing an adapter.
+ */
+export type PostgresAdapterOption = import("./adapters/postgres.cjs").PostgresAdapterOption;
+export type RedisAdapterOption<C extends RedisClientLike = import("./adapters/redis.cjs").RedisClientLike> = import("./adapters/redis.cjs").RedisAdapterOption<C>;
+export type MongoAdapterOption<D extends MongoDbLike = import("./adapters/mongo.cjs").MongoDbLike> = import("./adapters/mongo.cjs").MongoAdapterOption<D>;
+export type JoSkShutdownOption = {
+    /**
+     * Milliseconds to wait for running handlers to call `ready()`. Default: `10000`
+     */
+    timeout?: number | undefined;
+};
+/** Class representing a JoSk task runner (cron). */
+export class JoSk {
+    /**
+     * Create a JoSk instance
+     * @param {JoSkOption} opts - configuration object
+     */
+    constructor(opts?: JoSkOption);
+    debug: boolean;
+    onError: boolean | JoSkOnError;
+    autoClear: boolean;
+    zombieTime: number;
+    onExecuted: boolean | JoSkOnExecuted;
+    isDestroyed: boolean;
+    minRevolvingDelay: number;
+    maxRevolvingDelay: number;
+    execute: JoSkExecuteMode;
+    lockOwnerId: string;
+    lockLeaseTime: number;
+    concurrency: number;
+    /** @type {JoSkAdapter} */
+    adapter: JoSkAdapter;
+    /**
+     * @async
+     * @memberOf JoSk
+     * @name ping
+     * @description Check package readiness and connection to Storage
+     * @returns {Promise<JoSkPingResult>}
+     */
+    ping(): Promise<JoSkPingResult>;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Create recurring task (loop). Re-registering a stored task with the same
+     * `delay` (e.g. on process boot) keeps its next run when that is earlier than
+     * `now + delay`; otherwise the next run is `now + delay`. A task another
+     * instance is running keeps its `zombieTime` hold.
+     * @name setInterval
+     * @param {JoSkTaskHandler} func - Function (task) to execute
+     * @param {number} delay - Delay between task execution in milliseconds
+     * @param {string} uid - Unique function (task) identification as a string
+     * @returns {Promise<string>} - Timer ID
+     */
+    setInterval(func: JoSkTaskHandler, delay: number, uid: string): Promise<string>;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Create delayed task. Executes at-most-once across the cluster: the task
+     * is removed from storage before the handler runs, so a crash between
+     * removal and completion drops the run.
+     * @name setTimeout
+     * @param {JoSkTaskHandler} func - Function (task) to execute
+     * @param {number} delay - Delay before task execution in milliseconds
+     * @param {string} uid - Unique function (task) identification as a string
+     * @returns {Promise<string>} - Timer ID
+     */
+    setTimeout(func: JoSkTaskHandler, delay: number, uid: string): Promise<string>;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Create one-shot task that runs as soon as the next scheduler tick claims it.
+     * Executes at-most-once across the cluster: the task is removed from storage
+     * before the handler runs, so a crash between removal and completion drops the run.
+     * @name setImmediate
+     * @param {JoSkTaskHandler} func - Function (task) to execute
+     * @param {string} uid - Unique function (task) identification as a string
+     * @returns {Promise<string>} - Timer ID
+     */
+    setImmediate(func: JoSkTaskHandler, uid: string): Promise<string>;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Cancel (abort) current interval timer.
+     * Must be called in a separate event loop from `.setInterval()`
+     * @name clearInterval
+     * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setInterval()`
+     * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
+     */
+    clearInterval(timerId: string | Promise<string>): Promise<boolean>;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Cancel (abort) current timeout timer.
+     * Must be called in a separate event loop from `.setTimeout()`
+     * @name clearTimeout
+     * @param {string|Promise<string>} timerId - Unique function (task) identification as a string, returned from `.setTimeout()`
+     * @returns {Promise<boolean>} - `true` if task cleared, `false` if task doesn't exist
+     */
+    clearTimeout(timerId: string | Promise<string>): Promise<boolean>;
+    /**
+     * @memberOf JoSk
+     * Destroy JoSk instance and stop all tasks
+     * @name destroy
+     * @returns {boolean} - `true` if instance successfully destroyed, `false` if instance already destroyed
+     */
+    destroy(): boolean;
+    /**
+     * @async
+     * @memberOf JoSk
+     * Destroy the instance, wait for running handlers to call `ready()`, then
+     * hand unfinished interval claims back to storage so another instance can
+     * run them without waiting for `zombieTime`. Report unfinished runs at timeout;
+     * abandon one-shot tasks to preserve at-most-once execution. Repeated calls
+     * share the first attempt and its timeout. Call before exit.
+     * @name shutdown
+     * @param {JoSkShutdownOption} [opts]
+     * @returns {Promise<boolean>} - `true` if every running handler finished within `timeout`
+     */
+    shutdown(opts?: JoSkShutdownOption): Promise<boolean>;
+    /**
+     * Pause this instance from competing for scheduler work.
+     * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to pause all tasks on this instance
+     * @returns {boolean}
+     */
+    pause(timerId?: string): boolean;
+    /**
+     * Resume competing for scheduler work.
+     * @param {string} [timerId] - Timer id returned from `setInterval` / `setTimeout` / `setImmediate`; omit to resume all
+     * @returns {boolean}
+     */
+    resume(timerId?: string): boolean;
+}
+import { MongoAdapter } from './adapters/mongo.cjs';
+import { RedisAdapter } from './adapters/redis.cjs';
+import { PostgresAdapter } from './adapters/postgres.cjs';
+export { MongoAdapter, RedisAdapter, PostgresAdapter };

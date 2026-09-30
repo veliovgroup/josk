@@ -1,75 +1,54 @@
-export type RedisBaseClient = {
-    del: (keys: string[]) => Promise<unknown>;
-    eval: (script: string, options: {
-        keys: string[];
-        arguments: string[];
+export type MongoDbLike = {
+    collection: (name: string) => object;
+    command: (command: {
+        ping: number;
     }) => Promise<unknown>;
-    scriptLoad?: ((script: string) => Promise<string>) | undefined;
-    evalSha?: ((sha: string, options: {
-        keys: string[];
-        arguments: string[];
-    }) => Promise<unknown>) | undefined;
 };
-export type RedisStandaloneClient = {
-    scanIterator: (options: {
-        MATCH: string;
-        COUNT: number;
-    }) => AsyncIterable<string | string[]>;
-    ping: () => Promise<string>;
-};
-export type RedisClusterClient = {
-    masters: readonly unknown[];
-    getRandomNode: () => unknown;
-    nodeClient: (...args: never[]) => unknown;
-    sendCommand?: ((firstKey: string, isReadonly: boolean, args: string[]) => Promise<unknown>) | undefined;
-};
-export type RedisClientLike = RedisBaseClient & (RedisStandaloneClient | RedisClusterClient);
-export type JoSk = import("../index.js").JoSk;
-export type JoSkExecuteMode = import("../index.js").JoSkExecuteMode;
-export type JoSkLock = import("../index.js").JoSkLock;
+export type JoSk = import("../index.cjs").JoSk;
+export type JoSkExecuteMode = import("../index.cjs").JoSkExecuteMode;
+export type JoSkLock = import("../index.cjs").JoSkLock;
 export type AdapterPingResult = {
     status: string;
     code: number;
     statusCode: number;
     error?: unknown;
 };
-export type RedisAdapterOption<C extends RedisClientLike = RedisClientLike> = {
-    client: C;
+export type MongoAdapterOption<D extends MongoDbLike = MongoDbLike> = {
+    db: D;
+    lockCollectionName?: string | undefined;
     prefix?: string | undefined;
     resetOnInit?: boolean | undefined;
-    /**
-     * - Use Redis Cluster hash-tag keys (`josk:{prefix}:*`). Default keeps existing `josk:prefix:*` keys.
-     */
-    useHashTags?: boolean | undefined;
 };
-export type RedisTask = {
+export type MongoTask = {
+    _id?: unknown;
     uid: string;
     delay: number;
-    executeAt: number;
+    executeAt?: Date | undefined;
     isInterval: boolean;
     isDeleted: boolean;
     claimLeaseId?: string | undefined;
 };
 /**
- * Class representing Redis adapter for JoSk
- * @template {RedisClientLike} [C=RedisClientLike]
+ * Class representing MongoDB adapter for JoSk
+ * @template {MongoDbLike} [D=MongoDbLike]
  */
-export class RedisAdapter<C extends RedisClientLike = RedisClientLike> {
+export class MongoAdapter<D extends MongoDbLike = MongoDbLike> {
     /**
-     * Create a RedisAdapter instance
-     * @param {RedisAdapterOption<C>} opts - configuration object
+     * Create a MongoAdapter instance
+     * @param {MongoAdapterOption<D>} opts - configuration object
      */
-    constructor(opts?: RedisAdapterOption<C>);
+    constructor(opts?: MongoAdapterOption<D>);
     name: string;
     prefix: string;
-    useHashTags: boolean;
-    uniqueName: string;
-    lockKey: string;
-    scheduleKey: string;
-    tasksKey: string;
+    lockCollectionName: string;
     resetOnInit: boolean;
-    /** @type {C} */
-    client: C;
+    /** @type {D} */
+    db: D;
+    uniqueName: string;
+    /** @type {ReturnType<D['collection']>} */
+    collection: ReturnType<D["collection"]>;
+    /** @type {ReturnType<D['collection']>} */
+    lockCollection: ReturnType<D["collection"]>;
     /** @type {JoSk | undefined} */
     joskInstance: JoSk | undefined;
     /**
@@ -79,9 +58,9 @@ export class RedisAdapter<C extends RedisClientLike = RedisClientLike> {
     ready(): Promise<void>;
     /**
      * @async
-     * @memberOf RedisAdapter
+     * @memberOf MongoAdapter
      * @name ping
-     * @description Check connection to Redis
+     * @description Check connection to MongoDB
      * @returns {Promise<AdapterPingResult>}
      */
     ping(): Promise<AdapterPingResult>;

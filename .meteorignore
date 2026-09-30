@@ -21,8 +21,7 @@ CODE_OF_CONDUCT.md
 CONTRIBUTING.md
 HISTORY.md
 index.cjs
-index.cts
-index.d.cts
+*.d.cts
 docs
 articles
 test

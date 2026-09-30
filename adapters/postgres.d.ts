@@ -45,7 +45,10 @@ export class PostgresAdapter {
     resetOnInit: boolean;
     /** @type {PostgresClient} */
     client: PostgresClient;
+    /** @type {JoSk | undefined} */
+    joskInstance: JoSk | undefined;
     /**
+     * Run setup once; a failed attempt is re-run by the next call.
      * @returns {Promise<void>}
      */
     ready(): Promise<void>;
