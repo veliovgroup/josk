@@ -9,6 +9,7 @@ CLAUDE.md
 .cursor/
 .cursorignore
 .superpowers/
+.worktrees/
 
 # Agent Skills source — distributed cross-tool via `npx skills add veliovgroup/josk` from GitHub, not in the npm tarball
 skills/
@@ -42,8 +43,9 @@ test/
 jest.config.mjs
 /coverage
 
-# Documentation site sources (README.md ships separately)
+# Documentation site sources and unpublished articles (README.md ships separately)
 docs/
+articles/
 
 # Adapter authoring template (kept in repo for reference, not for consumers)
 adapters/blank-example.js

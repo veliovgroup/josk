@@ -24,6 +24,7 @@ index.cjs
 index.cts
 index.d.cts
 docs
+articles
 test
 package.json
 package-lock.json
@@ -37,3 +38,4 @@ scripts
 *.tgz
 *.log
 npm-debug.log*
+.worktrees

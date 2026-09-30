@@ -5,9 +5,11 @@
 node_modules
 npm-debug.log*
 /coverage
+/articles/
 .types-tmp/
 *.tgz
 /.claude
 /docs/superpowers
 /.superpowers
 .versions
+/.worktrees/
