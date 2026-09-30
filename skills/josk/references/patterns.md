@@ -1,221 +1,99 @@
-# JoSk patterns & recipes
+# JoSk patterns
 
-## CRON schedules via `cron-parser`
+## CRON
 
-JoSk does not parse CRON expressions itself. The recommended pairing is the `cron-parser` package — v5 renamed the entrypoint to `CronExpressionParser.parse()`.
+JoSk has no CRON parser. Compute the next run with `cron-parser` and pass it to `ready(date)`. `cron-parser@5` needs Node 18+; on older Node use `cron-parser@4` and `parser.parseExpression(expr)`.
 
 ```js
-import { JoSk, RedisAdapter } from 'josk';
 import { CronExpressionParser } from 'cron-parser';
-import { createClient } from 'redis';
 
-const jobsCron = new JoSk({
-  adapter: new RedisAdapter({
-    client: await createClient({ url: 'redis://127.0.0.1:6379' }).connect(),
-    prefix: 'cron-scheduler',
-  }),
-  // CRON resolves to seconds; relax revolving delays for fewer storage reads.
-  minRevolvingDelay: 512,
-  maxRevolvingDelay: 1000,
-});
+const setCron = (uid, cronExpr, task) => {
+  const nextRun = () => CronExpressionParser.parse(cronExpr).next().toDate();
 
-const setCron = async (uniqueName, cronExpr, task) => {
-  const next = CronExpressionParser.parse(cronExpr).next().toDate();
-  // Guard against clock skew: the parsed "next" can land in the recent past.
-  const initialDelay = Math.max(0, +next - Date.now());
-
-  return jobsCron.setInterval(async (ready) => {
+  return jobs.setInterval(async (ready) => {
     try {
       await task();
     } finally {
-      await ready(CronExpressionParser.parse(cronExpr).next().toDate());
+      await ready(nextRun()); // schedule the next run even if the task fails
     }
-  }, initialDelay, uniqueName);
+  }, Math.max(0, +nextRun() - Date.now()), uid);
 };
 
-await setCron('hourly-report', '0 * * * *', () => {
-  console.log('top of the hour', new Date());
-});
+await setCron('daily-report', '0 9 * * *', () => sendReport());
 ```
 
-**Why this shape:** `setInterval` reschedules itself to `now + delay` by default. CRON ticks are not uniform (e.g. `0 0 * * MON-FRI`). Calling `ready(nextDate)` overrides the default and pins the next tick to the parsed CRON time.
+Errors thrown by `task` still reach `onError`. For second-level expressions, raise `minRevolvingDelay` / `maxRevolvingDelay` (for example `512` / `1000`) to cut storage reads.
 
-If you only need the first scheduling to honor CRON and re-runs at a fixed interval, just compute the initial `delay` and skip the `ready(date)` recompute.
-
-## Handler styles — pick the simplest one that fits
-
-### Async / Promise (preferred)
+## Handler styles
 
 ```js
-jobs.setInterval(async () => {
-  await drainEmailQueue();         // throws bubble to onError
-}, 60_000, 'email-queue-1m');
-```
+// Async (preferred): ready() is called when the Promise settles, errors go to onError
+jobs.setInterval(async () => { await drainQueue(); }, 60_000, 'queue-1m');
 
-JoSk awaits the returned Promise and auto-calls `ready()`. Errors are caught and routed to `onError` (or `console.error` if no hook).
+// Sync with no parameters: ready() is called after return
+jobs.setInterval(() => { recordHeartbeat(); }, 30_000, 'heartbeat-30s');
 
-### Sync, no-arg
-
-```js
-jobs.setInterval(() => {
-  recordHeartbeat();
-}, 30_000, 'heartbeat-30s');
-```
-
-When the function declares **zero parameters** (`func.length === 0`), JoSk auto-calls `ready()` after it returns. No need to thread the callback.
-
-### Callback style
-
-Required when async work completes after the function returns and is not Promise-shaped.
-
-```js
+// Callback API: call ready() exactly once on every path
 jobs.setInterval((ready) => {
-  legacyApi.fetch((err, data) => {
-    if (err) {
-      ready();                     // ALWAYS call ready() — even on error
-      return;
-    }
-    process(data);
-    ready();                       // end of full execution
+  legacyApi.fetch((error, data) => {
+    if (error) { ready(); return; }
+    save(data);
+    ready();
   });
 }, 60_000, 'legacy-1m');
 ```
 
-If you forget `ready()`, the task will appear stuck for `zombieTime`, then be re-claimed and may run again.
+## Adaptive next run
 
-### Mixing async/await with callback APIs
-
-`process.nextTick` (or a wrapping async IIFE) lets you keep callback APIs while gaining `await` ergonomics:
-
-```js
-jobs.setInterval((ready) => {
-  process.nextTick(async () => {
-    try {
-      const result = await asyncCall();
-      waitForSomethingElse(async (err, data) => {
-        if (err) { ready(); return; }
-        await saveCollectedData(result, [data]);
-        ready();
-      });
-    } catch (err) {
-      console.error(err);
-      ready();                     // always call ready() on the error path too
-    }
-  });
-}, 60 * 60_000, 'long-1h');
-```
-
-## Dynamic next-tick scheduling
-
-`ready(nextExecuteAt)` on an interval handler reschedules just that next run. Use this for:
-
-- CRON (above).
-- Adaptive backoff — slow polling when there's no work, fast polling when there is.
-- Workdays-only schedules — skip to "next 9am Mon–Fri".
+`ready(date)` on an interval sets only the next run:
 
 ```js
 jobs.setInterval(async (ready) => {
   const found = await pickUpJob();
-  if (found) {
-    ready();                       // default: now + delay (fast)
-  } else {
-    ready(new Date(Date.now() + 5 * 60_000)); // empty queue → wait 5 min
-  }
+  ready(found ? undefined : new Date(Date.now() + 5 * 60_000)); // idle: wait 5 min
 }, 5_000, 'queue-poller');
 ```
 
-Note: `ready` accepts a `Date` or a numeric unix-ms timestamp `≥ Date.now()`. Past dates fall back to `now + delay`.
+## Arguments
 
-## Passing arguments to a task
-
-Tasks can't take arbitrary arguments — JoSk calls them with just `ready`. Close over arguments in a wrapper:
+Handlers receive only `ready`. Close over arguments, one `uid` per schedule:
 
 ```js
-const task = (arg1, arg2, ready) => {
-  // … real work …
-  ready();
-};
-
-jobs.setInterval((ready) => {
-  task(myVar, myLet, ready);
-}, 60 * 60_000, 'taskA');
-
-jobs.setInterval((ready) => {
-  task({ otherKey: 'val' }, 'other-string', ready);
-}, 60 * 60_000, 'taskB');
+const sync = (region, ready) => { /* ... */ ready(); };
+jobs.setInterval((ready) => sync('eu', ready), 60 * 60_000, 'sync-eu');
+jobs.setInterval((ready) => sync('us', ready), 60 * 60_000, 'sync-us');
 ```
-
-Each `uid` is independent — different closures with the same body are perfectly fine.
 
 ## Concurrency
 
-Default is `Infinity` — every due handler runs in parallel. Cap when handlers contend on a shared resource:
+`concurrency` caps handlers running at once in this process (default `Infinity`). Set it when handlers share a connection pool, a rate-limited API, or heavy CPU. It is per process; cluster-wide limits belong in the handler.
 
-```js
-const jobs = new JoSk({
-  adapter,
-  concurrency: 4,                  // at most 4 handlers run at the same time
-});
-```
+## Backpressure with `pause()` / `resume()`
 
-Throws on the constructor if `concurrency` isn't a positive integer or `Infinity`. Use a finite cap when:
-
-- All handlers share a DB connection pool with a finite size.
-- Handlers call a rate-limited external API.
-- Each handler uses significant CPU or memory.
-
-Per-instance — not per-cluster. If you need cluster-wide rate limiting, that lives in your handler logic, not in `concurrency`.
-
-## Instance backpressure (`pause` / `resume`)
-
-**When it applies:** Only in a **multi-instance** deployment (cluster, PM2, Kubernetes, multiple servers) where another JoSk peer can take over while this process is busy. On a **single instance**, `pause()` only stops your own revolving loop — there is no peer to pick up work, so it is usually unnecessary.
-
-Use for **long-running** handler work (large batches, slow APIs, heavy CPU) that must **not** hold the JoSk tick open until finished. Short handlers should finish normally (or call `ready()` early) without pause/resume.
-
-When this process is saturated (long handlers, GC pressure, batch imports), stop competing so peers claim due work:
+For multi-instance setups with long handlers. Stop competing while this process is busy so peers claim the work:
 
 ```js
 app.on('load-shed', () => jobs.pause());
 app.on('load-ok', () => jobs.resume());
 
-// or per heavy task on this pod only (use set* return value):
+// only one heavy task on this instance
 const reindex = await jobs.setInterval(runReindex, 3600_000, 'reindex-all');
 jobs.pause(reindex);
-// later:
 jobs.resume(reindex);
 ```
 
-- Does not cancel in-flight handlers.
-- Does not remove tasks from storage.
-- Per-task `pause(timerId)` reschedules claims this instance already won; use `execute: 'one'` if this instance still grabs too many tasks per lease.
-
-### Queue claim + fast `ready()` (inside the `set*` handler)
-
-Call `pause()` / `resume()` (global) or `pause(timerId)` / `resume(timerId)` **inside** the function passed to `setInterval` / `setTimeout` / `setImmediate` — after you have claimed work from your own queue, **before** `ready()` or before the handler returns. JoSk releases the cluster tick quickly; this instance stops competing until heavy work on **this** process is done.
-
-Typical flow:
-
-1. This JoSk instance wins the scheduled tick and enters the handler.
-2. Pull / lock records from a 3rd-party queue (delete, flag busy, etc.).
-3. `pause()` or `pause(timerId)`, then `await ready()` (callback style) or `return` after branching async work (Promise style — see below).
-4. Run the long job on this instance (or in a detached branch).
-5. When that work truly finishes on this instance, `resume()` or `resume(timerId)` in `finally`.
-
-Use the **`timerId`** returned from `set*` for per-task pause (store it in closure — the handler does not receive it as an argument).
-
-**Global pause** — this instance yields **all** scheduler competition while the batch runs:
+Inside a handler, claim work from your own queue, pause, release the tick with `ready()`, then resume when the local work ends:
 
 ```js
-const timerId = await jobs.setInterval(async (ready) => {
-  const batch = await thirdPartyQueue.claim(50);
+await jobs.setInterval(async (ready) => {
+  const batch = await queue.claim(50);
   if (batch.length === 0) {
     await ready();
     return;
   }
 
   jobs.pause();
-  await ready(); // release JoSk claim; next interval tick can be claimed elsewhere
-
+  await ready();
   try {
     await processBatch(batch);
   } finally {
@@ -224,126 +102,31 @@ const timerId = await jobs.setInterval(async (ready) => {
 }, 5000, 'queue-poller');
 ```
 
-**Per-task pause** — same pattern, but only this timer id is deferred on reclaim; other tasks on this instance keep competing:
+Per-task variant: `jobs.pause(timerId)` / `jobs.resume(timerId)` in the same places. The handler does not receive its timer id; it is `uid + 'setInterval'`, so define it as a constant before registering rather than reading the `await jobs.setInterval()` result inside the handler (a past-due stored task can run before that resolves). `resume()` in `finally`; a process that crashes while paused stays paused until restart.
 
-```js
-const timerId = await jobs.setInterval(async (ready) => {
-  const batch = await thirdPartyQueue.claim(50);
-  if (batch.length === 0) {
-    await ready();
-    return;
-  }
+## `autoClear`
 
-  jobs.pause(timerId);
-  await ready();
-
-  try {
-    await processBatch(batch);
-  } finally {
-    jobs.resume(timerId);
-  }
-}, 5000, 'queue-poller');
-```
-
-**Branch off without awaiting** (work continues after handler returns) — still call `ready()` before the branch so the storage row is updated; always `resume()` in the branch `finally`:
-
-```js
-const timerId = await jobs.setInterval((ready) => {
-  thirdPartyQueue.claim(50, (err, batch) => {
-    if (err || !batch.length) {
-      ready();
-      return;
-    }
-
-    jobs.pause(timerId);
-    ready();
-
-    processBatch(batch, () => {
-      jobs.resume(timerId);
-    });
-  });
-}, 5000, 'queue-poller');
-```
-
-Guard `resume()` with `try/finally` so a failed batch does not leave the instance paused. If the process crashes after `pause()` and before `resume()`, competition stays off until restart — persist load state or call `resume()` on startup if needed.
-
-## `execute: 'batch'` vs `'one'`
-
-- `'batch'` (default): under one lease, drain all currently due tasks. Best throughput, fewest storage round-trips.
-- `'one'`: claim one task per lease. Smaller bursts, tighter fairness across instances, useful when handlers contend on the same downstream resource and you want different instances to interleave.
-
-Most apps want `'batch'`. Switch to `'one'` only with a reason.
-
-## `autoClear: true` — when
-
-A task is "missing" if it's present in storage but not in this instance's in-memory `tasks` map. This happens when:
-
-- The codebase changed and the task is no longer registered.
-- A previous deploy left orphan rows behind.
-- A different app version is running against the same prefix.
-
-`autoClear: true` removes those rows automatically. Use it during development and on apps where you're sure orphan = obsolete. Leave it `false` (default) when multiple app versions intentionally share a prefix and you don't want each to delete the others' tasks — instead handle the `'One of your tasks is missing'` message from `onError`.
-
-## `onError` — the minimum viable hook
-
-```js
-const jobs = new JoSk({
-  adapter,
-  onError(reason, details) {
-    // reason: short title, e.g. 'Exception during task execution'
-    // details: { description, error, uid, task? }
-    logger.error('[josk]', reason, {
-      uid: details.uid,
-      err: details.error,
-      desc: details.description,
-    });
-  },
-});
-```
-
-Without this hook, exceptions inside handlers go to `console.error` and "missing task" notices go to debug logs. In production-grade apps, route them to your real logger.
+`'One of your tasks is missing'` means this instance claimed a task it has no handler for: renamed or removed code, or instances with different code on one prefix. `autoClear: true` deletes such tasks. Leave it `false` when instances with different task sets intentionally share a prefix.
 
 ## Graceful shutdown
 
 ```js
-const jobs = new JoSk({ /* … */ });
-
 const shutdown = async () => {
-  await jobs.shutdown({ timeout: 10_000 }); // stop polling, wait for handlers, hand back unfinished claims
-  // any of your own cleanup
+  await jobs.shutdown({ timeout: 10_000 }); // wait for handlers, hand back unfinished claims
   process.exit(0);
 };
 
-process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-process.on('SIGHUP', shutdown);
-process.on('uncaughtException', (err) => {
-  console.error(err);
-  shutdown().catch(() => process.exit(1));
-});
+process.on('SIGINT', shutdown);
 ```
 
-`shutdown()` calls `destroy()`, which is idempotent. After it, only `clearInterval` / `clearTimeout` remain useful — other methods send a "destroyed" notice through `onError`. Without `shutdown()`, an interval killed mid-run keeps its claim until `zombieTime`; with it, other instances pick the task up on their next poll.
+In tests, `jobs.destroy()` (sync) then close the driver client.
 
-For tests, `await jobs.destroy()` is unnecessary (it's sync), but **always** call it, and close the underlying Redis / Mongo / pg client afterwards.
-
-## Healthcheck endpoint
+## Healthcheck
 
 ```js
 app.get('/health/josk', async (_req, res) => {
-  const r = await jobs.ping();
-  res.status(r.code).json(r);
+  const result = await jobs.ping();
+  res.status(result.code).json(result);
 });
 ```
-
-`ping()` returns `{ status, code, statusCode }` plus an optional `error`. Code is `200` on success, `500` on adapter failure.
-
-## Adjusting timing accuracy
-
-The effective tick happens at `delay + uniform(minRevolvingDelay, maxRevolvingDelay) + storage round-trip`. Defaults (`128`, `768`) give roughly ±0.8s + storage latency.
-
-- **Tighten timing** at the cost of more storage I/O: lower `maxRevolvingDelay` (e.g. `256`).
-- **Reduce storage load** at the cost of jitter: raise `minRevolvingDelay` / `maxRevolvingDelay`.
-
-For sub-2-second tasks the storage round-trip dominates — JoSk recommends ≥2s intervals for predictable spacing.
-

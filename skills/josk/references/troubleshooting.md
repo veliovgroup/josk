@@ -1,114 +1,48 @@
-# JoSk troubleshooting & operational FAQ
+# JoSk troubleshooting
 
-## Execution semantics — the table to memorize
+## Zombie recovery
 
-| Method | Guarantee | What happens on crash mid-handler |
-|---|---|---|
-| `setImmediate(fn, uid)` | At-most-once across the cluster | Task is removed *before* the handler runs. If the process dies between removal and completion, the run is lost. |
-| `setTimeout(fn, delay, uid)` | At-most-once across the cluster | Task is removed *before* the handler runs. If the process dies between removal and completion, the run is lost. |
-| `setInterval(fn, delay, uid)` | At-least-once per scheduled tick (until cleared) | Storage row stays during execution. If `ready()` isn't called within `zombieTime`, the task is re-claimed and may run again. Make handlers idempotent. |
+An interval whose handler never calls `ready()` (crash, hang, forgotten callback) is claimable again after `zombieTime` (default 15 min) and then runs again on whichever instance wins the claim. Restarting the app does not shorten a running claim. Keep `zombieTime` above the slowest handler plus margin, and call `await jobs.shutdown({ timeout })` on `SIGTERM` so running claims are handed back instead of waiting out `zombieTime`. If a handler routinely hits `zombieTime`, split the work or move it off the scheduler.
 
-## "Zombie task" recovery — what actually happens
+## Timing
 
-A task is a zombie when the instance that claimed it never called `ready()` and never resolved its Promise within `zombieTime` (default 15 min). After that window:
+A run starts at `executeAt + uniform(minRevolvingDelay, maxRevolvingDelay) + storage round-trip`: with defaults, up to about 0.8 s late, never early. Lower `maxRevolvingDelay` (for example `256`) for tighter timing at the cost of more storage reads. Intervals below about 2 s overlap with the round-trip. For wall-clock cadence use the CRON pattern in [patterns.md](patterns.md).
 
-1. Another (or the same) instance acquires the scheduler lease.
-2. The task becomes eligible for atomic claim again.
-3. It executes a second time on whichever instance wins the claim.
+## Storage outages
 
-Tuning:
+Adapter errors during a poll are reported to `onError` and retried on the next poll. Locks held by crashed nodes expire on their own (Redis `SET PX`, Mongo TTL index, Postgres `locked_until` against server time). If storage is unreachable while the adapter initialises, JoSk retries initialisation at most every 5 s; meanwhile `set*` reject and `ping()` returns 500. Tasks registered before the outage start once storage is back; repeat rejected `set*` calls.
 
-- `zombieTime` must exceed the slowest legitimate handler runtime plus a margin. Below 60s is not recommended.
-- Re-registering a claimed interval keeps its zombie deadline. An uncleanly killed handler can wait the full `zombieTime` (15 minutes by default) before recovery, rather than only `delay`; this avoids early overlap on rolling restarts. Call `await jobs.shutdown({ timeout })` on `SIGTERM` to hand running claims back. Lower `zombieTime` only if every legitimate handler finishes sooner.
-- Built-in adapters fence `update()` on the claim lease across instances. JoSk also suppresses late writes when a newer same-uid run starts in the same process, including for adapters without claim leases. Custom adapters need equivalent storage fencing to prevent an old handler on another process from overwriting the newer schedule.
-- Older records can carry a stale `claimLeaseId` after completion. The first new registration may preserve that date; the next `update()` clears it. Mixed-version peers can still shorten claims.
-- If a handler routinely hits `zombieTime`, either the handler is too slow or `zombieTime` is too tight. Split long work or move it off the scheduler.
+Clock skew: Redis and Postgres leases use relative TTLs or server time. Mongo stores app-generated dates, so keep Mongo app nodes time-synchronized, or use `PostgresAdapter` when clocks may diverge.
 
-## Monitoring stuck tasks
+## A task runs twice
 
-`onError('One of your tasks is missing')` means this instance claimed a task without a registered in-memory handler; it does **not** detect a stuck registered handler. Past-due timestamps alone measure backlog. Inspect intervals with a non-empty `claimLeaseId` (Postgres `claim_lease_id`) and `executeAt` approaching recovery; this indicates a claim near expiry, not proof of a stalled handler. Redis: iterate the task hash with `HSCAN` and parse payloads. Mongo: filter the task collection on `claimLeaseId` and `executeAt`. Postgres: filter `josk_tasks` on `claim_lease_id` and `execute_at`. See [monitoring and recovery](https://github.com/veliovgroup/josk/blob/master/docs/monitoring.md) for queries and caveats. Use `jobs.ping()` for adapter connectivity.
+1. It is a `setInterval` whose handler exceeds `zombieTime`. Shorten the handler or raise `zombieTime`.
+2. The handler declares `ready` but never calls it on some path. Call it, or drop the parameter and return a Promise.
+3. Two prefixes store the same `uid`; each prefix is a separate schedule.
+4. Multi-master Redis, or Mongo reads from a secondary. Use one writable primary, or `PostgresAdapter`.
 
-## Jitter / accuracy
+## A task never runs, or runs late
 
-The effective tick happens at:
+1. Two `setInterval` calls share a `uid`; the second overwrites the first. (`setInterval` and `setTimeout` ids do not collide.)
+2. The handler is registered on an instance that is down, and no other instance has it: `onError('One of your tasks is missing')`. Register handlers on every instance, or set `autoClear: true` for obsolete tasks.
+3. A `setTimeout` / `setImmediate` crashed mid-run. That is at-most-once; use an idempotent `setInterval` when a miss is worse than a duplicate.
+4. `josk` 6.3 or older reset every interval to `now + delay` on each boot, so frequent restarts postponed runs indefinitely. Upgrade.
+5. `PostgresAdapter` before 6.2 dropped delays above about 24.85 days (`INTEGER` column). Upgrade.
 
-```
-delay + uniform(minRevolvingDelay, maxRevolvingDelay) + storage round-trip
-```
+## Redis Cluster errors
 
-With defaults (`128`, `768`), expect ±0.8s + storage latency. The revolving range is intentional — it stops multiple instances from racing to claim the same lease window.
+`CROSSSLOT`: the adapter needs `useHashTags: true` on a cluster client. `MOVED` with `redis@4` on `josk` 6.3 or older: upgrade to 6.4+.
 
-Trade-offs:
+## MongoAdapter fails at startup
 
-- Tighter timing → lower `maxRevolvingDelay` → more storage reads.
-- Less storage load → raise both delays → looser timing.
+Since 6.5.0 `MongoAdapter` never drops an index. Startup fails with `duplicate "uid" documents` or `index "..." is not a plain unique index` when the collection holds duplicates or a conflicting index on the same keys. Dedupe or fix the index, then restart: [MongoDB guide](https://github.com/veliovgroup/josk/blob/master/docs/mongodb.md). On a replica set use `w: 'majority'`, or a claim that reached only the primary can vanish on failover.
 
-For tasks shorter than ~2 seconds, storage round-trip dominates and runs may overlap. Prefer ≥2s for predictable spacing.
+## PostgresAdapter connection errors
 
-## Storage restarts
+`Connection terminated due to connection timeout` with `pg@7`: use `pg@>=8.0.3`. The `Cannot find module 'pg-native'` log is a harmless optional binding.
 
-JoSk swallows adapter errors and retries on the next tick. The scheduler self-recovers once the connection is healthy. Leases held by crashed nodes self-expire:
+## Upgrades
 
-- **Redis** — `PEXPIRE` TTL on the lock key.
-- **MongoDB** — TTL index on the lock collection.
-- **PostgreSQL** — `locked_until` compared against server time on the next claim.
+Guides: [v4 to v5](https://github.com/veliovgroup/josk/blob/master/docs/migration-v4-v5.md), [v5 to v6](https://github.com/veliovgroup/josk/blob/master/docs/migration-v5-v6.md), [v6 to v6.1](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6-v6.1.md), [v6.1 to v6.2](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.1-v6.2.md), [v6.2 to v6.3](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.2-v6.3.md), [v6.3 to v6.4](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.3-v6.4.md), [v6.4 to v6.5](https://github.com/veliovgroup/josk/blob/master/docs/migration-v6.4-v6.5.md).
 
-Running `jobs.ping()` after a restart confirms readiness.
-
-## Clock skew across nodes
-
-Redis uses relative `PEXPIRE` TTL. Postgres computes lease expiry from `CURRENT_TIMESTAMP`, so app-node clock skew does not change lock lifetime. Mongo persists app-generated dates and uses a server-side TTL index for cleanup; keep Mongo app nodes time-synchronized.
-
-If app-node clocks may diverge, prefer `PostgresAdapter`: `acquireLock` computes and compares lease expiry from server time.
-
-## "Why does my interval run late or never after restarts?"
-
-`josk@6.3.0` and earlier reset an interval's next run to `now + delay` on every `setInterval()` call. Every boot of every instance re-registers its intervals, so a crash-looping instance, frequent rolling deploys, or Meteor dev hot reloads push each interval back by a full `delay` for the whole cluster. A 10-minute interval can go an hour without running. Later releases keep the stored next run when an existing interval re-registers with the same `delay` and the stored time is earlier. Upgrade.
-
-## "Why does my interval drift by ~1 second?"
-
-The effective interval is `delay + uniform(min, max) + round-trip`, not `delay` exactly. Defaults put `min=128`, `max=768`, so the upper bound is `delay + 768ms + storage latency`. To tighten: lower `maxRevolvingDelay`. To get exact wall-clock cadence (e.g. fire at the top of every minute), use the CRON pattern in `patterns.md` and call `ready(nextDate)`.
-
-## "Why is my task running twice?"
-
-In order of likelihood:
-
-1. **It's a `setInterval` and the handler is exceeding `zombieTime`.** Lower the handler runtime or raise `zombieTime`.
-2. **`ready()` was never called and `func.length > 0`.** Handlers that declare a `ready` parameter but never call it look stuck to JoSk. Either call it or remove the parameter so JoSk auto-completes.
-3. **Two instances are using different `prefix` values that both store tasks with the same `uid`.** Each prefix is an isolated namespace — same `uid` in two prefixes runs twice. Either unify prefixes or use different `uid`s.
-4. **Multi-master Redis / Mongo secondaries.** Active-active Redis can produce duplicate claims; reading the Mongo lock from a secondary can let a stale leader keep running. Switch to a single writable primary, or use `PostgresAdapter`.
-
-## "Why is my task missing?"
-
-In order of likelihood:
-
-1. **The `uid` collides with another `setInterval` / `setTimeout` registration.** Internal timer ids include a suffix, so `setInterval(_, _, 'x')` and `setTimeout(_, _, 'x')` don't collide — but two `setInterval` calls with `uid: 'x'` do, and the second overwrites the first.
-2. **It was registered on an instance that has since shut down**, and no other instance has the handler in memory. Result: `onError('One of your tasks is missing', …)`. Register the handler on every instance, or enable `autoClear: true` if the task is genuinely obsolete.
-3. **`setTimeout` / `setImmediate` crashed before completing.** That's the at-most-once guarantee. If "miss" is unacceptable, use `setInterval` with idempotent semantics.
-4. **PostgresAdapter before `v6.2.0` with a delay/interval > ~24.85 days.** The `delay` column was `INTEGER`; values over `2147483647` ms overflowed int4 and the task was silently dropped on `add()`. Fixed in `v6.2.0` (column widened to `BIGINT`, auto-migrated). Upgrade for monthly-scale schedules.
-
-## Replicas / Cluster topologies — what breaks
-
-- **Reading JoSk state from a Mongo secondary or a Redis / KeyDB / Valkey replica.** Lease writes must be immediately visible. Use the primary.
-- **Active-active Redis / KeyDB active-replication / multi-master.** Conflict resolution can allow duplicate claims. Use a single writable primary, or `PostgresAdapter`.
-- **`MOVED` errors with `redis@4` Cluster on josk ≤ 6.3.** The `redis@4` cluster client routes `EVAL` to a random master (~4% failures with 3 masters); a failed `ready()` write parks the interval until `zombieTime`. 6.4 sends scripts via `sendCommand(firstKey)`. Upgrade.
-- **Redis / KeyDB / Valkey Cluster without `useHashTags: true`.** Lua touches `schedule` + `tasks` + `lock`. Untagged keys hash to different slots → `CROSSSLOT`. `RedisAdapter` throws for a cluster client (`nodeClient`, no `scanIterator`) without it. CI Cluster coverage uses Redis; KeyDB/Valkey Cluster are not separately tested.
-- **MailTime with only one side tagged.** `RedisQueue({ useHashTags })` and JoSk `useHashTags` must match. MailTime queue layout is not a JoSk key rename — see `mail-time` skill.
-- **MongoDB without `w: 'majority'`.** A claim that's only on the primary can vanish on failover. Use majority writes and `readConcern: 'majority'`.
-- **Postgres read replicas.** Same rule — no scheduler reads on replicas.
-
-## PostgresAdapter: `Connection terminated due to connection timeout`
-
-Use `pg@>=8.0.3`. Older `pg@7` hangs on TCP connect. The `Cannot find module 'pg-native'` log is harmless optional native bindings.
-
-## Migrations
-
-Full upgrade guides live under `docs/migration-v4-v5.md`, `docs/migration-v5-v6.md`, `docs/migration-v6-v6.1.md`, `docs/migration-v6.1-v6.2.md`, and `docs/migration-v6.2-v6.3.md`.
-
-## When NOT to use JoSk
-
-- **Single-process apps that don't need cluster correctness.** Native `setInterval` / `setTimeout` are fine and have no storage dependency.
-- **Browser / client code.** JoSk is server-only.
-- **Sub-2-second high-frequency work.** Storage round-trip + revolving delay are the floor; for sub-second cadence use Node's native timers and confine the work to a single process.
-- **Workflow orchestration with retries, fan-out, and DAGs.** JoSk is a scheduler, not a workflow engine. Use Temporal / Inngest / BullMQ for that.
-- **Mongo-compatible stores other than the official driver target.** The MongoAdapter is verified only against `mongodb`; CosmosDB / DocumentDB / Mongoose's client are unverified. Use Redis or Postgres instead, or test exhaustively before relying on it.
+`MongoAdapter` data from v4/v5 with the default prefix lives in `__JobTasks__`; v6 reads `__JobTasks__default`, and `prefix: ''` does not select the old collection. Stop every instance, then run `db.__JobTasks__.renameCollection('__JobTasks__default')`.

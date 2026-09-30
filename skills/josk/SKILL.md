@@ -1,20 +1,23 @@
 ---
 name: josk
-description: "Use when integrating, comparing, or debugging JoSk distributed scheduling in Node.js/Bun, including recurring or multi-instance jobs, Redis/KeyDB/MongoDB/PostgreSQL adapters, or legacy JoSk 5.x on Node 14/16."
+description: "Guides code that uses JoSk (npm `josk`, Meteor `ostrio:cron-jobs`), the cluster-safe setInterval/setTimeout/CRON scheduler for Node.js and Bun backed by Redis, KeyDB, Valkey, MongoDB, or PostgreSQL. Use when a task mentions josk or ostrio:cron-jobs, schedules recurring or one-shot jobs across several app instances, needs a distributed cron or job lock, picks or configures a JoSk adapter, tunes zombieTime, concurrency, or pause/resume, adds graceful shutdown for scheduled jobs, or debugs duplicate, missing, or late JoSk runs."
+license: BSD-3-Clause
+metadata:
+  author: veliovgroup
+  josk-version: "6.5"
 ---
 
 # JoSk
 
-Distributed `setInterval` / `setTimeout` / `setImmediate` for Node ≥14.21.3 and Bun ≥1.1.
-Server-only. Schedule in Redis, MongoDB, or PostgreSQL; lease + atomic claim limit duplicate ticks.
+Distributed `setInterval` / `setTimeout` / `setImmediate` for Node >= 14.21.3 and Bun >= 1.1. Server-only. Tasks live in Redis, MongoDB, or PostgreSQL; a lease plus an atomic claim gives each due tick to one instance.
 
-## Version gate — check first
+## Version gate
 
-If `package.json` pins `josk` below `6.0.0`, or the runtime is Node < 14.21.3, stop here and read [references/legacy-v5.md](references/legacy-v5.md). Everything else in this skill describes 6.x and names exports, methods, and options that do not exist in 5.x (`PostgresAdapter`, `pause()`/`resume()`, `concurrency`, `execute`, `lockLeaseTime`, `useHashTags`, auto-`ready()` for sync handlers).
+If `package.json` pins `josk` below `6.0.0`, or the runtime is Node < 14.21.3, read [references/legacy-v5.md](references/legacy-v5.md) instead of the rest. Everything else here describes 6.x and uses exports, methods, and options that 5.x lacks (`PostgresAdapter`, `pause()`/`resume()`, `shutdown()`, `concurrency`, `execute`, `lockLeaseTime`, `useHashTags`, auto-`ready()` for sync handlers).
 
 ## Quick start
 
-JoSk does not open connections — pass a connected client. Always wire `onError` and `await jobs.shutdown()` on process exit. Read [references/](references/) lazily; do not guess v4/v5/v6 semantics from memory.
+JoSk does not open connections; pass a connected client. Wire `onError`, and `await jobs.shutdown()` on process exit.
 
 ```js
 import { JoSk, RedisAdapter } from 'josk';
@@ -34,58 +37,40 @@ await jobs.setInterval(async () => { /* idempotent work */ }, 60_000, 'poll-1m')
 
 ## Reference map
 
+Read lazily; do not guess semantics from memory.
+
 | Question | Read |
 |---|---|
-| Options, methods, hooks, types | [references/api.md](references/api.md) |
-| Adapter setup, cluster rules, custom adapter | [references/adapters.md](references/adapters.md) |
-| Handlers, CRON, concurrency, shutdown | [references/patterns.md](references/patterns.md) |
+| Options, methods, hooks, handler shape, types | [references/api.md](references/api.md) |
+| Choosing and configuring an adapter, storage layout, custom adapter | [references/adapters.md](references/adapters.md) |
+| CRON, handler styles, concurrency, pause/resume, shutdown, healthcheck | [references/patterns.md](references/patterns.md) |
 | Meteor / `ostrio:cron-jobs` | [references/meteor.md](references/meteor.md) |
-| Zombies, jitter, migrations, KeyDB / Valkey | [references/troubleshooting.md](references/troubleshooting.md) |
-| `josk@5` and older on Node 14/16 | [references/legacy-v5.md](references/legacy-v5.md) |
-| Email queue on JoSk (`mail-time`) | **REQUIRED** `mail-time` skill (`npx skills add veliovgroup/mail-time`) |
-
-## Mental model
-
-- **`adapter`** required — `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, or custom ([adapters.md](references/adapters.md)).
-- **`uid`** — app-wide unique string per logical task; reuse collides in storage.
-- **Handler** — async/Promise preferred; sync zero-arg; or `(ready) =>` for callback APIs ([patterns.md](references/patterns.md)).
-- **`set*` → `Promise<string>`** — pass string or that Promise to `clear*`.
-
-## Pick the adapter
-
-| Adapter | Choose when |
-|---|---|
-| **PostgreSQL** | Multi-DC, clock skew, strict single-claim; `SKIP LOCKED` |
-| **Redis / KeyDB / Valkey** | Single-region, high frequency; one writable primary; Cluster / Valkey Cluster needs `useHashTags: true`. Engines + MailTime pairing: [adapters.md](references/adapters.md) |
-| **MongoDB** | App already on Mongo (Meteor: `MongoInternals…mongo.db`); official `mongodb` driver |
+| Zombies, jitter, duplicate or missing runs, upgrades | [references/troubleshooting.md](references/troubleshooting.md) |
+| `josk` below `6.0.0`, or Node < 14.21.3 | [references/legacy-v5.md](references/legacy-v5.md) |
+| Email queue on JoSk (`mail-time`) | `mail-time` skill: `npx skills add veliovgroup/mail-time` |
 
 ## Pick the scheduling method
 
 | Method | Guarantee | Use when |
 |---|---|---|
 | `setInterval(fn, delay, uid)` | At-least-once per tick | Idempotent recurring work |
-| `setTimeout(fn, delay, uid)` | At-most-once | One-shot; duplicate worse than miss; removed before handler |
-| `setImmediate(fn, uid)` | At-most-once | One-shot fire-now; same as `setTimeout` with delay 0 |
+| `setTimeout(fn, delay, uid)` | At-most-once | One-shot; a duplicate is worse than a miss; removed from storage before the handler runs |
+| `setImmediate(fn, uid)` | At-most-once | One-shot on the next poll; `setTimeout` with delay 0 |
 
-`zombieTime` (default 15 min): max interval handler runtime before re-claim. Keep ≥ slowest handler + margin; not below 60s.
-`lockLeaseTime` (default min(zombieTime, 30s), floor 2 * maxRevolvingDelay + 1000): TTL of the per-cycle scheduler lease — an uncleanly-dead holder frees the prefix after this, not after `zombieTime`.
+## Rules
 
-## Throughput
+- `adapter` is required: `RedisAdapter`, `MongoAdapter`, `PostgresAdapter`, or custom.
+- `uid` is an app-wide unique string per logical task. Two registrations with one `uid` overwrite each other.
+- Prefer async handlers. Sync zero-arg handlers also work. Use `(ready) =>` only for callback APIs, and call `ready()` on every path.
+- `set*` return `Promise<string>`; pass that string (or the Promise) to `clear*`.
+- Register every handler on every instance; a claimed task without a handler on that instance is reported as missing.
 
-- `execute: 'batch'` (default) — all due tasks per lease; `'one'` — one task per lease
-- `concurrency: Infinity` (default) — parallel handlers; set integer to cap pool/API/CPU
+Flag when reviewing JoSk usage:
 
-## Red flags
-
-Call out proactively when reviewing JoSk usage:
-
-- Missing `onError`
+- Missing `onError`, or no `shutdown()` on exit
 - Reused `uid` across different tasks
-- Default `zombieTime` with handlers >15 min
-- `resetOnInit: true` in production cluster
-- Replica reads / multi-writer Redis
-- Redis / KeyDB / Valkey Cluster without `useHashTags: true`
-- MailTime Redis Cluster with `useHashTags` on only JoSk or only `RedisQueue`
-- Intervals <~2s (storage + jitter overlap)
-- MongoAdapter on CosmosDB/DocumentDB/Mongoose without warning
-- KeyDB active-replication / Redis active-active / multi-master
+- Default `zombieTime` (15 min) with handlers that can run longer
+- `resetOnInit: true` in a production cluster
+- Replica reads, multi-master Redis or KeyDB, or Cluster without `useHashTags: true`
+- Intervals below ~2 s
+- `MongoAdapter` on Cosmos DB, DocumentDB, or Mongoose without a warning that they are untested

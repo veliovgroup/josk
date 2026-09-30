@@ -1,29 +1,18 @@
-# JoSk in Meteor.js
+# JoSk in Meteor
 
-Atmosphere package `ostrio:cron-jobs`. Identical API to the NPM package — only the import path differs.
-
-## Install
+Atmosphere package `ostrio:cron-jobs`, Meteor 2.14+ or 3.2+. Same API as npm `josk`; only the import path differs. Server-only: keep it under `server/`.
 
 ```sh
 meteor add ostrio:cron-jobs
 ```
 
-If you'd rather use the NPM package directly inside Meteor, `meteor npm install josk` works the same — Meteor's Node server can import either.
-
-## Import
-
 ```js
-import {
-  JoSk,
-  RedisAdapter,
-  MongoAdapter,
-  PostgresAdapter,
-} from 'meteor/ostrio:cron-jobs';
+import { JoSk, MongoAdapter, RedisAdapter, PostgresAdapter } from 'meteor/ostrio:cron-jobs';
 ```
 
-## MongoDB via Meteor's built-in driver
+## MongoDB through Meteor's driver
 
-When the app already runs against MongoDB (the default in Meteor), pull the `Db` instance off `MongoInternals` — no second client connection needed:
+Reuse the app's connection; no second client:
 
 ```js
 import { MongoInternals } from 'meteor/mongo';
@@ -32,39 +21,23 @@ import { JoSk, MongoAdapter } from 'meteor/ostrio:cron-jobs';
 const jobs = new JoSk({
   adapter: new MongoAdapter({
     db: MongoInternals.defaultRemoteCollectionDriver().mongo.db,
-    prefix: 'cluster-scheduler',
+    prefix: 'app',
   }),
-  execute: 'batch',
-  minRevolvingDelay: 128,
-  maxRevolvingDelay: 768,
-  onError(reason, details) {
-    console.error('[josk]', reason, details.error);
-  },
+  onError: (title, { error, uid }) => console.error(title, uid, error),
 });
 
-jobs.setInterval(async () => {
-  // your work
-}, 60_000, 'task-1m');
-
-// Callback-API style is also fine
-jobs.setInterval((ready) => {
-  doAsyncWork(() => ready());
-}, 60_000, 'task-1m-cb');
+jobs.setInterval(async () => { /* work */ }, 60_000, 'task-1m');
 ```
 
-The scheduler shares the app's Mongo replica set — zero extra connections.
+Set `w=majority` and `readPreference=primary` on `MONGO_URL` for a replica set.
 
-## Redis / PostgreSQL from Meteor
+## Redis and PostgreSQL
 
-Same `RedisAdapter` / `PostgresAdapter` setup as `adapters.md` (Redis-compatible servers: one writable primary; Cluster needs `useHashTags: true`). Meteor CI tests Redis only; KeyDB/Valkey are not tested within Meteor. Install drivers via `meteor npm install redis` or `meteor npm install pg`, then import from `meteor/ostrio:cron-jobs` instead of `josk`.
+`meteor npm install redis` or `meteor npm install pg`, then configure `RedisAdapter` / `PostgresAdapter` exactly as in [adapters.md](adapters.md).
 
-Meteor package tests transpile TypeScript but do not type-check it. `npm run test:types` separately checks all adapter contracts and `shutdown()` through the Meteor declaration import with `tsc`.
+## Notes
 
-## Meteor-specific notes
-
-- **Server-only.** Put JoSk code in `server/` or behind `Meteor.isServer`. Never import it on the client.
-- **Replica set guidance still applies.** Use `writeConcern: { j: true, w: 'majority' }` / `readConcern: { level: 'majority' }` / `readPreference: 'primary'` on the Mongo URL when configuring Meteor against a replica set. JoSk depends on primary-visibility for lease ownership.
-- **Galaxy / autoscale.** When Galaxy scales the app horizontally, every container shares the same MongoDB. That's what JoSk's `MongoAdapter` is for — each due tick is claimed by one container; method guarantees still apply.
-- **`shutdown()` on exit.** Hook into `process.on('SIGTERM', …)` to `await jobs.shutdown({ timeout })` before Galaxy stops the container. It waits for running handlers and hands unfinished interval claims back, so another container runs them without waiting for `zombieTime`.
-
-All options and methods are identical to the NPM API — see `api.md` and `patterns.md`. Meteor 3's async-first server path needs no handler migration; the async / Promise-returning style is already supported.
+- Every Galaxy or autoscaled container shares the storage, so each due tick runs on one container.
+- `await jobs.shutdown({ timeout })` on `SIGTERM` before the container stops; see [patterns.md](patterns.md).
+- Meteor 2.x runs Node 14: use `cron-parser@4` (`parser.parseExpression`) there; `cron-parser@5` needs Node 18+.
+- TypeScript: types resolve through `zodern:types`.

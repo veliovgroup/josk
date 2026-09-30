@@ -1,14 +1,14 @@
 # JoSk adapters
 
-Three built-in adapters plus the contract for writing custom ones. Pick by topology.
+Every adapter takes `prefix` (default `'default'`). Instances with the same prefix share one schedule; different prefixes are isolated (tenant, environment, test suite). Pass a connected client; JoSk never opens connections. All adapters also take `resetOnInit` (default `false`): delete this prefix's tasks and lock at startup. Never in a production cluster.
 
-## Quick comparison
+| Adapter | Pick when | Driver | Server |
+|---|---|---|---|
+| `RedisAdapter` | Frequent ticks, one writable Redis / KeyDB / Valkey primary | `redis@^4` or `^5` | `redis-server@>=5.0.0`; Cluster needs `useHashTags: true` |
+| `MongoAdapter` | The app already runs MongoDB (including Meteor) | official `mongodb` driver | `mongod@>=4.4` |
+| `PostgresAdapter` | Mixed clocks, multi-region, strict single claim | `pg@>=8.0.3` | `postgres@>=12` |
 
-| Adapter | Best for | Prerequisite NPM | Server requirement | Lock mechanism | Notes |
-|---|---|---|---|---|---|
-| `RedisAdapter` | High-frequency scheduling, single-writer Redis / KeyDB / Valkey | `redis@^4 \|\| ^5` | Lua + sorted sets (`redis-server@≥5.0.0`, KeyDB, Valkey). Cluster requires `useHashTags: true` | Owner-bound lease key with `PEXPIRE` TTL, Lua-script atomic claim | Reject active-active / KeyDB active-replication |
-| `MongoAdapter` | Apps that already run MongoDB (incl. Meteor) | `mongodb` (official driver) | `mongod@≥4.0.0` | TTL-indexed `.lock` collection, atomic `findOneAndUpdate` task claim | Tested only against official driver. Other Mongo-compatible stores unverified |
-| `PostgresAdapter` | Multi-region / strict single-claim, mixed clocks | `pg` | `postgres@≥12` | `josk_locks` row with `CURRENT_TIMESTAMP`-compared expiry, `FOR UPDATE SKIP LOCKED` claim | Strongest clock-skew resistance. Auto-migrates schema on init |
+Not supported by any adapter: reads or writes through replicas, and multi-master setups (Redis active-active, KeyDB active-replication). Claims must be visible to every instance at once.
 
 ## `RedisAdapter`
 
@@ -16,80 +16,24 @@ Three built-in adapters plus the contract for writing custom ones. Pick by topol
 import { JoSk, RedisAdapter } from 'josk';
 import { createClient } from 'redis';
 
-const redisClient = await createClient({
-  url: 'redis://127.0.0.1:6379',
-}).connect();
+const client = createClient({ url: 'redis://127.0.0.1:6379' });
+await client.connect();
 
 const jobs = new JoSk({
-  adapter: new RedisAdapter({
-    client: redisClient,
-    prefix: 'app-scheduler',
-    // useHashTags: true, // Redis / KeyDB / Valkey Cluster
-  }),
-  onError(reason, details) {
-    console.error('[josk]', reason, details.error);
-  },
+  adapter: new RedisAdapter({ client, prefix: 'app' }), // useHashTags: true on Cluster
+  onError: (title, { error, uid }) => console.error(title, uid, error),
 });
 ```
 
-### Options
+| Option | Default | Notes |
+|---|---|---|
+| `client` | required | Connected `createClient()` or `createCluster()` instance. |
+| `prefix` | `'default'` | Must match `/^[A-Za-z0-9_\-:.]+$/`; `{` and `}` would break Cluster routing. |
+| `useHashTags` | `false` | Keys become `josk:{prefix}:*` so they share one Cluster slot. Required for a cluster client (the constructor throws without it). Existing untagged keys are not migrated. |
 
-| Option | Type | Default | Notes |
-|---|---|---|---|
-| `client` | `RedisClient` | — | **Required.** Already connected `redis@^4` or `redis@^5` client. Either `RedisClientType` or `RedisClusterType`. |
-| `prefix` | `string` | `'default'` | Scopes keys. Must match `/^[A-Za-z0-9_\-:.]+$/`. Special characters (notably `{` `}`) are rejected because they would break Cluster hash-tag routing. |
-| `resetOnInit` | `boolean` | `false` | Deletes all keys under this prefix on init. Local-dev / single-instance recovery only. Disastrous in clustered prod. |
-| `useHashTags` | `boolean` | `false` | Redis / KeyDB / Valkey Cluster hash-tag keys (`josk:{prefix}:*`) so all adapter keys live in one slot. Default keeps standalone keys (`josk:prefix:*`). Cluster client without it → constructor throws. |
+Keys for `prefix: 'app'`: `josk:app:schedule` (sorted set of due times), `josk:app:tasks` (hash of task payloads), `josk:app:lock` (scheduler lease). KeyDB and Valkey work the same in standalone mode. More: [Redis guide](https://github.com/veliovgroup/josk/blob/master/docs/redis.md).
 
-### Keys created (for `prefix: 'app'`)
-
-Default (`useHashTags: false`):
-
-- `josk:app:schedule` — sorted set of due timestamps
-- `josk:app:tasks` — hash of task payloads
-- `josk:app:lock` — scheduler lease key
-
-With `useHashTags: true`:
-
-- `josk:{app}:schedule`
-- `josk:{app}:tasks`
-- `josk:{app}:lock`
-
-The `{app}` braces are Redis hash tags that keep all adapter keys on the same Cluster slot.
-
-### Engines: Redis, KeyDB, Valkey
-
-Same RESP client (`redis@^4 \|\| ^5`). JoSk is Lua-always (HASH + ZSET + `SET NX PX` + `cjson`). No `WATCH`. No RedisJSON / Streams / modules. `Proven` lists exact CI targets, not all-version guarantees.
-
-| Engine | Standalone | Cluster | Proven |
-|---|---|---|---|
-| Redis | Yes | `useHashTags: true` | CI targets Redis 6/7/8 standalone and a 3-master Redis Cluster (drivers 4/5) |
-| KeyDB | Yes, as single-writer Redis | `useHashTags: true` | CI targets `eqalpha/keydb:x86_64_v6.3.4` standalone (Node 22, `redis@5`); no KeyDB Cluster job |
-| Valkey | Yes (Redis-compatible) | `useHashTags: true` | CI targets `valkey/valkey:8.1.9-alpine` standalone (Node 22, `redis@5`); no Valkey Cluster job |
-
-**Topology guidance:** use one writable primary. Redis-compatible Cluster requires `useHashTags: true`; CI Cluster coverage uses Redis only. JoSk itself is fine on Redis ≥ 5.
-
-**Will not:** KeyDB active-replication / multi-master; Redis active-active (CRDT); replica reads; Cluster without `useHashTags` (`CROSSSLOT` on Lua). Multi-DC / mixed clocks → `PostgresAdapter`.
-
-`useHashTags` only **renames** keys (`josk:prefix:*` → `josk:{prefix}:*`). Same hash + ZSET layout. Existing untagged keys are not read.
-
-### With MailTime (`mail-time` / `ostrio:mailer`)
-
-MailTime owns the email queue; JoSk only leases `queue.iterate()`. **REQUIRED:** `mail-time` skill (`npx skills add veliovgroup/mail-time`) for queue CAS, concat, SMTP.
-
-- Set `useHashTags` on **both** `RedisQueue` and `RedisAdapter` (or `josk.adapter.useHashTags`). One side tagged → `CROSSSLOT` or empty drains.
-- MailTime prefixes JoSk as `mailTimeQueue${prefix}` → tagged lock `josk:{mailTimeQueueotp}:lock`.
-- MailTime tagged mode is a **new** queue layout (hash + ZSET + Lua), not a JoSk-style rename of `letter:`/`sendat:` keys. Do not copy JoSk `RENAME`/`DUMP` onto MailTime queues — use MailTime's migrate script.
-- MailTime standalone still needs `WATCH`+`MULTI`; JoSk never does. Cluster clients have no `WATCH` — MailTime then needs tagged Lua.
-- `concatEmails` uses `SET PXAT` (engine ≥ 6.2). That floor is MailTime's, not JoSk's.
-- Tagged MailTime `iterate` returns at most 100 due rows per tick (Lua bound).
-
-### Topology guidelines
-
-- One writable primary. Redis / KeyDB / Valkey Cluster: `useHashTags: true`.
-- **Do not** route reads or writes to replicas. Lease writes must be immediately visible.
-- **Do not** use Redis active-active / multi-master or KeyDB active-replication. Conflict resolution can duplicate claims.
-- For multi-DC strict single-claim requirements, prefer `PostgresAdapter`.
+With `mail-time`: set `useHashTags` on both `RedisQueue` and `RedisAdapter`, and install the `mail-time` skill (`npx skills add veliovgroup/mail-time`).
 
 ## `MongoAdapter`
 
@@ -98,48 +42,19 @@ import { JoSk, MongoAdapter } from 'josk';
 import { MongoClient } from 'mongodb';
 
 const client = new MongoClient('mongodb://127.0.0.1:27017');
-// Recommend a DB separate from the app's main DB to avoid lock contention.
-const db = client.db('joskdb');
-
 const jobs = new JoSk({
-  adapter: new MongoAdapter({
-    db,
-    prefix: 'cluster-scheduler',
-  }),
-  onError(reason, details) {
-    console.error('[josk]', reason, details.error);
-  },
+  adapter: new MongoAdapter({ db: client.db('joskdb'), prefix: 'app' }),
+  onError: (title, { error, uid }) => console.error(title, uid, error),
 });
 ```
 
-### Options
+| Option | Default | Notes |
+|---|---|---|
+| `db` | required | `Db` from `MongoClient#db()`, official driver only. |
+| `prefix` | `'default'` | Task collection `__JobTasks__<prefix>`. `''` is treated as `'default'`; v4/v5 data lives in `__JobTasks__`, see "Upgrades" in [troubleshooting.md](troubleshooting.md). |
+| `lockCollectionName` | `'__JobTasks__.lock'` | Lock collection shared by all prefixes. Give JoSk 6 its own name while JoSk 5 services still use the default. |
 
-| Option | Type | Default | Notes |
-|---|---|---|---|
-| `db` | `Db` | — | **Required.** `Db` instance from `MongoClient#db()`. Must come from the official `mongodb` driver. |
-| `prefix` | `string` | `'default'` | Appended to the tasks collection name. v4 implicitly used `''` (producing `__JobTasks__`); v5+ defaults to `'default'` (producing `__JobTasks__default`). |
-| `lockCollectionName` | `string` | `'__JobTasks__.lock'` | Override only if it conflicts with an existing collection. The lock collection is shared across prefixes — isolation is by the `uniqueName` field on each lock row. JoSk 5 and JoSk 6 (before 6.4.1, or on a collection with the 6.0.0-6.4.0 index names) replace each other's unique index on startup, so mixed fleets need a separate `lockCollectionName` per major version. From 6.4.1 the adapter adopts existing same-key indexes and never drops them; the same holds for the task collection when 5 and 6 share a `prefix`. Do not run or roll back to 6.0.0-6.4.0 on collections created by 6.4.1+: older 6.x drops and re-creates their unique indexes. |
-| `resetOnInit` | `boolean` | `false` | Deletes all rows in the current-prefix tasks collection on init. |
-
-### Collections created
-
-- `__JobTasks__<prefix>` — task documents
-- `__JobTasks__.lock` (or `lockCollectionName`) — scheduler lease documents
-
-Mongo collection-name limit is 120 characters (including DB name). Keep prefixes short.
-
-### Recommended Mongo connection options (replica set)
-
-```js
-const options = {
-  writeConcern: { j: true, w: 'majority', wtimeoutMS: 30000 },
-  readConcern: { level: 'majority' },
-  readPreference: 'primary',
-};
-const client = await MongoClient.connect('mongodb://…', options);
-```
-
-`MongoAdapter` default CI tests official `mongodb@5/6/7` with `mongo:8`, plus `mongodb@7` with `mongo:6/7/8`. Cosmos DB for MongoDB and DocumentDB are excluded from default CI; the manual workflow tests configured endpoints only when secrets are present. DocumentDB is VPC-only, so its job needs a runner inside the VPC (`DOCDB_RUNNER` repository variable). Mongoose wrappers remain untested. Treat each cloud service/API version as unverified until its optional test passes.
+Indexes are created on first start and never dropped. On a replica set use `writeConcern: { w: 'majority', j: true }`, `readConcern: { level: 'majority' }`, `readPreference: 'primary'`. Cosmos DB, DocumentDB, and Mongoose wrappers are untested. MongoDB 4.4+ limits the namespace (database plus collection name) to 255 bytes. More: [MongoDB guide](https://github.com/veliovgroup/josk/blob/master/docs/mongodb.md).
 
 ## `PostgresAdapter`
 
@@ -147,135 +62,57 @@ const client = await MongoClient.connect('mongodb://…', options);
 import { JoSk, PostgresAdapter } from 'josk';
 import { Pool } from 'pg';
 
-const pool = new Pool({
-  connectionString: 'postgres://user:pass@localhost:5432/joskdb',
-});
-
+const pool = new Pool({ connectionString: 'postgres://user:pass@localhost:5432/joskdb' });
 const jobs = new JoSk({
-  adapter: new PostgresAdapter({
-    client: pool,
-    prefix: 'cluster-scheduler',
-  }),
-  onError(reason, details) {
-    console.error('[josk]', reason, details.error);
-  },
+  adapter: new PostgresAdapter({ client: pool, prefix: 'app' }),
+  onError: (title, { error, uid }) => console.error(title, uid, error),
 });
 ```
 
-### Options
+| Option | Default | Notes |
+|---|---|---|
+| `client` | required | `pg.Pool` (recommended) or a connected `pg.Client`. |
+| `prefix` | `'default'` | Stored in `josk_tasks.prefix` and `josk_locks.lock_key` (`josk-<prefix>.lock`). |
 
-| Option | Type | Default | Notes |
-|---|---|---|---|
-| `client` | `Pool \| Client` | — | **Required.** Any object with a `.query(text, values?) => Promise<{ rowCount, rows }>` shape. `pg.Pool` is recommended for long-running apps. |
-| `prefix` | `string` | `'default'` | Used in `josk_tasks.prefix` and `josk_locks.lock_key`. Isolates schedules without separate tables. |
-| `resetOnInit` | `boolean` | `false` | Deletes current-prefix rows from `josk_tasks` and the lock row from `josk_locks` on init. |
+Creates and migrates `josk_tasks` (primary key `(prefix, uid)`), `josk_locks`, and `josk_meta` in the client's current database and schema on first start, inside one transaction under an advisory lock; deploy schema-changing upgrades in a quiet window. Lease expiry compares against `CURRENT_TIMESTAMP`, so app-clock skew does not matter. Both `execute` modes claim with `FOR UPDATE SKIP LOCKED`. Works behind PgBouncer in transaction mode.
 
-### Tables created (auto-migrated on init)
-
-- `josk_tasks` — composite primary key `(prefix, uid)`
-- `josk_locks` — one row per `lock_key` (`josk-<prefix>.lock`)
-- `josk_meta` — schema-version row, gates future migrations
-
-Migrations run DDL on startup; schedule deploys during a low-traffic window when upgrading.
-
-### PostgreSQL guidelines
-
-- Require `pg@>=8.0.3` on Node 14+ (JoSk 6.4.1+ engines: Node `>=14.21.3`; `pg@8.20` itself declares Node 16+, and JoSk was not run against PostgreSQL on Node below 20). `pg@7` never calls `stream.connect()` when `net.Socket.readyState` is `'open'` before connect.
-- Use `pg.Pool`. Share the app's pool when handlers also hit Postgres, or use a small dedicated pool when scheduler isolation matters.
-- One writable primary endpoint. **No replica reads** — task claims must be visible immediately.
-- Lock acquisition compares lease expiry against `CURRENT_TIMESTAMP`, so client clock skew across nodes does not affect lock ownership. This is the strongest cross-region adapter.
-- `execute: 'batch'` (default) uses `FOR UPDATE SKIP LOCKED` to drain due tasks. `execute: 'one'` uses `LIMIT 1`.
-- Tune `minRevolvingDelay` / `maxRevolvingDelay` based on pool capacity and handler runtime. Lower polling = more DB writes.
-
-## Prefix mapping — at a glance
-
-`prefix` isolates one JoSk schedule from another in the same storage. Same prefix = same shared queue; different prefix = isolated namespace.
-
-| Adapter | Storage layout (for `prefix: 'app'`) |
-|---|---|
-| Redis | Default keys `josk:app:schedule`, `josk:app:tasks`, `josk:app:lock`. With `useHashTags: true`: `josk:{app}:schedule`, `josk:{app}:tasks`, `josk:{app}:lock`. |
-| MongoDB | Collection `__JobTasks__app`; lock collection `__JobTasks__.lock` (shared, scoped by `uniqueName` field). |
-| PostgreSQL | Rows in `josk_tasks` filtered by `prefix='app'`; lock row in `josk_locks` with `lock_key='josk-app.lock'`. |
-
-Use different prefixes for tenants, environments, or test suites.
-
-## Cleanup recipes (dev / test)
-
-### Redis
+## Cleanup (development and tests)
 
 ```sh
-redis-cli --no-auth-warning --scan --pattern "josk:default:*" \
-  | xargs redis-cli --raw --no-auth-warning DEL
-
-# If useHashTags is true:
-redis-cli --no-auth-warning --scan --pattern "josk:{default}:*" \
-  | xargs redis-cli --raw --no-auth-warning DEL
+redis-cli --scan --pattern "josk:app:*" | xargs redis-cli DEL      # josk:{app}:* with useHashTags
 ```
-
-### MongoDB
 
 ```js
-db.getCollection('__JobTasks__default').deleteMany({});
-// Or for a custom prefix:
-db.getCollection('__JobTasks__myPrefix').deleteMany({});
+db.getCollection('__JobTasks__app').deleteMany({});
 ```
 
-### PostgreSQL
-
 ```sql
-DELETE FROM josk_tasks WHERE prefix = 'default';
-DELETE FROM josk_locks WHERE lock_key = 'josk-default.lock';
+DELETE FROM josk_tasks WHERE prefix = 'app';
+DELETE FROM josk_locks WHERE lock_key = 'josk-app.lock';
 ```
 
 ## Custom adapter
 
-Custom adapters implement the `JoSkAdapter` interface and follow design rules tied to single-claim correctness. Start from `adapters/blank-example.js` in the source tree.
-
-### Interface
+Implement `JoSkAdapter` (exported type). Full contract and rules: [adapter-api.md](https://github.com/veliovgroup/josk/blob/master/docs/adapter-api.md); template: [blank-example.js](https://github.com/veliovgroup/josk/blob/master/adapters/blank-example.js).
 
 ```ts
 interface JoSkAdapter {
-  joskInstance?: JoSk;                                      // JoSk sets this on construction
-  acquireLock(lock: JoSkLock): Promise<boolean>;
-  releaseLock(lock: JoSkLock): Promise<void>;
-  remove(uid: string): Promise<boolean>;
-  add(uid: string, isInterval: boolean, delay: number): Promise<boolean | void>;
-  update(task: JoSkTask, nextExecuteAt: Date): Promise<boolean>;
-  iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: JoSkExecuteMode): Promise<number | void>;
+  joskInstance?: JoSk;                                   // set by JoSk
+  ready?(): Promise<void>;                               // optional init barrier, retried on failure
   ping(): Promise<JoSkPingResult>;
-  ready?(): Promise<void>;                                  // optional init barrier
+  acquireLock(lock: JoSkLock): Promise<boolean>;         // owner-bound lease, TTL from lock.leaseMs
+  releaseLock(lock: JoSkLock): Promise<void>;            // only when ownerId and leaseId match
+  add(uid: string, isInterval: boolean, delay: number): Promise<boolean | void>;
+  remove(uid: string): Promise<boolean>;
+  update(task: JoSkTask, nextExecuteAt: Date): Promise<boolean>;
+  iterate(nextExecuteAt: Date, lock: JoSkLock, executeMode: 'one' | 'batch'): Promise<number | void>;
 }
 ```
 
-### Required design rules
+Rules that keep single execution:
 
-- **Owner-bound lease tokens.** Never release a foreign lease. The lock object contains `ownerId`, `leaseId`, `expireAt`, `expiresAtMs`, `leaseMs` — `releaseLock` must check the owner before deleting, and lease TTLs should come from `leaseMs` (relative), not from a second app-clock read against `expiresAtMs`.
-- **Atomic due-task claim.** Do not `find all due → update later`. Use a single atomic operation (Lua, `FOR UPDATE SKIP LOCKED`, atomic `findOneAndUpdate`) to claim and return the task in one round-trip.
-- **`iterate(nextExecuteAt, lock, executeMode)`** is the entry point JoSk calls each tick. Claim one task (for `executeMode === 'one'`) or as many as the lease lets you (`executeMode === 'batch'`) and call `this.joskInstance.__execute(task)` **fire-and-forget** for each — JoSk handles internal concurrency and error wrapping.
-- **Fence `update()` on the claim lease.** Store `lock.leaseId` as `claimLeaseId` in the same atomic claim write and return it on the task. `update()` must match that lease, write the schedule, and clear the lease in one write. If the claim skips storing it, the filter never matches and the interval stalls until `zombieTime`. Without fencing, a late handler on another process can overwrite a newer schedule. With `debug: true`, JoSk logs once when a claimed interval arrives without `claimLeaseId`.
-- **Storage-server time** for lease comparisons. Mixed client clocks across a cluster cause incorrect lock ownership. See `adapters/postgres.js` for the `CURRENT_TIMESTAMP` pattern.
-- **`add()` keeps an unchanged unclaimed interval's earlier schedule.** Built-in adapters also preserve a claimed interval's zombie deadline on re-registration, regardless of delay, using the existing `claimLeaseId`/`claim_lease_id` marker. `update()` clears that marker with the new schedule. Custom adapters need not use this field but should avoid shortening active claims. Update every stored copy of the schedule atomically (Redis hash and ZSET). One-shot tasks store `now + delay`.
-- **`ready()`** is optional but recommended for adapters that need to create schemas, indexes, or run migrations before the first storage op.
-
-### Task object shape (what to pass to `__execute`)
-
-```js
-{
-  uid: 'taskidsetInterval',     // string, includes the setInterval/setTimeout/setImmediate suffix
-  delay: 60000,                  // number, ms
-  executeAt: 1731000000000,      // number or Date
-  isInterval: true,              // boolean
-  isDeleted: false,              // boolean
-  claimLeaseId: 'lease-id',      // optional string, lock.leaseId stored by the claim
-}
-```
-
-### Recommended adapter flow inside `iterate`
-
-1. Acquire the scheduler lease (owner-bound token).
-2. Atomically claim the next due task — move its `executeAt` to the supplied `nextExecuteAt` so it doesn't get claimed again by another instance during the same window.
-3. Return the pre-claim task payload (`executeAt` = original due time, not the new park value) with `claimLeaseId: lock.leaseId`. All three built-in adapters honor this — see `docs/adapter-api.md`.
-4. Call `this.joskInstance.__execute(task)` (no `await`).
-5. Release the lease only if the owner token still matches.
-
-Global lock alone is **not** enough for duplicate prevention. The atomic per-task claim is what prevents two instances from running the same tick.
+- Claim due tasks atomically (Lua, `FOR UPDATE SKIP LOCKED`, `findOneAndUpdate`), moving `executeAt` to `nextExecuteAt` in the same write and storing `lock.leaseId` as `claimLeaseId`. A global lock alone is not enough.
+- In `iterate()`, call `this.joskInstance.__execute(task)` for each claimed task without awaiting. `task` is `{ uid, delay, executeAt (pre-claim), isInterval, isDeleted, claimLeaseId }`.
+- `update()` must match `task.claimLeaseId` when present, write the schedule, and clear the lease in one write.
+- `add()` keeps an unclaimed interval's earlier `executeAt` when `delay` is unchanged, and never shortens an active claim.
+- Compare lease expiry with storage-server time where possible.
