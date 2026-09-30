@@ -577,7 +577,7 @@ class RedisAdapter {
         this.joskInstance.__execute(tasks[i]);
       }
 
-      if (tasks.length < REDIS_BATCH_CLAIM_LIMIT) {
+      if (tasks.length < REDIS_BATCH_CLAIM_LIMIT || this.joskInstance.isDestroyed) {
         break;
       }
     }

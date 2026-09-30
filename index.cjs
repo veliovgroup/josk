@@ -1143,7 +1143,7 @@ class RedisAdapter {
         this.joskInstance.__execute(tasks[i]);
       }
 
-      if (tasks.length < REDIS_BATCH_CLAIM_LIMIT) {
+      if (tasks.length < REDIS_BATCH_CLAIM_LIMIT || this.joskInstance.isDestroyed) {
         break;
       }
     }
@@ -1754,7 +1754,7 @@ class PostgresAdapter {
         });
       }
 
-      if (tasks.length < batchLimit) {
+      if (tasks.length < batchLimit || this.joskInstance.isDestroyed) {
         break;
       }
     }
@@ -2057,6 +2057,8 @@ class JoSk {
     this.__releasing = new Set();
     /** @internal */
     this.__iterating = false;
+    /** @internal */
+    this.__nudgePending = false;
     /** @internal @type {Promise<void> | null} */
     this.__iteratePromise = null;
 
@@ -2413,6 +2415,13 @@ class JoSk {
       return;
     }
 
+    // A running iteration schedules the next one from `__tick()`; starting
+    // another here would fork a second polling loop.
+    if (this.__iterating) {
+      this.__nudgePending = true;
+      return;
+    }
+
     if (this.nextRevolutionTimeout) {
       clearTimeout(this.nextRevolutionTimeout);
       this.nextRevolutionTimeout = null;
@@ -2555,7 +2564,8 @@ class JoSk {
    * @returns {Promise<void>}
    */
   __execute(task) {
-    if (this.concurrency === Infinity) {
+    // After destroy() nothing drains `__pendingTasks`; hand the claim back now.
+    if (this.concurrency === Infinity || this.isDestroyed) {
       const promise = this.__doExecute(task);
       promise.catch((err) => {
         this._debug(`[__execute] [${task?.uid || 'unknown'}] unhandled exception:`, err);
@@ -2897,6 +2907,12 @@ class JoSk {
   /** @internal */
   __tick() {
     if (this.isDestroyed) {
+      return;
+    }
+
+    if (this.__nudgePending) {
+      this.__nudgePending = false;
+      this.nextRevolutionTimeout = setTimeout(this.__iterate.bind(this), 0);
       return;
     }
 

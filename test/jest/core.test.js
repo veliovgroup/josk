@@ -956,6 +956,37 @@ describe('pause/resume', () => {
     expect(adapter.acquireCalls.length).toBeGreaterThan(0);
   });
 
+  it('resume() during an iteration defers the nudge instead of starting a parallel loop', async () => {
+    const { job, adapter } = createJob({ minRevolvingDelay: 60000, maxRevolvingDelay: 60000 });
+    const timerId = await job.setInterval(() => {}, 5000, 'nudge-task');
+    let finishIterate;
+    adapter.iterateImpl = () => new Promise((resolve) => {
+      finishIterate = resolve;
+    });
+
+    const iteration = job.__iterate();
+    for (let i = 0; i < 10 && !finishIterate; i++) {
+      await Promise.resolve();
+    }
+    expect(job.__iterating).toBe(true);
+
+    for (let i = 0; i < 3; i++) {
+      job.pause(timerId);
+      job.resume(timerId);
+    }
+    jest.advanceTimersByTime(0);
+    await Promise.resolve();
+    expect(adapter.acquireCalls).toHaveLength(1);
+
+    adapter.iterateImpl = null;
+    finishIterate(0);
+    await iteration;
+    jest.advanceTimersByTime(0);
+    await job.__iteratePromise;
+    expect(adapter.acquireCalls).toHaveLength(2);
+    expect(job.__nudgePending).toBe(false);
+  });
+
   it('per-timer pause defers claimed interval without running handler', async () => {
     const { job, adapter } = createJob();
     let ran = false;
@@ -1162,6 +1193,23 @@ describe('shutdown and claim release', () => {
     await finishes[0]();
     await expect(shutdown).resolves.toBe(true);
     expect(adapter.updateCalls).toHaveLength(1);
+  });
+
+  it('hands back claims that arrive after destroy() while concurrency slots are busy', async () => {
+    const { job, adapter } = createJob({ concurrency: 1 });
+    const busy = intervalTask('slot-busy');
+    const late = intervalTask('late-claim');
+    job.tasks[busy.uid] = () => new Promise(() => {});
+    job.tasks[late.uid] = () => {};
+
+    job.__execute(busy);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    job.destroy();
+    await job.__execute(late);
+    await settleReleases(job);
+
+    expect(job.__pendingTasks).toHaveLength(0);
+    expect(adapter.updateCalls.map((call) => call.task.uid)).toEqual([late.uid]);
   });
 
   it('returns false for an unfinished superseded handler without releasing its stale claim', async () => {

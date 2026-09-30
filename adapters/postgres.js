@@ -505,7 +505,7 @@ class PostgresAdapter {
         });
       }
 
-      if (tasks.length < batchLimit) {
+      if (tasks.length < batchLimit || this.joskInstance.isDestroyed) {
         break;
       }
     }
